@@ -1,189 +1,119 @@
 ---
-title: Custom Components
-description: Implement custom Chunker, Embedder, Loader, and VectorStore to plug your own backends into Weave.
+title: Custom Store
+description: Implement a custom store backend for Shield persistence.
 ---
 
-Every Weave component is a Go interface. This guide shows how to implement each one so you can plug in custom backends, models, or processing logic.
+Every Shield subsystem defines a Go store interface. These are composed into the single `store.Store` composite. Implement this interface to use any database backend.
 
-## Custom Chunker
-
-Implement `chunker.Chunker` to split text with your own algorithm:
+## The composite store interface
 
 ```go
-import "github.com/xraph/weave/chunker"
+type Store interface {
+    instinct.Store
+    awareness.Store
+    boundary.Store
+    values.Store
+    judgment.Store
+    reflex.Store
+    profile.Store
+    scan.Store
+    policy.Store
+    pii.Store
+    compliance.Store
 
-type SentenceChunker struct {
-    maxTokens int
+    Migrate(ctx context.Context) error
+    Ping(ctx context.Context) error
+    Close() error
 }
-
-func (c *SentenceChunker) Chunk(_ context.Context, text string, opts *chunker.Options) ([]chunker.ChunkResult, error) {
-    sentences := splitSentences(text)
-    var results []chunker.ChunkResult
-    var current strings.Builder
-    idx := 0
-
-    for _, sentence := range sentences {
-        if estimateTokens(current.String()) + estimateTokens(sentence) > opts.ChunkSize {
-            if current.Len() > 0 {
-                results = append(results, chunker.ChunkResult{
-                    Content:    current.String(),
-                    Index:      idx,
-                    TokenCount: estimateTokens(current.String()),
-                })
-                idx++
-                current.Reset()
-            }
-        }
-        current.WriteString(sentence + " ")
-    }
-    if current.Len() > 0 {
-        results = append(results, chunker.ChunkResult{
-            Content:    strings.TrimSpace(current.String()),
-            Index:      idx,
-            TokenCount: estimateTokens(current.String()),
-        })
-    }
-    return results, nil
-}
-
-// Register:
-eng, _ := engine.New(engine.WithChunker(&SentenceChunker{maxTokens: 256}))
 ```
 
-## Custom Embedder
+## Implementing a custom store
 
-Implement `embedder.Embedder` to use any embedding model:
-
-```go
-import "github.com/xraph/weave/embedder"
-
-type CohereEmbedder struct {
-    client *cohere.Client
-    dims   int
-}
-
-func (e *CohereEmbedder) Embed(ctx context.Context, texts []string) ([]embedder.EmbedResult, error) {
-    resp, err := e.client.Embed(ctx, &cohere.EmbedRequest{
-        Texts:     texts,
-        Model:     "embed-english-v3.0",
-        InputType: "search_document",
-    })
-    if err != nil {
-        return nil, err
-    }
-    results := make([]embedder.EmbedResult, len(resp.Embeddings))
-    for i, vec := range resp.Embeddings {
-        results[i] = embedder.EmbedResult{Vector: toFloat32(vec)}
-    }
-    return results, nil
-}
-
-func (e *CohereEmbedder) Dimensions() int { return e.dims }
-
-// Register:
-eng, _ := engine.New(engine.WithEmbedder(&CohereEmbedder{client: client, dims: 1024}))
-```
-
-## Custom Loader
-
-Implement `loader.Loader` to extract text from a custom format:
+Your struct must implement all methods from each subsystem store. Here's the pattern:
 
 ```go
+package mystore
+
 import (
-    "io"
-    "github.com/xraph/weave/loader"
+    "context"
+
+    "github.com/xraph/shield/store"
 )
 
-type DocxLoader struct{}
-
-func (l *DocxLoader) Supports(mime string) bool {
-    return mime == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+type MyStore struct {
+    // your database connection fields
 }
 
-func (l *DocxLoader) Load(ctx context.Context, r io.Reader) (*loader.LoadResult, error) {
-    data, err := io.ReadAll(r)
-    if err != nil {
-        return nil, err
-    }
-    text, meta, err := extractDocx(data)
-    if err != nil {
-        return nil, fmt.Errorf("docx: %w", err)
-    }
-    return &loader.LoadResult{
-        Content:  text,
-        MimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        Metadata: meta,
-    }, nil
-}
+// Compile-time check
+var _ store.Store = (*MyStore)(nil)
 
-// Register:
-eng, _ := engine.New(engine.WithLoader(&DocxLoader{}))
-```
-
-When ingesting a `.docx` file, set `SourceType` to trigger the loader:
-
-```go
-eng.Ingest(ctx, &engine.IngestInput{
-    CollectionID: colID,
-    Content:      string(docxBytes),
-    SourceType:   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-})
-```
-
-## Custom VectorStore
-
-Implement `vectorstore.VectorStore` to use any vector database:
-
-```go
-import "github.com/xraph/weave/vectorstore"
-
-type WeaviateStore struct {
-    client *weaviate.Client
-}
-
-func (s *WeaviateStore) Upsert(ctx context.Context, entries []vectorstore.Entry) error {
-    objects := make([]*models.Object, len(entries))
-    for i, e := range entries {
-        objects[i] = &models.Object{
-            ID:         strfmt.UUID(e.ID),
-            Class:      "WeaveChunk",
-            Vector:     toFloat64(e.Vector),
-            Properties: e.Metadata,
-        }
-    }
-    _, err := s.client.Batch().ObjectsBatcher().WithObjects(objects...).Do(ctx)
-    return err
-}
-
-func (s *WeaviateStore) Search(ctx context.Context, vector []float32, opts *vectorstore.SearchOptions) ([]vectorstore.SearchResult, error) {
-    // ... weaviate nearVector query
-}
-
-func (s *WeaviateStore) Delete(ctx context.Context, ids []string) error { /* ... */ }
-func (s *WeaviateStore) DeleteByMetadata(ctx context.Context, filter map[string]string) error { /* ... */ }
-
-// Register:
-eng, _ := engine.New(engine.WithVectorStore(&WeaviateStore{client: weaviateClient}))
-```
-
-## Custom MetadataStore
-
-Implement `store.Store` (which embeds `collection.Store`, `document.Store`, `chunk.Store`) to use a different database:
-
-```go
-import "github.com/xraph/weave/store"
-
-// Your struct must implement all methods from:
-// - collection.Store (CreateCollection, GetCollection, ListCollections, DeleteCollection, ...)
-// - document.Store (CreateDocument, GetDocument, UpdateDocument, ListDocuments, DeleteDocument, ...)
-// - chunk.Store (CreateChunkBatch, ListChunksByDocument, DeleteChunksByDocument, ...)
-// - store.Store (Migrate, Ping, Close)
-
-type MyStore struct{ /* ... */ }
-
-var _ store.Store = (*MyStore)(nil) // compile-time check
-
+// Register with the engine:
 eng, _ := engine.New(engine.WithStore(&MyStore{}))
 ```
 
-See [store/store.go](https://github.com/xraph/weave/blob/main/store/store.go) for the full interface definition.
+## Subsystem store interfaces
+
+Each safety primitive defines its own store interface. Here are the key ones:
+
+### instinct.Store
+
+```go
+type Store interface {
+    CreateInstinct(ctx context.Context, inst *Instinct) error
+    GetInstinct(ctx context.Context, instID id.InstinctID) (*Instinct, error)
+    GetInstinctByName(ctx context.Context, appID, name string) (*Instinct, error)
+    UpdateInstinct(ctx context.Context, inst *Instinct) error
+    DeleteInstinct(ctx context.Context, instID id.InstinctID) error
+    ListInstincts(ctx context.Context, filter *ListFilter) ([]*Instinct, error)
+}
+```
+
+### scan.Store
+
+```go
+type Store interface {
+    CreateScan(ctx context.Context, result *Result) error
+    GetScan(ctx context.Context, scanID id.ScanID) (*Result, error)
+    ListScans(ctx context.Context, filter *ListFilter) ([]*Result, error)
+    ScanStats(ctx context.Context, filter *StatsFilter) (*Stats, error)
+}
+```
+
+### pii.Store
+
+```go
+type Store interface {
+    StorePIITokens(ctx context.Context, tokens []*Token) error
+    LoadPIITokens(ctx context.Context, tokenIDs []id.PIITokenID) ([]*Token, error)
+    LoadPIITokensByScan(ctx context.Context, scanID id.ScanID) ([]*Token, error)
+    DeletePIITokens(ctx context.Context, tokenIDs []id.PIITokenID) error
+    DeletePIITokensByTenant(ctx context.Context, tenantID string) error
+    PurgePIITokens(ctx context.Context, olderThan time.Time) (int64, error)
+    PIIStats(ctx context.Context, tenantID string) (*Stats, error)
+}
+```
+
+### policy.Store
+
+```go
+type Store interface {
+    CreatePolicy(ctx context.Context, pol *Policy) error
+    GetPolicy(ctx context.Context, polID id.PolicyID) (*Policy, error)
+    GetPolicyByName(ctx context.Context, scopeKey, name string) (*Policy, error)
+    UpdatePolicy(ctx context.Context, pol *Policy) error
+    DeletePolicy(ctx context.Context, polID id.PolicyID) error
+    ListPolicies(ctx context.Context, filter *ListFilter) ([]*Policy, error)
+    GetPoliciesForScope(ctx context.Context, scopeKey string, level ScopeLevel) ([]*Policy, error)
+    AssignToTenant(ctx context.Context, tenantID string, polID id.PolicyID) error
+    UnassignFromTenant(ctx context.Context, tenantID string, polID id.PolicyID) error
+}
+```
+
+All other subsystem stores (awareness, boundary, values, judgment, reflex, profile, compliance) follow the same CRUD pattern as `instinct.Store`.
+
+## Tips
+
+- Use compile-time interface checks: `var _ store.Store = (*MyStore)(nil)`
+- Enforce tenant scoping in all queries — filter by `app_id` and `tenant_id`
+- Wrap sentinel errors with context: `fmt.Errorf("mystore: %w", shield.ErrScanNotFound)`
+- Use JSONB columns for slice fields like `Strategies`, `Detectors`, `Rules`, `Triggers`, `Actions`

@@ -1,14 +1,14 @@
 ---
 title: Forge Extension
-description: Mount Weave into a Forge application as a first-class extension with automatic route registration and migrations.
+description: Mount Shield into a Forge application as a first-class extension with lifecycle management.
 ---
 
-Weave ships a ready-made Forge extension in the `extension` package. It wires the engine, HTTP API, and lifecycle management into Forge's extension system with one call.
+Shield ships a ready-made Forge extension in the `extension` package. It wires the engine and lifecycle management into Forge's extension system with one call.
 
 ## Installation
 
 ```go
-import "github.com/xraph/weave/extension"
+import "github.com/xraph/shield/extension"
 ```
 
 ## Registering the extension
@@ -18,24 +18,18 @@ package main
 
 import (
     "github.com/xraph/forge"
-    pgstore "github.com/xraph/weave/store/postgres"
-    pgvec "github.com/xraph/weave/vectorstore/pgvector"
-    "github.com/xraph/weave/embedder"
-    "github.com/xraph/weave/extension"
+    "github.com/xraph/shield/extension"
+    "github.com/xraph/shield/observability"
 )
 
 func main() {
     app := forge.New()
 
-    weaveExt := extension.New(
-        extension.WithStore(pgstore.New(bunDB)),
-        extension.WithVectorStore(pgvec.New(pgxPool)),
-        extension.WithEmbedder(embedder.NewOpenAI(
-            embedder.WithOpenAIKey(os.Getenv("OPENAI_API_KEY")),
-        )),
+    shieldExt := extension.New(
+        extension.WithPlugin(observability.NewMetricsExtension()),
     )
 
-    app.RegisterExtension(weaveExt)
+    app.RegisterExtension(shieldExt)
     app.Run()
 }
 ```
@@ -44,55 +38,35 @@ func main() {
 
 | Lifecycle event | Behaviour |
 |----------------|-----------|
-| `Register` | Creates the engine from the provided options |
-| `Start` | Runs `store.Migrate` and `vectorstore.Migrate` (unless disabled) |
-| `RegisterRoutes` | Mounts all 12 Weave HTTP endpoints under `/v1` |
-| `Stop` | Calls `engine.Stop` → emits `OnShutdown` to all extensions |
+| `Register` | Creates the engine from the provided options, registers it in the DI container |
+| `Start` | No-op (ready immediately) |
+| `Stop` | Calls `engine.Stop` which emits `OnShutdown` to all plugins |
+| `Health` | Returns nil (healthy) |
 
 ## Extension options
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `WithStore(s)` | `store.Store` | — | **Required.** MetadataStore |
-| `WithVectorStore(v)` | `vectorstore.VectorStore` | — | **Required.** VectorStore |
-| `WithEmbedder(e)` | `embedder.Embedder` | — | **Required.** Embedder |
+| `WithStore(s)` | `store.Store` | — | Composite store for persistence |
+| `WithPlugin(p)` | `plugin.Plugin` | — | Lifecycle plugin |
+| `WithEngineOption(opt)` | `engine.Option` | — | Pass-through engine option |
+| `WithConfig(cfg)` | `Config` | — | Extension configuration |
 | `WithLogger(l)` | `*slog.Logger` | `slog.Default()` | Logger |
-| `WithDisableRoutes(b)` | `bool` | `false` | Skip HTTP route registration |
-| `WithDisableMigrate(b)` | `bool` | `false` | Skip migrations on Start |
-
-## Disabling auto-migration
-
-If you manage migrations separately (e.g. with a migration tool), disable auto-migration:
-
-```go
-weaveExt := extension.New(
-    extension.WithStore(store),
-    extension.WithVectorStore(vecStore),
-    extension.WithEmbedder(emb),
-    extension.WithDisableMigrate(true),
-)
-```
-
-## Accessing the engine from other extensions
-
-After `Register` is called by Forge, `weaveExt.Engine()` returns the fully initialised engine:
-
-```go
-eng := weaveExt.Engine()
-// use eng.Ingest, eng.Retrieve, etc. from another extension or handler
-```
+| `WithDisableRoutes()` | — | `false` | Skip HTTP route registration |
+| `WithDisableMigrate()` | — | `false` | Skip migrations on Start |
+| `WithBasePath(path)` | `string` | — | URL prefix for shield routes |
 
 ## Tenant middleware
 
-In a Forge app, tenant scope is typically set by middleware that reads the JWT or API key. Implement a Forge middleware that calls `weave.WithTenant` and `weave.WithApp` before passing the request to the Weave handlers:
+In a Forge app, tenant scope is typically set by middleware. Implement a Forge middleware that calls `shield.WithTenant` and `shield.WithApp` before passing the request to the Shield handlers:
 
 ```go
 func tenantMiddleware(next http.Handler) http.Handler {
     return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
         tenantID := r.Header.Get("X-Tenant-ID")
         appID := r.Header.Get("X-App-ID")
-        ctx := weave.WithTenant(r.Context(), tenantID)
-        ctx = weave.WithApp(ctx, appID)
+        ctx := shield.WithTenant(r.Context(), tenantID)
+        ctx = shield.WithApp(ctx, appID)
         next.ServeHTTP(w, r.WithContext(ctx))
     })
 }
@@ -102,17 +76,35 @@ router.Use(tenantMiddleware)
 
 ## Adding metrics
 
-Register the observability extension alongside the Weave engine extension:
+Register the observability plugin alongside the Shield engine extension:
 
 ```go
-import "github.com/xraph/weave/observability"
+import "github.com/xraph/shield/observability"
 
-metricsExt := observability.NewMetricsExtensionWithFactory(fapp.Metrics())
+metricsPlugin := observability.NewMetricsExtensionWithFactory(fapp.Metrics())
 
-weaveExt := extension.New(
-    extension.WithStore(store),
-    extension.WithVectorStore(vecStore),
-    extension.WithEmbedder(emb),
-    extension.WithEngineExtension(metricsExt), // passed to engine.New internally
+shieldExt := extension.New(
+    extension.WithPlugin(metricsPlugin),
+)
+```
+
+## Adding audit trails
+
+Register the audit hook plugin to bridge safety events to an audit backend:
+
+```go
+import "github.com/xraph/shield/audit_hook"
+
+auditPlugin := audit_hook.New(myRecorder,
+    audit_hook.WithActions(
+        audit_hook.ActionScanBlocked,
+        audit_hook.ActionInstinctTriggered,
+        audit_hook.ActionPIIDetected,
+    ),
+)
+
+shieldExt := extension.New(
+    extension.WithPlugin(metricsPlugin),
+    extension.WithPlugin(auditPlugin),
 )
 ```

@@ -1,19 +1,19 @@
 ---
 title: Multi-Tenancy
-description: How Cortex scopes agents, skills, traits, and all entities to app and tenant contexts.
+description: How Shield scopes scans, policies, and all safety entities to app and tenant contexts.
 ---
 
-Every Cortex entity is scoped to an **app** (logical application boundary) and optionally to a **tenant** (user/organization boundary). This scoping is enforced at the store layer — cross-tenant access is structurally impossible.
+Every Shield entity is scoped to an **app** (logical application boundary) and optionally to a **tenant** (user/organization boundary). This scoping is enforced at the store layer — cross-tenant access is structurally impossible.
 
 ## Context injection
 
-Scope identifiers are injected into the Go context using helper functions from the root `cortex` package:
+Scope identifiers are injected into the Go context using helper functions from the root `shield` package:
 
 ```go
-import "github.com/xraph/cortex"
+import "github.com/xraph/shield"
 
-ctx = cortex.WithTenant(ctx, "org-123")
-ctx = cortex.WithApp(ctx, "myapp")
+ctx = shield.WithTenant(ctx, "org-123")
+ctx = shield.WithApp(ctx, "myapp")
 ```
 
 ## Extraction
@@ -21,8 +21,8 @@ ctx = cortex.WithApp(ctx, "myapp")
 Retrieve scope values from any context:
 
 ```go
-tenantID := cortex.TenantFromContext(ctx) // "org-123"
-appID    := cortex.AppFromContext(ctx)    // "myapp"
+tenantID := shield.TenantFromContext(ctx) // "org-123"
+appID    := shield.AppFromContext(ctx)    // "myapp"
 ```
 
 Both functions return an empty string if no value is set.
@@ -31,15 +31,16 @@ Both functions return an empty string if no value is set.
 
 | Scope | Purpose | Required | Example |
 |-------|---------|----------|---------|
-| **AppID** | Logical application boundary. All domain entities (agents, skills, traits, behaviors, personas) carry an `AppID` field. | Yes | `"myapp"`, `"staging"` |
-| **TenantID** | User or organization boundary. Used for execution entities (runs, conversations, checkpoints) to isolate per-user data. | Optional | `"org-123"`, `"user-456"` |
+| **AppID** | Logical application boundary. Safety primitives (instincts, awareness, boundaries, values, judgments, reflexes, profiles) carry an `AppID` field. | Yes | `"myapp"`, `"staging"` |
+| **TenantID** | User or organization boundary. Scan results and PII tokens are scoped by tenant for data isolation. | Optional | `"org-123"`, `"user-456"` |
 
 ## Store enforcement
 
-The PostgreSQL store enforces app scoping on every query:
+Store implementations enforce scoping on every query:
 
-- **Agent, Skill, Trait, Behavior, Persona** — all `GetByName` and `List` queries filter by `app_id`
-- **Run, Memory, Checkpoint** — queries filter by `tenant_id` when provided
+- **Instincts, Awareness, Boundaries, Values, Judgments, Reflexes, Profiles** — all `GetByName` and `List` queries filter by `app_id`
+- **Scans, PII Tokens** — queries filter by `tenant_id` when provided
+- **Policies** — scoped by `scope_key` and `scope_level` (app or org)
 - **Cross-scope access** — returns `ErrNotFound` even if the entity exists under a different app/tenant
 
 ## API integration
@@ -47,23 +48,22 @@ The PostgreSQL store enforces app scoping on every query:
 When using the Forge extension, the API layer extracts the app ID from the request context (typically set by Forge middleware) and passes it to all engine operations. This means:
 
 - Each API request is automatically scoped to the caller's app
-- Agents in app A cannot see or modify agents in app B
-- Run history is isolated per tenant within each app
+- Safety profiles in app A cannot be accessed by app B
+- Scan history is isolated per tenant within each app
 
 ## Example: multi-tenant setup
 
 ```go
-// Tenant 1 creates an agent
-ctx1 := cortex.WithApp(context.Background(), "myapp")
-ctx1 = cortex.WithTenant(ctx1, "tenant-1")
-eng.CreateAgent(ctx1, agent1Config)
+// Tenant 1 scans content
+ctx1 := shield.WithApp(context.Background(), "myapp")
+ctx1 = shield.WithTenant(ctx1, "tenant-1")
+result1, _ := eng.ScanInput(ctx1, &scan.Input{Text: "hello"})
 
-// Tenant 2 creates a different agent
-ctx2 := cortex.WithApp(context.Background(), "myapp")
-ctx2 = cortex.WithTenant(ctx2, "tenant-2")
-eng.CreateAgent(ctx2, agent2Config)
+// Tenant 2 scans content
+ctx2 := shield.WithApp(context.Background(), "myapp")
+ctx2 = shield.WithTenant(ctx2, "tenant-2")
+result2, _ := eng.ScanInput(ctx2, &scan.Input{Text: "hello"})
 
-// Tenant 1 cannot see tenant 2's runs
-runs, _ := eng.ListRuns(ctx1, &run.ListFilter{TenantID: "tenant-2"})
-// runs is empty — tenant isolation enforced
+// Each tenant's scan results are isolated
+// Tenant 1 cannot see tenant 2's scan history
 ```

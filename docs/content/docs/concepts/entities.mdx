@@ -1,9 +1,9 @@
 ---
 title: Entities
-description: The core data types in Cortex — Agents, Skills, Traits, Behaviors, Personas, Runs, and more.
+description: The core data types in Shield — Scans, Instincts, Awareness, Boundaries, Values, Judgments, Reflexes, Profiles, and more.
 ---
 
-All Cortex entities embed the `cortex.Entity` base type and carry a TypeID identifier. This page provides an overview of every entity and how they relate.
+All Shield entities embed the `shield.Entity` base type and carry a TypeID identifier. This page provides an overview of every entity and how they relate.
 
 ## Base entity
 
@@ -14,94 +14,216 @@ type Entity struct {
 }
 ```
 
-Every entity struct embeds `cortex.Entity` to get automatic timestamp tracking.
+Every entity struct embeds `shield.Entity` to get automatic timestamp tracking.
 
-## Entity overview
+## Safety layer entities
 
-### Agent Config
+### Instinct
 
-The top-level entity. An agent can operate in **flat mode** (system prompt + tools list) or **persona mode** (referencing a Persona for its identity).
+Pre-conscious threat detection. The fastest safety layer — fires before any deliberation. Categories include injection, exfiltration, manipulation, and jailbreak.
 
 ```go
-type Config struct {
-    cortex.Entity
-    ID              id.AgentID
-    Name            string
-    Description     string
-    AppID           string
-    SystemPrompt    string         // flat mode
-    Model           string
-    Tools           []string       // flat mode
-    MaxSteps        int
-    MaxTokens       int
-    Temperature     float64
-    PersonaRef      string         // persona mode
-    InlineSkills    []string       // persona mode (inline)
-    InlineTraits    []string
-    InlineBehaviors []string
-    Enabled         bool
+type Instinct struct {
+    shield.Entity
+    ID          id.InstinctID
+    Name        string
+    Category    Category       // injection, exfiltration, manipulation, jailbreak
+    Strategies  []Strategy     // classifier, canary, perplexity, hierarchy
+    Sensitivity Sensitivity    // paranoid, cautious, balanced, relaxed, permissive
+    Action      string         // block, flag, alert
+    Enabled     bool
 }
 ```
 
-### Skill
+### Awareness
 
-Defines what an agent **can do**. Bundles tools, knowledge sources, and system prompt fragments. See [Skills](/docs/human-model/skills).
+Perception — what the system notices. PII detection, topic classification, sentiment analysis, intent detection, and language identification.
 
-### Trait
+```go
+type Awareness struct {
+    shield.Entity
+    ID          id.AwarenessID
+    Name        string
+    Focus       Focus          // pii, topic, sentiment, intent, language, custom
+    Detectors   []Detector     // named detectors with patterns and config
+    Action      string         // redact, flag, block, vault
+    Enabled     bool
+}
+```
 
-Defines who an agent **is**. Personality dimensions on bipolar axes that influence runtime parameters. See [Traits](/docs/human-model/traits).
+### Boundary
 
-### Behavior
+Hard safety limits that cannot be crossed. Binary checks with no thresholds or gradients.
 
-Defines what an agent **does habitually**. Condition-triggered action patterns. See [Behaviors](/docs/human-model/behaviors).
+```go
+type Boundary struct {
+    shield.Entity
+    ID          id.BoundaryID
+    Name        string
+    Limits      []Limit        // scope + deny/allow lists
+    Response    string         // canned response when boundary hit
+    Enabled     bool
+}
+```
 
-### Persona
+### Values
 
-The composition entity that brings everything together. See [Personas](/docs/human-model/personas).
+Ethical evaluation — toxicity, brand safety, honesty, respect, safety, and privacy principles.
 
-### Run, Step, ToolCall
+```go
+type Values struct {
+    shield.Entity
+    ID          id.ValueID
+    Name        string
+    Rules       []Rule         // principle + threshold + categories
+    Severity    string         // how seriously violations are treated
+    Action      string         // block, flag, warn
+    Enabled     bool
+}
+```
 
-Execution entities that record an agent's reasoning process:
+### Judgment
 
-- **Run** — A single execution of an agent with 6 lifecycle states
-- **Step** — One reasoning step within a run
-- **ToolCall** — A tool invocation within a step
+Contextual risk assessment — the slowest but most sophisticated layer. Evaluates grounding, relevance, consistency, and compliance.
 
-See [Runs](/docs/execution/runs).
+```go
+type Judgment struct {
+    shield.Entity
+    ID          id.JudgmentID
+    Name        string
+    Domain      Domain         // grounding, relevance, consistency, compliance
+    Assessors   []Assessor     // named assessors with weights and config
+    Threshold   float64        // risk threshold for action
+    Action      string         // flag, block, warn
+    Enabled     bool
+}
+```
 
-### Message
+### Reflex
 
-A conversation message with role, content, and timestamp. See [Memory](/docs/execution/memory).
+Condition-triggered safety responses. Policy rules, rate limiting, escalation logic, and custom triggers.
 
-### Checkpoint
+```go
+type Reflex struct {
+    shield.Entity
+    ID          id.ReflexID
+    Name        string
+    Triggers    []Trigger      // on_score, on_finding, on_pattern, on_rate, etc.
+    Actions     []Action       // block, redact, flag, rewrite, escalate, log, throttle
+    Priority    int
+    Enabled     bool
+}
+```
 
-A point where a run pauses for human approval. See [Checkpoints](/docs/execution/checkpoints).
+## Composition entities
+
+### SafetyProfile
+
+The primary composition unit. Composes instincts, awareness, boundaries, values, judgment, and reflexes into a complete safety identity.
+
+```go
+type SafetyProfile struct {
+    shield.Entity
+    ID          id.SafetyProfileID
+    Name        string
+    Instincts   []InstinctAssignment    // with sensitivity overrides
+    Judgments   []JudgmentAssignment    // with threshold overrides
+    Awareness   []AwarenessAssignment
+    Values      []string                // value names
+    Reflexes    []string                // reflex names
+    Boundaries  []string                // boundary names
+    Enabled     bool
+}
+```
+
+### Policy
+
+Administrative governance rules scoped to apps or organizations.
+
+```go
+type Policy struct {
+    shield.Entity
+    ID          id.PolicyID
+    Name        string
+    ScopeKey    string         // tenant/app identifier
+    ScopeLevel  ScopeLevel     // "app" or "org"
+    Rules       []Rule         // check_type + condition + action
+    Enabled     bool
+}
+```
+
+## Scan entities
+
+### Scan Input / Result
+
+```go
+type Input struct {
+    Text      string
+    Direction Direction      // "input" or "output"
+    Context   map[string]any // additional context for judgment
+    Metadata  map[string]any
+}
+
+type Result struct {
+    shield.Entity
+    ID            id.ScanID
+    Direction     Direction
+    Decision      Decision       // allow, block, flag, redact
+    Blocked       bool
+    Findings      []*Finding
+    Redacted      string         // PII-redacted text
+    PIICount      int
+    ProfileUsed   string
+    PoliciesUsed  []string
+    TenantID      string
+    AppID         string
+    Duration      time.Duration
+}
+```
+
+### PII Token
+
+Encrypted PII stored in the vault with AES-256-GCM encryption.
+
+```go
+type Token struct {
+    shield.Entity
+    ID             id.PIITokenID
+    ScanID         id.ScanID
+    TenantID       string
+    PIIType        string      // email, ssn, phone, cc
+    Placeholder    string      // [EMAIL_1], [SSN_1]
+    EncryptedValue []byte      // AES-256-GCM
+    ExpiresAt      *time.Time  // GDPR retention
+}
+```
 
 ## Entity relationship diagram
 
 ```
-Persona
-  ├── SkillAssignment[] ──→ Skill
-  │                           └── ToolBinding[]
-  │                           └── KnowledgeRef[]
-  ├── TraitAssignment[] ──→ Trait
-  │                           └── Dimension[]
-  │                           └── Influence[]
-  ├── Behavior[]         ──→ Behavior
-  │                           └── Trigger[]
-  │                           └── Action[]
-  ├── CognitiveStyle
-  ├── CommunicationStyle
-  └── Perception
+SafetyProfile
+  ├── InstinctAssignment[] ──→ Instinct
+  │                              └── Strategy[]
+  ├── AwarenessAssignment[] ──→ Awareness
+  │                              └── Detector[]
+  ├── Boundary[]            ──→ Boundary
+  │                              └── Limit[]
+  ├── Values[]              ──→ Values
+  │                              └── Rule[]
+  ├── JudgmentAssignment[]  ──→ Judgment
+  │                              └── Assessor[]
+  └── Reflex[]              ──→ Reflex
+                                 ├── Trigger[]
+                                 └── Action[]
 
-Agent Config
-  ├── PersonaRef ──→ Persona (persona mode)
-  ├── SystemPrompt + Tools (flat mode)
-  └── Run[]
-        ├── Step[]
-        │     └── ToolCall[]
-        ├── Checkpoint[]
-        └── Message[] (via Memory)
+Engine
+  └── ScanInput / ScanOutput
+        └── Result
+              ├── Finding[]
+              └── PII Token[] (via Vault)
+
+Policy
+  └── Rule[]
 ```
 
 ## Store interfaces
@@ -110,14 +232,17 @@ Each entity type defines its own store interface. These are composed into the si
 
 ```go
 type Store interface {
-    agent.Store      // Create, Get, GetByName, Update, Delete, List
-    skill.Store      // CreateSkill, GetSkill, GetSkillByName, ...
-    trait.Store      // CreateTrait, GetTrait, GetTraitByName, ...
-    behavior.Store   // CreateBehavior, GetBehavior, ...
-    persona.Store    // CreatePersona, GetPersona, ...
-    run.Store        // CreateRun, GetRun, UpdateRun, ListRuns, ...
-    memory.Store     // SaveConversation, LoadConversation, ...
-    checkpoint.Store // CreateCheckpoint, GetCheckpoint, ...
+    instinct.Store    // CreateInstinct, GetInstinct, ...
+    awareness.Store   // CreateAwareness, GetAwareness, ...
+    boundary.Store    // CreateBoundary, GetBoundary, ...
+    values.Store      // CreateValues, GetValues, ...
+    judgment.Store    // CreateJudgment, GetJudgment, ...
+    reflex.Store      // CreateReflex, GetReflex, ...
+    profile.Store     // CreateProfile, GetProfile, ...
+    scan.Store        // CreateScan, GetScan, ListScans, ScanStats
+    policy.Store      // CreatePolicy, GetPolicy, AssignToTenant, ...
+    pii.Store         // StorePIITokens, LoadPIITokens, PurgePIITokens, ...
+    compliance.Store  // CreateReport, GetReport, ListReports
 
     Migrate(ctx context.Context) error
     Ping(ctx context.Context) error

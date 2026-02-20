@@ -1,4 +1,4 @@
-package ext
+package plugin
 
 import (
 	"context"
@@ -85,12 +85,12 @@ type shutdownEntry struct {
 	hook Shutdown
 }
 
-// Registry holds registered extensions and dispatches lifecycle events.
-// It type-caches extensions at registration time so emit calls iterate
-// only over extensions that implement the relevant hook.
+// Registry holds registered plugins and dispatches lifecycle events.
+// It type-caches plugins at registration time so emit calls iterate
+// only over plugins that implement the relevant hook.
 type Registry struct {
-	extensions []Extension
-	logger     *slog.Logger
+	plugins []Plugin
+	logger  *slog.Logger
 
 	scanStarted           []scanStartedEntry
 	scanCompleted         []scanCompletedEntry
@@ -109,7 +109,7 @@ type Registry struct {
 	shutdown              []shutdownEntry
 }
 
-// NewRegistry creates a new extension registry.
+// NewRegistry creates a new plugin registry.
 func NewRegistry(logger *slog.Logger) *Registry {
 	if logger == nil {
 		logger = slog.Default()
@@ -117,191 +117,191 @@ func NewRegistry(logger *slog.Logger) *Registry {
 	return &Registry{logger: logger}
 }
 
-// Register adds an extension and type-caches its hook implementations.
-func (r *Registry) Register(e Extension) {
-	r.extensions = append(r.extensions, e)
-	name := e.Name()
+// Register adds a plugin and type-caches its hook implementations.
+func (r *Registry) Register(p Plugin) {
+	r.plugins = append(r.plugins, p)
+	name := p.Name()
 
-	if h, ok := e.(ScanStarted); ok {
+	if h, ok := p.(ScanStarted); ok {
 		r.scanStarted = append(r.scanStarted, scanStartedEntry{name, h})
 	}
-	if h, ok := e.(ScanCompleted); ok {
+	if h, ok := p.(ScanCompleted); ok {
 		r.scanCompleted = append(r.scanCompleted, scanCompletedEntry{name, h})
 	}
-	if h, ok := e.(ScanBlocked); ok {
+	if h, ok := p.(ScanBlocked); ok {
 		r.scanBlocked = append(r.scanBlocked, scanBlockedEntry{name, h})
 	}
-	if h, ok := e.(ScanFailed); ok {
+	if h, ok := p.(ScanFailed); ok {
 		r.scanFailed = append(r.scanFailed, scanFailedEntry{name, h})
 	}
-	if h, ok := e.(InstinctTriggered); ok {
+	if h, ok := p.(InstinctTriggered); ok {
 		r.instinctTriggered = append(r.instinctTriggered, instinctTriggeredEntry{name, h})
 	}
-	if h, ok := e.(AwarenessDetected); ok {
+	if h, ok := p.(AwarenessDetected); ok {
 		r.awarenessDetected = append(r.awarenessDetected, awarenessDetectedEntry{name, h})
 	}
-	if h, ok := e.(JudgmentAssessed); ok {
+	if h, ok := p.(JudgmentAssessed); ok {
 		r.judgmentAssessed = append(r.judgmentAssessed, judgmentAssessedEntry{name, h})
 	}
-	if h, ok := e.(ValueViolated); ok {
+	if h, ok := p.(ValueViolated); ok {
 		r.valueViolated = append(r.valueViolated, valueViolatedEntry{name, h})
 	}
-	if h, ok := e.(ReflexFired); ok {
+	if h, ok := p.(ReflexFired); ok {
 		r.reflexFired = append(r.reflexFired, reflexFiredEntry{name, h})
 	}
-	if h, ok := e.(BoundaryEnforced); ok {
+	if h, ok := p.(BoundaryEnforced); ok {
 		r.boundaryEnforced = append(r.boundaryEnforced, boundaryEnforcedEntry{name, h})
 	}
-	if h, ok := e.(PIIDetected); ok {
+	if h, ok := p.(PIIDetected); ok {
 		r.piiDetected = append(r.piiDetected, piiDetectedEntry{name, h})
 	}
-	if h, ok := e.(PIIRedacted); ok {
+	if h, ok := p.(PIIRedacted); ok {
 		r.piiRedacted = append(r.piiRedacted, piiRedactedEntry{name, h})
 	}
-	if h, ok := e.(PolicyEvaluated); ok {
+	if h, ok := p.(PolicyEvaluated); ok {
 		r.policyEvaluated = append(r.policyEvaluated, policyEvaluatedEntry{name, h})
 	}
-	if h, ok := e.(SafetyProfileResolved); ok {
+	if h, ok := p.(SafetyProfileResolved); ok {
 		r.safetyProfileResolved = append(r.safetyProfileResolved, safetyProfileResolvedEntry{name, h})
 	}
-	if h, ok := e.(Shutdown); ok {
+	if h, ok := p.(Shutdown); ok {
 		r.shutdown = append(r.shutdown, shutdownEntry{name, h})
 	}
 }
 
 // ── Emit methods ─────────────────────────────────────
 
-// EmitScanStarted notifies all extensions that implement ScanStarted.
+// EmitScanStarted notifies all plugins that implement ScanStarted.
 func (r *Registry) EmitScanStarted(ctx context.Context, scanID id.ScanID, direction string, text string) {
 	for _, e := range r.scanStarted {
 		if err := e.hook.OnScanStarted(ctx, scanID, direction, text); err != nil {
-			r.logger.Warn("ext: hook error", "hook", "ScanStarted", "extension", e.name, "error", err)
+			r.logger.Warn("plugin: hook error", "hook", "ScanStarted", "plugin", e.name, "error", err)
 		}
 	}
 }
 
-// EmitScanCompleted notifies all extensions that implement ScanCompleted.
+// EmitScanCompleted notifies all plugins that implement ScanCompleted.
 func (r *Registry) EmitScanCompleted(ctx context.Context, scanID id.ScanID, decision string, findingCount int, elapsed time.Duration) {
 	for _, e := range r.scanCompleted {
 		if err := e.hook.OnScanCompleted(ctx, scanID, decision, findingCount, elapsed); err != nil {
-			r.logger.Warn("ext: hook error", "hook", "ScanCompleted", "extension", e.name, "error", err)
+			r.logger.Warn("plugin: hook error", "hook", "ScanCompleted", "plugin", e.name, "error", err)
 		}
 	}
 }
 
-// EmitScanBlocked notifies all extensions that implement ScanBlocked.
+// EmitScanBlocked notifies all plugins that implement ScanBlocked.
 func (r *Registry) EmitScanBlocked(ctx context.Context, scanID id.ScanID, reason string) {
 	for _, e := range r.scanBlocked {
 		if err := e.hook.OnScanBlocked(ctx, scanID, reason); err != nil {
-			r.logger.Warn("ext: hook error", "hook", "ScanBlocked", "extension", e.name, "error", err)
+			r.logger.Warn("plugin: hook error", "hook", "ScanBlocked", "plugin", e.name, "error", err)
 		}
 	}
 }
 
-// EmitScanFailed notifies all extensions that implement ScanFailed.
+// EmitScanFailed notifies all plugins that implement ScanFailed.
 func (r *Registry) EmitScanFailed(ctx context.Context, scanID id.ScanID, err error) {
 	for _, e := range r.scanFailed {
 		if hookErr := e.hook.OnScanFailed(ctx, scanID, err); hookErr != nil {
-			r.logger.Warn("ext: hook error", "hook", "ScanFailed", "extension", e.name, "error", hookErr)
+			r.logger.Warn("plugin: hook error", "hook", "ScanFailed", "plugin", e.name, "error", hookErr)
 		}
 	}
 }
 
-// EmitInstinctTriggered notifies all extensions that implement InstinctTriggered.
+// EmitInstinctTriggered notifies all plugins that implement InstinctTriggered.
 func (r *Registry) EmitInstinctTriggered(ctx context.Context, scanID id.ScanID, instinctName string, score float64) {
 	for _, e := range r.instinctTriggered {
 		if err := e.hook.OnInstinctTriggered(ctx, scanID, instinctName, score); err != nil {
-			r.logger.Warn("ext: hook error", "hook", "InstinctTriggered", "extension", e.name, "error", err)
+			r.logger.Warn("plugin: hook error", "hook", "InstinctTriggered", "plugin", e.name, "error", err)
 		}
 	}
 }
 
-// EmitAwarenessDetected notifies all extensions that implement AwarenessDetected.
+// EmitAwarenessDetected notifies all plugins that implement AwarenessDetected.
 func (r *Registry) EmitAwarenessDetected(ctx context.Context, scanID id.ScanID, detectorName string, findingCount int) {
 	for _, e := range r.awarenessDetected {
 		if err := e.hook.OnAwarenessDetected(ctx, scanID, detectorName, findingCount); err != nil {
-			r.logger.Warn("ext: hook error", "hook", "AwarenessDetected", "extension", e.name, "error", err)
+			r.logger.Warn("plugin: hook error", "hook", "AwarenessDetected", "plugin", e.name, "error", err)
 		}
 	}
 }
 
-// EmitJudgmentAssessed notifies all extensions that implement JudgmentAssessed.
+// EmitJudgmentAssessed notifies all plugins that implement JudgmentAssessed.
 func (r *Registry) EmitJudgmentAssessed(ctx context.Context, scanID id.ScanID, assessorName string, riskLevel string, confidence float64) {
 	for _, e := range r.judgmentAssessed {
 		if err := e.hook.OnJudgmentAssessed(ctx, scanID, assessorName, riskLevel, confidence); err != nil {
-			r.logger.Warn("ext: hook error", "hook", "JudgmentAssessed", "extension", e.name, "error", err)
+			r.logger.Warn("plugin: hook error", "hook", "JudgmentAssessed", "plugin", e.name, "error", err)
 		}
 	}
 }
 
-// EmitValueViolated notifies all extensions that implement ValueViolated.
+// EmitValueViolated notifies all plugins that implement ValueViolated.
 func (r *Registry) EmitValueViolated(ctx context.Context, scanID id.ScanID, valueName string, severity string) {
 	for _, e := range r.valueViolated {
 		if err := e.hook.OnValueViolated(ctx, scanID, valueName, severity); err != nil {
-			r.logger.Warn("ext: hook error", "hook", "ValueViolated", "extension", e.name, "error", err)
+			r.logger.Warn("plugin: hook error", "hook", "ValueViolated", "plugin", e.name, "error", err)
 		}
 	}
 }
 
-// EmitReflexFired notifies all extensions that implement ReflexFired.
+// EmitReflexFired notifies all plugins that implement ReflexFired.
 func (r *Registry) EmitReflexFired(ctx context.Context, scanID id.ScanID, reflexName string, action string) {
 	for _, e := range r.reflexFired {
 		if err := e.hook.OnReflexFired(ctx, scanID, reflexName, action); err != nil {
-			r.logger.Warn("ext: hook error", "hook", "ReflexFired", "extension", e.name, "error", err)
+			r.logger.Warn("plugin: hook error", "hook", "ReflexFired", "plugin", e.name, "error", err)
 		}
 	}
 }
 
-// EmitBoundaryEnforced notifies all extensions that implement BoundaryEnforced.
+// EmitBoundaryEnforced notifies all plugins that implement BoundaryEnforced.
 func (r *Registry) EmitBoundaryEnforced(ctx context.Context, scanID id.ScanID, boundaryName string) {
 	for _, e := range r.boundaryEnforced {
 		if err := e.hook.OnBoundaryEnforced(ctx, scanID, boundaryName); err != nil {
-			r.logger.Warn("ext: hook error", "hook", "BoundaryEnforced", "extension", e.name, "error", err)
+			r.logger.Warn("plugin: hook error", "hook", "BoundaryEnforced", "plugin", e.name, "error", err)
 		}
 	}
 }
 
-// EmitPIIDetected notifies all extensions that implement PIIDetected.
+// EmitPIIDetected notifies all plugins that implement PIIDetected.
 func (r *Registry) EmitPIIDetected(ctx context.Context, scanID id.ScanID, piiType string, count int) {
 	for _, e := range r.piiDetected {
 		if err := e.hook.OnPIIDetected(ctx, scanID, piiType, count); err != nil {
-			r.logger.Warn("ext: hook error", "hook", "PIIDetected", "extension", e.name, "error", err)
+			r.logger.Warn("plugin: hook error", "hook", "PIIDetected", "plugin", e.name, "error", err)
 		}
 	}
 }
 
-// EmitPIIRedacted notifies all extensions that implement PIIRedacted.
+// EmitPIIRedacted notifies all plugins that implement PIIRedacted.
 func (r *Registry) EmitPIIRedacted(ctx context.Context, scanID id.ScanID, piiType string, count int) {
 	for _, e := range r.piiRedacted {
 		if err := e.hook.OnPIIRedacted(ctx, scanID, piiType, count); err != nil {
-			r.logger.Warn("ext: hook error", "hook", "PIIRedacted", "extension", e.name, "error", err)
+			r.logger.Warn("plugin: hook error", "hook", "PIIRedacted", "plugin", e.name, "error", err)
 		}
 	}
 }
 
-// EmitPolicyEvaluated notifies all extensions that implement PolicyEvaluated.
+// EmitPolicyEvaluated notifies all plugins that implement PolicyEvaluated.
 func (r *Registry) EmitPolicyEvaluated(ctx context.Context, scanID id.ScanID, policyName string, decision string) {
 	for _, e := range r.policyEvaluated {
 		if err := e.hook.OnPolicyEvaluated(ctx, scanID, policyName, decision); err != nil {
-			r.logger.Warn("ext: hook error", "hook", "PolicyEvaluated", "extension", e.name, "error", err)
+			r.logger.Warn("plugin: hook error", "hook", "PolicyEvaluated", "plugin", e.name, "error", err)
 		}
 	}
 }
 
-// EmitSafetyProfileResolved notifies all extensions that implement SafetyProfileResolved.
+// EmitSafetyProfileResolved notifies all plugins that implement SafetyProfileResolved.
 func (r *Registry) EmitSafetyProfileResolved(ctx context.Context, scanID id.ScanID, profileName string) {
 	for _, e := range r.safetyProfileResolved {
 		if err := e.hook.OnSafetyProfileResolved(ctx, scanID, profileName); err != nil {
-			r.logger.Warn("ext: hook error", "hook", "SafetyProfileResolved", "extension", e.name, "error", err)
+			r.logger.Warn("plugin: hook error", "hook", "SafetyProfileResolved", "plugin", e.name, "error", err)
 		}
 	}
 }
 
-// EmitShutdown notifies all extensions that implement Shutdown.
+// EmitShutdown notifies all plugins that implement Shutdown.
 func (r *Registry) EmitShutdown(ctx context.Context) {
 	for _, e := range r.shutdown {
 		if err := e.hook.OnShutdown(ctx); err != nil {
-			r.logger.Warn("ext: hook error", "hook", "Shutdown", "extension", e.name, "error", err)
+			r.logger.Warn("plugin: hook error", "hook", "Shutdown", "plugin", e.name, "error", err)
 		}
 	}
 }

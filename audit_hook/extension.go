@@ -11,27 +11,27 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/xraph/shield/ext"
+	"github.com/xraph/shield/plugin"
 	"github.com/xraph/shield/id"
 )
 
 // Compile-time interface checks.
 var (
-	_ ext.Extension             = (*Extension)(nil)
-	_ ext.ScanStarted           = (*Extension)(nil)
-	_ ext.ScanCompleted         = (*Extension)(nil)
-	_ ext.ScanBlocked           = (*Extension)(nil)
-	_ ext.ScanFailed            = (*Extension)(nil)
-	_ ext.InstinctTriggered     = (*Extension)(nil)
-	_ ext.AwarenessDetected     = (*Extension)(nil)
-	_ ext.JudgmentAssessed      = (*Extension)(nil)
-	_ ext.ValueViolated         = (*Extension)(nil)
-	_ ext.ReflexFired           = (*Extension)(nil)
-	_ ext.BoundaryEnforced      = (*Extension)(nil)
-	_ ext.PIIDetected           = (*Extension)(nil)
-	_ ext.PIIRedacted           = (*Extension)(nil)
-	_ ext.PolicyEvaluated       = (*Extension)(nil)
-	_ ext.SafetyProfileResolved = (*Extension)(nil)
+	_ plugin.Plugin             = (*Extension)(nil)
+	_ plugin.ScanStarted           = (*Extension)(nil)
+	_ plugin.ScanCompleted         = (*Extension)(nil)
+	_ plugin.ScanBlocked           = (*Extension)(nil)
+	_ plugin.ScanFailed            = (*Extension)(nil)
+	_ plugin.InstinctTriggered     = (*Extension)(nil)
+	_ plugin.AwarenessDetected     = (*Extension)(nil)
+	_ plugin.JudgmentAssessed      = (*Extension)(nil)
+	_ plugin.ValueViolated         = (*Extension)(nil)
+	_ plugin.ReflexFired           = (*Extension)(nil)
+	_ plugin.BoundaryEnforced      = (*Extension)(nil)
+	_ plugin.PIIDetected           = (*Extension)(nil)
+	_ plugin.PIIRedacted           = (*Extension)(nil)
+	_ plugin.PolicyEvaluated       = (*Extension)(nil)
+	_ plugin.SafetyProfileResolved = (*Extension)(nil)
 )
 
 // Recorder is the interface that audit backends must implement.
@@ -82,12 +82,12 @@ func New(r Recorder, opts ...Option) *Extension {
 	return e
 }
 
-// Name implements ext.Extension.
+// Name implements plugin.Plugin.
 func (e *Extension) Name() string { return "audit-hook" }
 
 // ── Scan lifecycle hooks ──────────────────────────────
 
-// OnScanStarted implements ext.ScanStarted.
+// OnScanStarted implements plugin.ScanStarted.
 func (e *Extension) OnScanStarted(ctx context.Context, scanID id.ScanID, direction string, _ string) error {
 	return e.record(ctx, ActionScanStarted, SeverityInfo, OutcomeSuccess,
 		ResourceScan, scanID.String(), CategorySafety, nil,
@@ -95,7 +95,7 @@ func (e *Extension) OnScanStarted(ctx context.Context, scanID id.ScanID, directi
 	)
 }
 
-// OnScanCompleted implements ext.ScanCompleted.
+// OnScanCompleted implements plugin.ScanCompleted.
 func (e *Extension) OnScanCompleted(ctx context.Context, scanID id.ScanID, decision string, findingCount int, elapsed time.Duration) error {
 	return e.record(ctx, ActionScanCompleted, SeverityInfo, OutcomeSuccess,
 		ResourceScan, scanID.String(), CategorySafety, nil,
@@ -105,7 +105,7 @@ func (e *Extension) OnScanCompleted(ctx context.Context, scanID id.ScanID, decis
 	)
 }
 
-// OnScanBlocked implements ext.ScanBlocked.
+// OnScanBlocked implements plugin.ScanBlocked.
 func (e *Extension) OnScanBlocked(ctx context.Context, scanID id.ScanID, reason string) error {
 	return e.record(ctx, ActionScanBlocked, SeverityWarning, OutcomeSuccess,
 		ResourceScan, scanID.String(), CategorySafety, nil,
@@ -113,7 +113,7 @@ func (e *Extension) OnScanBlocked(ctx context.Context, scanID id.ScanID, reason 
 	)
 }
 
-// OnScanFailed implements ext.ScanFailed.
+// OnScanFailed implements plugin.ScanFailed.
 func (e *Extension) OnScanFailed(ctx context.Context, scanID id.ScanID, scanErr error) error {
 	return e.record(ctx, ActionScanFailed, SeverityCritical, OutcomeFailure,
 		ResourceScan, scanID.String(), CategorySafety, scanErr,
@@ -122,7 +122,7 @@ func (e *Extension) OnScanFailed(ctx context.Context, scanID id.ScanID, scanErr 
 
 // ── Safety primitive lifecycle hooks ──────────────────
 
-// OnInstinctTriggered implements ext.InstinctTriggered.
+// OnInstinctTriggered implements plugin.InstinctTriggered.
 func (e *Extension) OnInstinctTriggered(ctx context.Context, scanID id.ScanID, instinctName string, score float64) error {
 	return e.record(ctx, ActionInstinctTriggered, SeverityWarning, OutcomeSuccess,
 		ResourceInstinct, scanID.String(), CategorySafety, nil,
@@ -131,7 +131,7 @@ func (e *Extension) OnInstinctTriggered(ctx context.Context, scanID id.ScanID, i
 	)
 }
 
-// OnAwarenessDetected implements ext.AwarenessDetected.
+// OnAwarenessDetected implements plugin.AwarenessDetected.
 func (e *Extension) OnAwarenessDetected(ctx context.Context, scanID id.ScanID, detectorName string, findingCount int) error {
 	return e.record(ctx, ActionAwarenessDetected, SeverityInfo, OutcomeSuccess,
 		ResourceAwareness, scanID.String(), CategorySafety, nil,
@@ -140,7 +140,7 @@ func (e *Extension) OnAwarenessDetected(ctx context.Context, scanID id.ScanID, d
 	)
 }
 
-// OnJudgmentAssessed implements ext.JudgmentAssessed.
+// OnJudgmentAssessed implements plugin.JudgmentAssessed.
 func (e *Extension) OnJudgmentAssessed(ctx context.Context, scanID id.ScanID, assessorName string, riskLevel string, confidence float64) error {
 	return e.record(ctx, ActionJudgmentAssessed, SeverityInfo, OutcomeSuccess,
 		ResourceJudgment, scanID.String(), CategorySafety, nil,
@@ -150,7 +150,7 @@ func (e *Extension) OnJudgmentAssessed(ctx context.Context, scanID id.ScanID, as
 	)
 }
 
-// OnValueViolated implements ext.ValueViolated.
+// OnValueViolated implements plugin.ValueViolated.
 func (e *Extension) OnValueViolated(ctx context.Context, scanID id.ScanID, valueName string, severity string) error {
 	return e.record(ctx, ActionValueViolated, SeverityWarning, OutcomeSuccess,
 		ResourceValue, scanID.String(), CategorySafety, nil,
@@ -159,7 +159,7 @@ func (e *Extension) OnValueViolated(ctx context.Context, scanID id.ScanID, value
 	)
 }
 
-// OnReflexFired implements ext.ReflexFired.
+// OnReflexFired implements plugin.ReflexFired.
 func (e *Extension) OnReflexFired(ctx context.Context, scanID id.ScanID, reflexName string, action string) error {
 	return e.record(ctx, ActionReflexFired, SeverityInfo, OutcomeSuccess,
 		ResourceReflex, scanID.String(), CategoryGovernance, nil,
@@ -168,7 +168,7 @@ func (e *Extension) OnReflexFired(ctx context.Context, scanID id.ScanID, reflexN
 	)
 }
 
-// OnBoundaryEnforced implements ext.BoundaryEnforced.
+// OnBoundaryEnforced implements plugin.BoundaryEnforced.
 func (e *Extension) OnBoundaryEnforced(ctx context.Context, scanID id.ScanID, boundaryName string) error {
 	return e.record(ctx, ActionBoundaryEnforced, SeverityWarning, OutcomeSuccess,
 		ResourceBoundary, scanID.String(), CategorySafety, nil,
@@ -178,7 +178,7 @@ func (e *Extension) OnBoundaryEnforced(ctx context.Context, scanID id.ScanID, bo
 
 // ── PII lifecycle hooks ───────────────────────────────
 
-// OnPIIDetected implements ext.PIIDetected.
+// OnPIIDetected implements plugin.PIIDetected.
 func (e *Extension) OnPIIDetected(ctx context.Context, scanID id.ScanID, piiType string, count int) error {
 	return e.record(ctx, ActionPIIDetected, SeverityWarning, OutcomeSuccess,
 		ResourcePII, scanID.String(), CategoryPrivacy, nil,
@@ -187,7 +187,7 @@ func (e *Extension) OnPIIDetected(ctx context.Context, scanID id.ScanID, piiType
 	)
 }
 
-// OnPIIRedacted implements ext.PIIRedacted.
+// OnPIIRedacted implements plugin.PIIRedacted.
 func (e *Extension) OnPIIRedacted(ctx context.Context, scanID id.ScanID, piiType string, count int) error {
 	return e.record(ctx, ActionPIIRedacted, SeverityInfo, OutcomeSuccess,
 		ResourcePII, scanID.String(), CategoryPrivacy, nil,
@@ -198,7 +198,7 @@ func (e *Extension) OnPIIRedacted(ctx context.Context, scanID id.ScanID, piiType
 
 // ── Policy lifecycle hooks ────────────────────────────
 
-// OnPolicyEvaluated implements ext.PolicyEvaluated.
+// OnPolicyEvaluated implements plugin.PolicyEvaluated.
 func (e *Extension) OnPolicyEvaluated(ctx context.Context, scanID id.ScanID, policyName string, decision string) error {
 	return e.record(ctx, ActionPolicyCreated, SeverityInfo, OutcomeSuccess,
 		ResourcePolicy, scanID.String(), CategoryGovernance, nil,
@@ -207,7 +207,7 @@ func (e *Extension) OnPolicyEvaluated(ctx context.Context, scanID id.ScanID, pol
 	)
 }
 
-// OnSafetyProfileResolved implements ext.SafetyProfileResolved.
+// OnSafetyProfileResolved implements plugin.SafetyProfileResolved.
 func (e *Extension) OnSafetyProfileResolved(ctx context.Context, scanID id.ScanID, profileName string) error {
 	return e.record(ctx, ActionProfileResolved, SeverityInfo, OutcomeSuccess,
 		ResourceProfile, scanID.String(), CategorySafety, nil,

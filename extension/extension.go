@@ -14,7 +14,7 @@ import (
 
 	"github.com/xraph/shield"
 	"github.com/xraph/shield/engine"
-	"github.com/xraph/shield/ext"
+	"github.com/xraph/shield/plugin"
 	"github.com/xraph/shield/store"
 )
 
@@ -54,10 +54,10 @@ func WithStore(s store.Store) Option {
 	}
 }
 
-// WithExtension registers a lifecycle extension.
-func WithExtension(x ext.Extension) Option {
+// WithPlugin registers a lifecycle plugin.
+func WithPlugin(p plugin.Plugin) Option {
 	return func(e *Extension) {
-		e.engineOpts = append(e.engineOpts, engine.WithExtension(x))
+		e.engineOpts = append(e.engineOpts, engine.WithPlugin(p))
 	}
 }
 

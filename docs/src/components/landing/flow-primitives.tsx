@@ -88,7 +88,7 @@ export function FlowNode({
 interface FlowLineProps {
   direction?: "horizontal" | "vertical";
   length?: number;
-  color?: "teal" | "amber" | "green" | "red" | "gray" | "violet" | "purple";
+  color?: "teal" | "amber" | "green" | "red" | "gray" | "blue" | "violet" | "purple";
   animated?: boolean;
   className?: string;
   delay?: number;
@@ -100,6 +100,7 @@ const lineColorMap = {
   green: "bg-green-500/40",
   red: "bg-red-500/40",
   gray: "bg-fd-border",
+  blue: "bg-blue-500/40",
   violet: "bg-violet-500/40",
   purple: "bg-purple-500/40",
 };
@@ -110,6 +111,7 @@ const particleColorMap = {
   green: "bg-green-400",
   red: "bg-red-400",
   gray: "bg-fd-muted-foreground",
+  blue: "bg-blue-400",
   violet: "bg-violet-400",
   purple: "bg-purple-400",
 };
@@ -117,7 +119,7 @@ const particleColorMap = {
 export function FlowLine({
   direction = "horizontal",
   length = 40,
-  color = "violet",
+  color = "blue",
   animated = true,
   className,
   delay = 0,
@@ -184,6 +186,8 @@ export function FlowLine({
               (isH ? "border-l-red-500/50" : "border-t-red-500/50"),
             color === "gray" &&
               (isH ? "border-l-fd-border" : "border-t-fd-border"),
+            color === "blue" &&
+              (isH ? "border-l-blue-500/50" : "border-t-blue-500/50"),
             color === "violet" &&
               (isH ? "border-l-violet-500/50" : "border-t-violet-500/50"),
             color === "purple" &&
@@ -200,7 +204,7 @@ export function FlowLine({
 interface FlowParticleStreamProps {
   direction?: "horizontal" | "vertical";
   length?: number;
-  color?: "teal" | "amber" | "green" | "red" | "violet";
+  color?: "teal" | "amber" | "green" | "red" | "blue" | "violet";
   count?: number;
   className?: string;
 }
@@ -208,7 +212,7 @@ interface FlowParticleStreamProps {
 export function FlowParticleStream({
   direction = "horizontal",
   length = 60,
-  color = "violet",
+  color = "blue",
   count = 3,
   className,
 }: FlowParticleStreamProps) {
@@ -271,7 +275,7 @@ const statusConfig = {
   },
   retry: {
     color:
-      "text-violet-600 dark:text-violet-400 bg-violet-500/10 border-violet-500/20",
+      "text-blue-600 dark:text-blue-400 bg-blue-500/10 border-blue-500/20",
     defaultLabel: "503 Retry",
     icon: "retry",
   },

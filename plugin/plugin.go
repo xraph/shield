@@ -1,9 +1,9 @@
-// Package ext defines the Shield extension system with opt-in lifecycle hooks.
+// Package plugin defines the Shield plugin system with opt-in lifecycle hooks.
 //
-// Extensions implement the base Extension interface and optionally implement
+// Plugins implement the base Plugin interface and optionally implement
 // one or more lifecycle hook interfaces to receive events they care about.
 // This follows the same pattern used by Weave and Cortex.
-package ext
+package plugin
 
 import (
 	"context"
@@ -12,8 +12,8 @@ import (
 	"github.com/xraph/shield/id"
 )
 
-// Extension is the base interface all Shield extensions must implement.
-type Extension interface {
+// Plugin is the base interface all Shield plugins must implement.
+type Plugin interface {
 	Name() string
 }
 

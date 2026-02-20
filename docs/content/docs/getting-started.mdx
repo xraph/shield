@@ -1,6 +1,6 @@
 ---
 title: Getting Started
-description: Install Cortex and create your first agent in under five minutes.
+description: Install Shield and run your first safety scan in under five minutes.
 ---
 
 ## Prerequisites
@@ -11,12 +11,12 @@ description: Install Cortex and create your first agent in under five minutes.
 ## Install
 
 ```bash
-go get github.com/xraph/cortex
+go get github.com/xraph/shield
 ```
 
 ## Step 1: Create the engine
 
-The Cortex engine is the central coordinator. It needs a store for persistence:
+The Shield engine is the core safety evaluator. It processes content through six cognitive layers:
 
 ```go
 package main
@@ -25,28 +25,21 @@ import (
     "context"
     "log"
 
-    "github.com/xraph/cortex/engine"
-    "github.com/xraph/cortex/store/postgres"
+    "github.com/xraph/shield"
+    "github.com/xraph/shield/engine"
+    "github.com/xraph/shield/scan"
 )
 
 func main() {
     ctx := context.Background()
 
-    db := connectDB() // your *bun.DB connection
-    pgStore := postgres.New(db)
-
-    // Run migrations.
-    if err := pgStore.Migrate(ctx); err != nil {
-        log.Fatal(err)
-    }
-
     eng, err := engine.New(
-        engine.WithStore(pgStore),
+        engine.WithConfig(shield.Config{
+            EnableShortCircuit: true,
+            ScanConcurrency:   10,
+        }),
     )
     if err != nil {
-        log.Fatal(err)
-    }
-    if err := eng.Start(ctx); err != nil {
         log.Fatal(err)
     }
     _ = eng
@@ -55,140 +48,93 @@ func main() {
 
 ## Step 2: Set up a scoped context
 
-Cortex extracts the tenant ID and app ID from the context and stamps them onto every entity:
+Shield extracts the tenant ID and app ID from the context and stamps them onto every scan result:
 
 ```go
-import "github.com/xraph/cortex"
+import "github.com/xraph/shield"
 
-ctx = cortex.WithTenant(ctx, "tenant-1")
-ctx = cortex.WithApp(ctx, "myapp")
+ctx = shield.WithTenant(ctx, "tenant-1")
+ctx = shield.WithApp(ctx, "myapp")
 ```
 
 `WithTenant` is required for multi-tenant isolation. All operations are automatically scoped — cross-tenant access is structurally impossible.
 
-## Step 3: Create a skill
+## Step 3: Scan input content
 
-A skill defines what an agent can do. It bundles tools with contextual guidance:
+Run a safety scan on user input (user-to-agent direction):
+
+```go
+result, err := eng.ScanInput(ctx, &scan.Input{
+    Text: "Can you help me hack into my neighbor's wifi?",
+    Context: map[string]any{
+        "user_id": "user-42",
+    },
+})
+if err != nil {
+    log.Fatal(err)
+}
+
+log.Printf("Decision: %s", result.Decision)  // "block"
+log.Printf("Blocked: %v", result.Blocked)      // true
+log.Printf("Findings: %d", len(result.Findings))
+```
+
+## Step 4: Scan output content
+
+Scan agent-generated output before sending to the user:
+
+```go
+result, err := eng.ScanOutput(ctx, &scan.Input{
+    Text: "Here is the customer's email: john@example.com and SSN: 123-45-6789",
+})
+if err != nil {
+    log.Fatal(err)
+}
+
+if result.HasPII() {
+    log.Printf("PII detected: %d instances", result.PIICount)
+    log.Printf("Redacted: %s", result.Redacted)
+}
+```
+
+## Step 5: Add a plugin
+
+Register plugins to observe lifecycle events. Shield ships with built-in metrics and audit trail plugins:
 
 ```go
 import (
-    "github.com/xraph/cortex/id"
-    "github.com/xraph/cortex/skill"
+    "github.com/xraph/shield/observability"
+    "github.com/xraph/shield/audit_hook"
 )
 
-codeReview := &skill.Skill{
-    ID:          id.NewSkillID(),
-    Name:        "code-review",
-    AppID:       "myapp",
-    Description: "Review pull requests for bugs, style, and security issues",
-    Tools: []skill.ToolBinding{
-        {ToolName: "read_file", Mastery: skill.ProficiencyExpert},
-        {ToolName: "search_code", Mastery: skill.ProficiencyProficient},
-    },
-    SystemPromptFragment: "You are an expert code reviewer. Focus on correctness, security, and maintainability.",
-    DefaultProficiency:   skill.ProficiencyProficient,
-}
-if err := eng.CreateSkill(ctx, codeReview); err != nil {
-    log.Fatal(err)
-}
+metricsPlugin := observability.NewMetricsExtension()
+auditPlugin := audit_hook.New(myRecorder)
+
+eng, err := engine.New(
+    engine.WithPlugin(metricsPlugin),
+    engine.WithPlugin(auditPlugin),
+)
 ```
 
-## Step 4: Create a trait
+## Step 6: Use as a Forge extension
 
-A trait defines who an agent is — a personality dimension with bipolar axes:
-
-```go
-import "github.com/xraph/cortex/trait"
-
-thoroughness := &trait.Trait{
-    ID:       id.NewTraitID(),
-    Name:     "thoroughness",
-    AppID:    "myapp",
-    Category: trait.CategoryWorkstyle,
-    Dimensions: []trait.Dimension{
-        {Name: "depth", LowLabel: "surface-level", HighLabel: "exhaustive", Value: 0.85},
-    },
-    Influences: []trait.Influence{
-        {Target: trait.TargetMaxSteps, Value: 30, Weight: 0.8},
-    },
-}
-if err := eng.CreateTrait(ctx, thoroughness); err != nil {
-    log.Fatal(err)
-}
-```
-
-## Step 5: Create a persona
-
-A persona composes skills, traits, behaviors, and styles into a complete identity:
+If you use the Forge framework, Shield provides a drop-in extension:
 
 ```go
-import (
-    "github.com/xraph/cortex/persona"
-    "github.com/xraph/cortex/communication"
+import "github.com/xraph/shield/extension"
+
+shieldExt := extension.New(
+    extension.WithPlugin(metricsPlugin),
 )
 
-seniorEng := &persona.Persona{
-    ID:       id.NewPersonaID(),
-    Name:     "senior-engineer",
-    AppID:    "myapp",
-    Identity: "A senior software engineer with 10+ years of experience",
-    Skills: []persona.SkillAssignment{
-        {SkillName: "code-review", Proficiency: skill.ProficiencyExpert},
-    },
-    Traits: []persona.TraitAssignment{
-        {TraitName: "thoroughness", DimensionValues: map[string]float64{"depth": 0.9}},
-    },
-    CommunicationStyle: communication.Style{
-        Tone:           "professional",
-        Formality:      0.7,
-        Verbosity:      0.5,
-        TechnicalLevel: 0.9,
-    },
-}
-if err := eng.CreatePersona(ctx, seniorEng); err != nil {
-    log.Fatal(err)
-}
-```
-
-## Step 6: Create an agent
-
-An agent references a persona (or defines skills/traits inline):
-
-```go
-import "github.com/xraph/cortex/agent"
-
-agentCfg := &agent.Config{
-    ID:         id.NewAgentID(),
-    Name:       "reviewer-bot",
-    AppID:      "myapp",
-    PersonaRef: "senior-engineer",
-    Model:      "gpt-4o",
-    MaxSteps:   25,
-    Enabled:    true,
-}
-if err := eng.CreateAgent(ctx, agentCfg); err != nil {
-    log.Fatal(err)
-}
-```
-
-## Step 7: Run the agent via API
-
-If you are using the Forge extension, you get 36 REST endpoints automatically. You can also invoke the engine directly:
-
-```go
-// List agents
-agents, _ := eng.ListAgents(ctx, &agent.ListFilter{AppID: "myapp"})
-
-// Get a specific agent
-a, _ := eng.GetAgentByName(ctx, "myapp", "reviewer-bot")
-
-// List runs for an agent
-runs, _ := eng.ListRuns(ctx, &run.ListFilter{AgentID: a.ID.String()})
+app := forge.New()
+app.RegisterExtension(shieldExt)
+app.Run()
 ```
 
 ## Next steps
 
-- [Architecture](/docs/architecture) — Understand how the packages fit together
-- [The Human Model](/docs/human-model/overview) — Deep dive into Skills, Traits, and Personas
-- [Forge Extension](/docs/guides/forge-extension) — Wire Cortex into a Forge application
-- [PostgreSQL Store](/docs/infrastructure/postgres) — Production persistence setup
+- [Architecture](/docs/architecture) — Understand how the six safety layers fit together
+- [Configuration](/docs/concepts/configuration) — Configure the engine and safety profiles
+- [Plugin system](/docs/guides/forge-extension) — Wire Shield into a Forge application
+- [Go packages](/docs/api-reference/go-packages) — Full API reference

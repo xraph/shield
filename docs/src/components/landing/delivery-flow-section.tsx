@@ -5,8 +5,8 @@ import { useEffect, useState } from "react";
 import { cn } from "@/lib/cn";
 import { SectionHeader } from "./section-header";
 
-// ─── Cycling Ingestion Action ─────────────────────────────────
-const pipelineActions = ["doc.ingest", "query.retrieve", "col.reindex"];
+// ─── Cycling Safety Action ───────────────────────────────────
+const pipelineActions = ["scan.input", "scan.output", "policy.evaluate"];
 
 function CyclingPipelineAction() {
   const [index, setIndex] = useState(0);
@@ -27,7 +27,7 @@ function CyclingPipelineAction() {
           animate={{ y: 0, opacity: 1 }}
           exit={{ y: -12, opacity: 0 }}
           transition={{ duration: 0.3 }}
-          className="absolute inset-0 text-violet-500 dark:text-violet-400 font-mono text-xs font-medium"
+          className="absolute inset-0 text-blue-500 dark:text-blue-400 font-mono text-xs font-medium"
         >
           {pipelineActions[index]}
         </motion.span>
@@ -87,17 +87,17 @@ function Stage({
 
 // ─── Animated Connection ─────────────────────────────────────
 function Connection({
-  color = "violet",
+  color = "blue",
   delay = 0,
   horizontal = true,
 }: {
-  color?: "violet" | "purple" | "green" | "red";
+  color?: "blue" | "cyan" | "green" | "red";
   delay?: number;
   horizontal?: boolean;
 }) {
   const colorMap = {
-    violet: { line: "bg-violet-500/30", particle: "bg-violet-400" },
-    purple: { line: "bg-purple-500/30", particle: "bg-purple-400" },
+    blue: { line: "bg-blue-500/30", particle: "bg-blue-400" },
+    cyan: { line: "bg-cyan-500/30", particle: "bg-cyan-400" },
     green: { line: "bg-green-500/30", particle: "bg-green-400" },
     red: { line: "bg-red-500/30", particle: "bg-red-400" },
   };
@@ -142,10 +142,10 @@ function Connection({
         className="absolute right-0 border-l-[4px] border-y-[2.5px] border-y-transparent border-l-current opacity-30"
         style={{
           color:
-            color === "violet"
-              ? "#8b5cf6"
-              : color === "purple"
-                ? "#a855f7"
+            color === "blue"
+              ? "#3b82f6"
+              : color === "cyan"
+                ? "#06b6d4"
                 : color === "green"
                   ? "#22c55e"
                   : "#ef4444",
@@ -166,14 +166,14 @@ function EventRow({
   action: string;
   status: "success" | "processing" | "indexed";
   statusLabel: string;
-  lineColor: "green" | "violet" | "purple" | "red";
+  lineColor: "green" | "blue" | "cyan" | "red";
   delay: number;
 }) {
   const statusColors = {
     success:
       "text-green-600 dark:text-green-400 bg-green-500/10 border-green-500/20",
     processing:
-      "text-violet-600 dark:text-violet-400 bg-violet-500/10 border-violet-500/20",
+      "text-blue-600 dark:text-blue-400 bg-blue-500/10 border-blue-500/20",
     indexed:
       "text-green-600 dark:text-green-400 bg-green-500/10 border-green-500/20",
   };
@@ -203,8 +203,8 @@ function EventRow({
   );
 }
 
-// ─── RAG Pipeline Diagram ─────────────────────────────────────
-function RAGPipelineDiagram() {
+// ─── Safety Pipeline Diagram ─────────────────────────────────
+function SafetyPipelineDiagram() {
   const [phase, setPhase] = useState(0);
 
   useEffect(() => {
@@ -223,64 +223,64 @@ function RAGPipelineDiagram() {
       className="relative"
     >
       {/* Background glow */}
-      <div className="absolute inset-0 -m-6 bg-gradient-to-br from-violet-500/5 via-transparent to-indigo-500/5 rounded-3xl blur-xl" />
+      <div className="absolute inset-0 -m-6 bg-gradient-to-br from-blue-500/5 via-transparent to-teal-500/5 rounded-3xl blur-xl" />
 
       <div className="relative p-3 sm:p-6 rounded-2xl border border-fd-border/50 bg-fd-card/30 backdrop-blur-sm">
         <div className="flex flex-col items-center gap-4">
-          {/* Pipeline stages */}
+          {/* Safety pipeline stages */}
           <div className="flex items-center gap-0 flex-wrap justify-center">
             <Stage
-              label="Ingest()"
+              label="Instincts"
               sublabel={<CyclingPipelineAction />}
-              color="text-violet-600 dark:text-violet-400"
-              borderColor="border-violet-500/30"
-              bgColor="bg-violet-500/5"
+              color="text-blue-600 dark:text-blue-400"
+              borderColor="border-blue-500/30"
+              bgColor="bg-blue-500/5"
               delay={0.1}
             />
-            <Connection color="violet" delay={0} />
+            <Connection color="blue" delay={0} />
             <Stage
-              label="Chunker"
-              sublabel="recursive"
-              color="text-purple-600 dark:text-purple-400"
-              borderColor="border-purple-500/30"
-              bgColor="bg-purple-500/5"
+              label="Awareness"
+              sublabel="detect"
+              color="text-cyan-600 dark:text-cyan-400"
+              borderColor="border-cyan-500/30"
+              bgColor="bg-cyan-500/5"
               delay={0.2}
             />
-            <Connection color="violet" delay={0.5} />
+            <Connection color="blue" delay={0.5} />
             <Stage
-              label="Embedder"
-              sublabel="text-emb-3"
-              color="text-violet-600 dark:text-violet-400"
-              borderColor="border-violet-500/30"
-              bgColor="bg-violet-500/8"
+              label="Boundaries"
+              sublabel="enforce"
+              color="text-blue-600 dark:text-blue-400"
+              borderColor="border-blue-500/30"
+              bgColor="bg-blue-500/8"
               pulse
               delay={0.3}
             />
           </div>
 
           {/* Vertical connection to events */}
-          <Connection color="violet" horizontal={false} delay={1} />
+          <Connection color="blue" horizontal={false} delay={1} />
 
           {/* Event rows with outcomes */}
           <div className="flex flex-col items-start gap-2.5">
             <EventRow
-              action="doc.loaded"
+              action="values.check"
               status="success"
-              statusLabel="✓ Parsed"
+              statusLabel="✓ Aligned"
               lineColor="green"
               delay={0.5}
             />
             <EventRow
-              action="chunks.created"
+              action="judgment.eval"
               status={phase === 1 ? "indexed" : "processing"}
-              statusLabel={phase === 1 ? "✓ 12 chunks" : "⟳ Chunking"}
-              lineColor={phase === 1 ? "green" : "violet"}
+              statusLabel={phase === 1 ? "✓ Score 0.97" : "⟳ Evaluating"}
+              lineColor={phase === 1 ? "green" : "blue"}
               delay={0.6}
             />
             <EventRow
-              action="vec.stored"
+              action="reflexes.apply"
               status="indexed"
-              statusLabel="✓ Indexed"
+              statusLabel="✓ Safe"
               lineColor="green"
               delay={0.7}
             />
@@ -290,19 +290,19 @@ function RAGPipelineDiagram() {
           <div className="flex items-center gap-4 mt-4 text-[10px] text-fd-muted-foreground">
             <div className="flex items-center gap-1.5">
               <div className="size-2 rounded-full bg-green-500" />
-              <span>Ready</span>
+              <span>Safe</span>
             </div>
             <div className="flex items-center gap-1.5">
-              <div className="size-2 rounded-full bg-violet-500" />
+              <div className="size-2 rounded-full bg-blue-500" />
               <span>Processing</span>
             </div>
             <div className="flex items-center gap-1.5">
-              <div className="size-2 rounded-full bg-purple-400" />
-              <span>Chunking</span>
+              <div className="size-2 rounded-full bg-cyan-400" />
+              <span>Detecting</span>
             </div>
             <div className="flex items-center gap-1.5">
               <div className="size-2 rounded-full bg-red-500" />
-              <span>Failed</span>
+              <span>Blocked</span>
             </div>
           </div>
         </div>
@@ -329,9 +329,9 @@ function FeatureBullet({
       transition={{ duration: 0.4, delay }}
       className="flex items-start gap-3"
     >
-      <div className="mt-1 flex items-center justify-center size-5 rounded-md bg-violet-500/10 shrink-0">
+      <div className="mt-1 flex items-center justify-center size-5 rounded-md bg-blue-500/10 shrink-0">
         <svg
-          className="size-3 text-violet-500"
+          className="size-3 text-blue-500"
           viewBox="0 0 12 12"
           fill="none"
           aria-hidden="true"
@@ -355,38 +355,38 @@ function FeatureBullet({
   );
 }
 
-// ─── RAG Ingestion Pipeline Section ──────────────────────────
+// ─── Safety Pipeline Section ─────────────────────────────────
 export function DeliveryFlowSection() {
   return (
     <section className="relative w-full py-20 sm:py-28 overflow-hidden">
       {/* Background */}
-      <div className="absolute inset-0 bg-gradient-to-b from-transparent via-violet-500/[0.02] to-transparent" />
+      <div className="absolute inset-0 bg-gradient-to-b from-transparent via-blue-500/[0.02] to-transparent" />
 
       <div className="container max-w-(--fd-layout-width) mx-auto px-4 sm:px-6">
         <div className="grid gap-12 lg:grid-cols-2 lg:gap-16 items-center">
           {/* Left: Text content */}
           <div className="flex flex-col">
             <SectionHeader
-              badge="RAG Ingestion Pipeline"
-              title="From document to searchable context."
-              description="Weave orchestrates the entire ingestion lifecycle — tenant scoping, text chunking, embedding generation, and vector storage."
+              badge="Safety Pipeline"
+              title="From input to safe output."
+              description="Shield orchestrates the entire safety lifecycle — instinct checks, awareness detection, boundary enforcement, value alignment, judgment scoring, and reflex actions."
               align="left"
             />
 
             <div className="mt-8 space-y-5">
               <FeatureBullet
-                title="Automatic Tenant Scoping"
-                description="Every ingestion and retrieval is stamped with TenantID and AppID from context. Collection and chunk isolation is enforced at the store layer — no tenant can access another's data."
+                title="Short-Circuit Execution"
+                description="Safety layers can short-circuit the pipeline early. If instincts detect a prompt injection, the scan terminates immediately without invoking downstream layers — minimizing latency and maximizing protection."
                 delay={0.2}
               />
               <FeatureBullet
-                title="Configurable Chunk Strategies"
-                description="Recursive or fixed-size chunking with configurable token size and overlap. Per-collection strategy overrides let you tune chunking for different document types."
+                title="Composable Safety Profiles"
+                description="Mix and match instincts, awareness detectors, boundaries, values, judgment strategies, and reflexes into reusable profiles. Switch profiles per tenant, agent, or deployment environment."
                 delay={0.3}
               />
               <FeatureBullet
-                title="Lifecycle Extension Hooks"
-                description="OnIngestCompleted, OnRetrievalFailed, and 12 other lifecycle events. Wire in metrics, audit trails, or custom processing logic without modifying engine code."
+                title="Plugin Lifecycle Hooks"
+                description="OnScanCompleted, OnPolicyViolation, and 13 other lifecycle events. Wire in metrics, audit trails, or custom processing logic without modifying engine code."
                 delay={0.4}
               />
             </div>
@@ -400,7 +400,7 @@ export function DeliveryFlowSection() {
             >
               <a
                 href="/docs/architecture"
-                className="inline-flex items-center gap-1 text-sm font-medium text-violet-600 dark:text-violet-400 hover:text-violet-500 transition-colors"
+                className="inline-flex items-center gap-1 text-sm font-medium text-blue-600 dark:text-blue-400 hover:text-blue-500 transition-colors"
               >
                 Learn about the architecture
                 <svg
@@ -423,7 +423,7 @@ export function DeliveryFlowSection() {
 
           {/* Right: Pipeline diagram */}
           <div className="relative">
-            <RAGPipelineDiagram />
+            <SafetyPipelineDiagram />
           </div>
         </div>
       </div>

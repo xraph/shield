@@ -16,9 +16,9 @@ interface FeatureCard {
 
 const features: FeatureCard[] = [
   {
-    title: "Document Ingestion Pipeline",
+    title: "Layered Safety Engine",
     description:
-      "Load, chunk, embed, and store in one call. Weave handles the full lifecycle from raw content to searchable vectors.",
+      "Six cognitive layers from instincts to reflexes. Shield processes every input through a composable pipeline of safety checks, each layer building on the last.",
     icon: (
       <svg
         className="size-5"
@@ -30,23 +30,22 @@ const features: FeatureCard[] = [
         strokeLinejoin="round"
         aria-hidden="true"
       >
-        <path d="M12 2v10M8 8l4 4 4-4" />
-        <path d="M3 15v4a2 2 0 002 2h14a2 2 0 002-2v-4" />
+        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
       </svg>
     ),
-    code: `doc, err := engine.Ingest(ctx, "col-123",
-  weave.IngestInput{
-    Title:   "Product FAQ",
-    Content: "Our return policy...",
-    Source:  "faq.md",
+    code: `result, err := engine.Scan(ctx,
+  shield.ScanInput{
+    Content:   "Process this request...",
+    Direction: shield.DirectionInput,
+    Source:    "chat-agent",
   })
-// doc.State=ready chunks=12`,
-    filename: "ingest.go",
+// result.Safe=true layers=6`,
+    filename: "scan.go",
   },
   {
-    title: "Semantic Retrieval",
+    title: "PII Detection & Vault",
     description:
-      "Cosine similarity, MMR, and hybrid search. Retrieve the most relevant chunks across a collection with configurable top-K and score thresholds.",
+      "Detect, redact, and vault PII with AES-256-GCM encryption. Sensitive data is identified, tokenized, and stored securely with reversible access controls.",
     icon: (
       <svg
         className="size-5"
@@ -58,24 +57,22 @@ const features: FeatureCard[] = [
         strokeLinejoin="round"
         aria-hidden="true"
       >
-        <circle cx="11" cy="11" r="8" />
-        <path d="M21 21l-4.35-4.35" />
-        <path d="M11 8v6M8 11h6" />
+        <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+        <path d="M7 11V7a5 5 0 0110 0v4" />
       </svg>
     ),
-    code: `results, err := engine.Retrieve(ctx, "col-123",
-  &weave.RetrieveInput{
-    Query:    "return policy",
-    TopK:     5,
-    MinScore: 0.75,
+    code: `result, err := engine.DetectPII(ctx,
+  shield.PIIInput{
+    Content: "Email john@example.com, SSN 123-45-6789",
   })
-// [0.94] Our return policy allows...`,
-    filename: "retrieve.go",
+// result.Entities=[email, ssn]
+// result.Redacted="Email [REDACTED], SSN [REDACTED]"`,
+    filename: "pii.go",
   },
   {
     title: "Multi-Tenant Isolation",
     description:
-      "Every collection, document, and chunk is scoped to a tenant via context. Cross-tenant queries are structurally impossible.",
+      "Every scan, policy evaluation, and audit record is scoped to a tenant via context. Cross-tenant access is structurally impossible.",
     icon: (
       <svg
         className="size-5"
@@ -92,45 +89,17 @@ const features: FeatureCard[] = [
         <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" />
       </svg>
     ),
-    code: `ctx = weave.WithTenant(ctx, "tenant-1")
-ctx = weave.WithApp(ctx, "myapp")
+    code: `ctx = shield.WithTenant(ctx, "tenant-1")
+ctx = shield.WithApp(ctx, "myapp")
 
-// All ingestions and retrievals are
+// All scans and policy evaluations are
 // automatically scoped to tenant-1`,
     filename: "scope.go",
   },
   {
-    title: "Pluggable Backends",
+    title: "Plugin System",
     description:
-      "Start with in-memory for development, swap to PostgreSQL + pgvector for production. Every subsystem is a Go interface.",
-    icon: (
-      <svg
-        className="size-5"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        aria-hidden="true"
-      >
-        <ellipse cx="12" cy="5" rx="9" ry="3" />
-        <path d="M21 12c0 1.66-4.03 3-9 3s-9-1.34-9-3" />
-        <path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5" />
-      </svg>
-    ),
-    code: `engine, _ := weave.NewEngine(
-  weave.WithStore(postgres.New(pool)),
-  weave.WithVectorStore(pgvector.New(pool)),
-  weave.WithEmbedder(myEmbedder),
-  weave.WithLogger(slog.Default()),
-)`,
-    filename: "main.go",
-  },
-  {
-    title: "Extension Hooks",
-    description:
-      "OnIngestCompleted, OnRetrievalStarted, and 12 other lifecycle events. Wire in metrics, audit trails, or custom logic.",
+      "15 lifecycle hooks for metrics, audit trails, and tracing. Wire in custom logic at every stage of the safety pipeline without modifying engine code.",
     icon: (
       <svg
         className="size-5"
@@ -147,20 +116,20 @@ ctx = weave.WithApp(ctx, "myapp")
         <line x1="17.5" y1="15" x2="9" y2="15" />
       </svg>
     ),
-    code: `func (e *MetricsExt) OnIngestCompleted(
+    code: `func (p *MetricsPlugin) OnScanCompleted(
   ctx context.Context,
-  colID string,
-  docs, chunks int,
-  elapsed time.Duration,
+  input shield.ScanInput,
+  result shield.ScanResult,
 ) {
-  metrics.Inc("weave.chunks.created", chunks)
+  metrics.Inc("shield.scans.total")
+  metrics.Observe("shield.scan.duration", result.Elapsed)
 }`,
-    filename: "extension.go",
+    filename: "plugin.go",
   },
   {
-    title: "Collection Management",
+    title: "Safety Profiles",
     description:
-      "Organize documents with per-collection embedding models, chunk strategies, and metadata. Reindex any collection at any time.",
+      "Compose instincts, awareness, boundaries, values, judgment, and reflexes into reusable safety profiles. Switch profiles per tenant, agent, or environment.",
     icon: (
       <svg
         className="size-5"
@@ -176,16 +145,47 @@ ctx = weave.WithApp(ctx, "myapp")
         <rect x="2" y="3" width="20" height="18" rx="2" />
       </svg>
     ),
-    code: `col, _ := engine.CreateCollection(ctx,
-  weave.CreateCollectionInput{
-    Name:            "product-docs",
-    EmbeddingModel:  "text-embedding-3-small",
-    ChunkStrategy:   "recursive",
-    ChunkSize:       512,
-    ChunkOverlap:    50,
+    code: `p := profile.New("strict",
+  profile.WithInstincts(instinct.BlockInjection()),
+  profile.WithAwareness(awareness.DetectPII()),
+  profile.WithBoundaries(boundary.RateLimit(100)),
+  profile.WithValues(values.NoHarm()),
+  profile.WithJudgment(judgment.Threshold(0.95)),
+  profile.WithReflexes(reflex.AutoBlock()),
+)`,
+    filename: "profile.go",
+  },
+  {
+    title: "Compliance Reporting",
+    description:
+      "Generate compliance reports for EU AI Act, NIST AI RMF, and SOC2. Automated evidence collection from scan results, policy evaluations, and audit trails.",
+    icon: (
+      <svg
+        className="size-5"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+      >
+        <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+        <polyline points="14 2 14 8 20 8" />
+        <line x1="16" y1="13" x2="8" y2="13" />
+        <line x1="16" y1="17" x2="8" y2="17" />
+        <polyline points="10 9 9 9 8 9" />
+      </svg>
+    ),
+    code: `report, _ := engine.GenerateReport(ctx,
+  shield.ReportInput{
+    Framework:  shield.FrameworkEUAIAct,
+    Period:     "2025-Q1",
+    TenantID:   "tenant-1",
+    IncludeEvidence: true,
   })
-// Reindex: engine.Reindex(ctx, col.ID)`,
-    filename: "collection.go",
+// report.Score=94 controls=23 findings=2`,
+    filename: "compliance.go",
     colSpan: 2,
   },
 ];
@@ -214,8 +214,8 @@ export function FeatureBento() {
       <div className="container max-w-(--fd-layout-width) mx-auto px-4 sm:px-6">
         <SectionHeader
           badge="Features"
-          title="Everything you need for RAG pipelines"
-          description="Weave handles the hard parts — ingestion, chunking, embedding, retrieval, and multi-tenancy — so you can focus on your application."
+          title="Everything you need for AI safety"
+          description="Shield handles the hard parts — safety scanning, PII detection, policy governance, and compliance reporting — so you can focus on your application."
         />
 
         <motion.div
@@ -230,13 +230,13 @@ export function FeatureBento() {
               key={feature.title}
               variants={itemVariants}
               className={cn(
-                "group relative rounded-xl border border-fd-border bg-fd-card/50 backdrop-blur-sm p-6 hover:border-violet-500/20 hover:bg-fd-card/80 transition-all duration-300",
+                "group relative rounded-xl border border-fd-border bg-fd-card/50 backdrop-blur-sm p-6 hover:border-blue-500/20 hover:bg-fd-card/80 transition-all duration-300",
                 feature.colSpan === 2 && "md:col-span-2",
               )}
             >
               {/* Header */}
               <div className="flex items-start gap-3 mb-4">
-                <div className="flex items-center justify-center size-9 rounded-lg bg-violet-500/10 text-violet-600 dark:text-violet-400 shrink-0">
+                <div className="flex items-center justify-center size-9 rounded-lg bg-blue-500/10 text-blue-600 dark:text-blue-400 shrink-0">
                   {feature.icon}
                 </div>
                 <div>

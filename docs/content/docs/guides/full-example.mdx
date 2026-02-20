@@ -1,9 +1,9 @@
 ---
-title: End-to-End RAG Pipeline
-description: Complete walkthrough — create a collection, ingest documents, retrieve context, and build a prompt for an LLM.
+title: End-to-End Safety Pipeline
+description: Complete walkthrough — configure safety primitives, compose a profile, scan content, and handle results.
 ---
 
-This guide builds a complete RAG pipeline from scratch using PostgreSQL, pgvector, and the OpenAI embedder.
+This guide builds a complete AI safety pipeline from scratch using Shield.
 
 ## 1. Set up the engine
 
@@ -12,191 +12,171 @@ package main
 
 import (
     "context"
-    "database/sql"
-    "fmt"
     "log"
-    "os"
 
-    "github.com/jackc/pgx/v5/pgxpool"
-    "github.com/uptrace/bun"
-    "github.com/uptrace/bun/dialect/pgdialect"
-    "github.com/uptrace/bun/driver/pgdriver"
-
-    "github.com/xraph/weave"
-    "github.com/xraph/weave/assembler"
-    "github.com/xraph/weave/embedder"
-    "github.com/xraph/weave/engine"
-    "github.com/xraph/weave/collection"
-    pgstore "github.com/xraph/weave/store/postgres"
-    pgvec "github.com/xraph/weave/vectorstore/pgvector"
+    "github.com/xraph/shield"
+    "github.com/xraph/shield/engine"
+    "github.com/xraph/shield/observability"
+    "github.com/xraph/shield/scan"
 )
 
 func main() {
     ctx := context.Background()
 
-    // PostgreSQL metadata store
-    sqldb := sql.OpenDB(pgdriver.NewConnector(
-        pgdriver.WithDSN(os.Getenv("DATABASE_URL")),
-    ))
-    db := bun.NewDB(sqldb, pgdialect.New())
-    metaStore := pgstore.New(db)
+    // Build engine with metrics
+    metricsPlugin := observability.NewMetricsExtension()
 
-    // pgvector store
-    pool, err := pgxpool.New(ctx, os.Getenv("DATABASE_URL"))
-    if err != nil {
-        log.Fatal(err)
-    }
-    vecStore := pgvec.New(pool)
-
-    // OpenAI embedder
-    emb := embedder.NewOpenAI(
-        embedder.WithOpenAIKey(os.Getenv("OPENAI_API_KEY")),
-    )
-
-    // Build engine
     eng, err := engine.New(
-        engine.WithStore(metaStore),
-        engine.WithVectorStore(vecStore),
-        engine.WithEmbedder(emb),
+        engine.WithConfig(shield.Config{
+            EnableShortCircuit: true,
+            ScanConcurrency:   10,
+        }),
+        engine.WithPlugin(metricsPlugin),
     )
     if err != nil {
         log.Fatal(err)
-    }
-
-    // Run migrations
-    if err := metaStore.Migrate(ctx); err != nil {
-        log.Fatal("migrate:", err)
-    }
-    if err := vecStore.Migrate(ctx); err != nil {
-        log.Fatal("migrate vectors:", err)
     }
 
     // Set tenant scope
-    ctx = weave.WithTenant(ctx, "acme-corp")
-    ctx = weave.WithApp(ctx, "support-bot")
+    ctx = shield.WithTenant(ctx, "acme-corp")
+    ctx = shield.WithApp(ctx, "support-bot")
 
     run(ctx, eng)
 }
 ```
 
-## 2. Create a collection
+## 2. Scan user input
 
 ```go
 func run(ctx context.Context, eng *engine.Engine) {
-    col := &collection.Collection{
-        Name:           "product-docs",
-        EmbeddingModel: "text-embedding-3-small",
-        EmbeddingDims:  1536,
-        ChunkStrategy:  "recursive",
-        ChunkSize:      512,
-        ChunkOverlap:   50,
-    }
-    if err := eng.CreateCollection(ctx, col); err != nil {
-        log.Fatal("create collection:", err)
-    }
-    fmt.Println("created collection:", col.ID)
-```
-
-## 3. Ingest documents
-
-```go
-    documents := []struct{ title, content string }{
-        {
-            title:   "Return Policy",
-            content: "Our return policy allows returns within 30 days of purchase. Items must be in original condition with all tags attached. Refunds are processed within 5-7 business days.",
-        },
-        {
-            title:   "Shipping Policy",
-            content: "Standard shipping takes 5-7 business days. Expedited shipping takes 2-3 business days. We ship to all 50 US states and internationally to 45 countries.",
-        },
-        {
-            title:   "Warranty Information",
-            content: "All products come with a 1-year limited warranty. The warranty covers manufacturing defects but not accidental damage. Contact support@acme.com to file a warranty claim.",
+    // Scan incoming user message
+    input := &scan.Input{
+        Text: "Can you help me with my account? My email is john@example.com",
+        Context: map[string]any{
+            "channel": "chat",
+            "user_id": "user-42",
         },
     }
 
-    for _, doc := range documents {
-        result, err := eng.Ingest(ctx, &engine.IngestInput{
-            CollectionID: col.ID,
-            Title:        doc.title,
-            Content:      doc.content,
-        })
-        if err != nil {
-            log.Printf("ingest %q: %v", doc.title, err)
-            continue
-        }
-        fmt.Printf("ingested %q: %d chunks\n", doc.title, result.ChunkCount)
-    }
-```
-
-## 4. Retrieve relevant context
-
-```go
-    userQuery := "How long do I have to return a product?"
-
-    results, err := eng.Retrieve(ctx, userQuery,
-        engine.WithCollection(col.ID),
-        engine.WithTopK(5),
-        engine.WithMinScore(0.7),
-    )
+    result, err := eng.ScanInput(ctx, input)
     if err != nil {
-        log.Fatal("retrieve:", err)
+        log.Fatal("scan input:", err)
     }
 
-    fmt.Printf("retrieved %d chunks\n", len(results))
-    for _, r := range results {
-        fmt.Printf("  [%.2f] %s\n", r.Score, r.Chunk.Content[:60])
+    log.Printf("Decision: %s", result.Decision)
+    log.Printf("Findings: %d", len(result.Findings))
+    log.Printf("Has PII: %v", result.HasPII())
+```
+
+## 3. Handle scan results
+
+```go
+    // Check if content was blocked
+    if result.Blocked {
+        log.Printf("Content blocked: %s", result.Decision)
+        return
+    }
+
+    // Check for PII
+    if result.HasPII() {
+        log.Printf("PII detected: %d instances", result.PIICount)
+        log.Printf("Redacted text: %s", result.Redacted)
+        // Use result.Redacted instead of original text
+    }
+
+    // Inspect findings
+    for _, finding := range result.Findings {
+        log.Printf("[%s] %s: %s (score: %.2f)",
+            finding.Layer,
+            finding.Source,
+            finding.Message,
+            finding.Score,
+        )
     }
 ```
 
-## 5. Assemble context and call LLM
+## 4. Scan agent output
 
 ```go
-    // Convert to retriever.Result for the assembler
-    retResults := make([]retriever.Result, len(results))
-    for i, r := range results {
-        retResults[i] = retriever.Result{Chunk: r.Chunk, Score: r.Score}
-    }
+    // Before sending agent response to user, scan it
+    agentResponse := "Here is your account information..."
 
-    // Assemble with 3000-token budget
-    a := assembler.New(assembler.WithMaxTokens(3000))
-    assembled, err := a.Assemble(ctx, retResults)
+    outputResult, err := eng.ScanOutput(ctx, &scan.Input{
+        Text: agentResponse,
+    })
     if err != nil {
-        log.Fatal("assemble:", err)
+        log.Fatal("scan output:", err)
     }
 
-    // Build the final prompt
-    prompt := fmt.Sprintf(`You are a helpful customer support assistant.
+    if outputResult.Blocked {
+        log.Printf("Agent response blocked: %s", outputResult.Decision)
+        // Return a safe fallback response
+        return
+    }
 
-Context:
-%s
+    // Use the (possibly redacted) output
+    finalResponse := agentResponse
+    if outputResult.HasPII() {
+        finalResponse = outputResult.Redacted
+    }
 
-Question: %s
+    log.Printf("Safe response: %s", finalResponse)
+```
 
-Answer based only on the context above.`, assembled.Context, userQuery)
+## 5. Graceful shutdown
 
-    fmt.Println("--- PROMPT ---")
-    fmt.Println(prompt)
-    // Pass prompt to your LLM of choice
+```go
+    // Stop the engine (notifies all plugins)
+    if err := eng.Stop(ctx); err != nil {
+        log.Printf("shutdown error: %v", err)
+    }
 }
 ```
 
-## 6. Cross-collection search
+## 6. Adding audit trails
 
-For applications with multiple collections (e.g. per-product-line docs), use `HybridSearch`:
+For production, add an audit trail plugin to record all safety events:
 
 ```go
-results, err := eng.HybridSearch(ctx, userQuery,
-    &engine.HybridSearchParams{
-        Collections: []id.CollectionID{col1ID, col2ID},
-        TopK:        10,
-        MinScore:    0.7,
-    },
+import "github.com/xraph/shield/audit_hook"
+
+// Create a recorder that bridges to your audit backend
+recorder := audit_hook.RecorderFunc(func(ctx context.Context, event *audit_hook.AuditEvent) error {
+    log.Printf("[AUDIT] %s %s: %s (severity: %s)",
+        event.Action,
+        event.Resource,
+        event.Outcome,
+        event.Severity,
+    )
+    return nil
+})
+
+auditPlugin := audit_hook.New(recorder)
+
+eng, _ := engine.New(
+    engine.WithPlugin(metricsPlugin),
+    engine.WithPlugin(auditPlugin),
 )
 ```
 
-Results are merged and re-ranked by score before being returned.
+## Scan result decisions
 
-## Complete code
+| Decision | Meaning |
+|----------|---------|
+| `allow` | Content is safe to proceed |
+| `block` | Content is blocked — do not send |
+| `flag` | Content is flagged for review but allowed |
+| `redact` | Content contains PII that was redacted |
 
-The full runnable example is in `examples/rag-pipeline/main.go` in the Weave repository.
+## Finding layers
+
+Each finding indicates which safety layer produced it:
+
+| Layer | Description |
+|-------|-------------|
+| `instinct` | Pre-conscious threat detection |
+| `awareness` | PII, topic, intent detection |
+| `boundary` | Hard limit violation |
+| `values` | Ethical rule violation |
+| `judgment` | Contextual risk assessment |
+| `reflex` | Policy rule triggered |

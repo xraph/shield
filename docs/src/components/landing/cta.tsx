@@ -8,8 +8,8 @@ export function CTA() {
   return (
     <section className="relative w-full py-20 sm:py-28 overflow-hidden">
       {/* Background gradients */}
-      <div className="absolute inset-0 bg-gradient-to-b from-transparent via-violet-500/[0.03] to-transparent" />
-      <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-[600px] h-[300px] bg-gradient-to-t from-violet-500/8 to-transparent rounded-full blur-3xl" />
+      <div className="absolute inset-0 bg-gradient-to-b from-transparent via-blue-500/[0.03] to-transparent" />
+      <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-[600px] h-[300px] bg-gradient-to-t from-blue-500/8 to-transparent rounded-full blur-3xl" />
 
       <div className="relative container max-w-(--fd-layout-width) mx-auto px-4 sm:px-6">
         <motion.div
@@ -20,12 +20,12 @@ export function CTA() {
           className="max-w-2xl mx-auto text-center"
         >
           <h2 className="text-3xl font-bold tracking-tight text-fd-foreground sm:text-4xl">
-            Start building with Weave
+            Start building with Shield
           </h2>
           <p className="mt-4 text-lg text-fd-muted-foreground leading-relaxed">
-            Add production-grade RAG pipelines to your Go service in minutes.
-            Weave handles ingestion, chunking, embedding, and semantic retrieval
-            out of the box.
+            Add production-grade AI safety and governance to your Go service in
+            minutes. Shield handles safety scanning, PII detection, policy
+            evaluation, and compliance reporting out of the box.
           </p>
 
           {/* Install command */}
@@ -38,7 +38,7 @@ export function CTA() {
           >
             <span className="text-fd-muted-foreground select-none">$</span>
             <code className="text-fd-foreground">
-              go get github.com/xraph/weave
+              go get github.com/xraph/shield
             </code>
           </motion.div>
 
@@ -54,8 +54,8 @@ export function CTA() {
               href="/docs"
               className={cn(
                 "inline-flex items-center justify-center rounded-lg px-6 py-2.5 text-sm font-medium transition-colors",
-                "bg-violet-500 text-white hover:bg-violet-600",
-                "shadow-sm shadow-violet-500/20",
+                "bg-blue-500 text-white hover:bg-blue-600",
+                "shadow-sm shadow-blue-500/20",
               )}
             >
               Get Started

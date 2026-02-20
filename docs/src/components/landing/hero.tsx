@@ -24,8 +24,8 @@ function GitHubIcon({ className }: { className?: string }) {
   );
 }
 
-// ─── Mini RAG Pipeline Diagram ───────────────────────────────
-function MiniRAGPipeline() {
+// ─── Mini Safety Pipeline Diagram ────────────────────────────
+function MiniSafetyPipeline() {
   return (
     <motion.div
       initial={{ opacity: 0 }}
@@ -34,14 +34,14 @@ function MiniRAGPipeline() {
       className="relative w-full max-w-md mx-auto"
     >
       {/* Background glow */}
-      <div className="absolute inset-0 -m-8 bg-gradient-to-br from-violet-500/5 via-transparent to-indigo-500/5 rounded-3xl blur-2xl" />
+      <div className="absolute inset-0 -m-8 bg-gradient-to-br from-blue-500/5 via-transparent to-teal-500/5 rounded-3xl blur-2xl" />
 
       <div className="relative space-y-6 p-4">
-        {/* Row 1: Ingest → Chunk → Embed → Store */}
+        {/* Row 1: ScanInput → Instincts → Awareness → Boundaries */}
         <div className="flex items-center justify-center gap-0">
           <FlowNode
-            label="Ingest()"
-            color="violet"
+            label="ScanInput"
+            color="blue"
             size="sm"
             delay={0.4}
             icon={
@@ -67,18 +67,18 @@ function MiniRAGPipeline() {
               </svg>
             }
           />
-          <FlowLine length={24} color="violet" delay={1} />
-          <FlowNode label="Chunk" color="purple" size="sm" delay={0.55} />
-          <FlowLine length={24} color="violet" delay={2} />
-          <FlowNode label="Embed" color="violet" size="sm" delay={0.7} />
-          <FlowLine length={24} color="violet" delay={3} />
-          <FlowNode label="Store" color="violet" size="sm" pulse delay={0.85} />
+          <FlowLine length={24} color="blue" delay={1} />
+          <FlowNode label="Instincts" color="blue" size="sm" delay={0.55} />
+          <FlowLine length={24} color="blue" delay={2} />
+          <FlowNode label="Awareness" color="teal" size="sm" delay={0.7} />
+          <FlowLine length={24} color="blue" delay={3} />
+          <FlowNode label="Boundaries" color="blue" size="sm" pulse delay={0.85} />
         </div>
 
-        {/* Row 2: Pipeline events */}
+        {/* Row 2: Safety pipeline events */}
         <div className="flex items-start justify-center">
           <div className="space-y-2.5">
-            {/* Event 1: doc loaded */}
+            {/* Event 1: values checked */}
             <motion.div
               initial={{ opacity: 0, x: -10 }}
               animate={{ opacity: 1, x: 0 }}
@@ -86,30 +86,30 @@ function MiniRAGPipeline() {
               className="flex items-center gap-0"
             >
               <FlowLine length={28} color="green" delay={3} />
-              <FlowNode label="doc.loaded" color="gray" size="sm" delay={1.1} />
+              <FlowNode label="Values" color="gray" size="sm" delay={1.1} />
               <FlowLine length={24} color="green" delay={4} />
-              <StatusBadge status="delivered" label="parsed" />
+              <StatusBadge status="delivered" label="passed" />
             </motion.div>
 
-            {/* Event 2: chunks stored */}
+            {/* Event 2: judgment evaluated */}
             <motion.div
               initial={{ opacity: 0, x: -10 }}
               animate={{ opacity: 1, x: 0 }}
               transition={{ delay: 1.2 }}
               className="flex items-center gap-0"
             >
-              <FlowLine length={28} color="violet" delay={5} />
+              <FlowLine length={28} color="blue" delay={5} />
               <FlowNode
-                label="chunks.12"
+                label="Judgment"
                 color="gray"
                 size="sm"
                 delay={1.3}
               />
-              <FlowLine length={24} color="violet" delay={6} />
-              <StatusBadge status="retry" label="stored" />
+              <FlowLine length={24} color="blue" delay={6} />
+              <StatusBadge status="retry" label="reviewing" />
             </motion.div>
 
-            {/* Event 3: vectors indexed */}
+            {/* Event 3: reflexes applied */}
             <motion.div
               initial={{ opacity: 0, x: -10 }}
               animate={{ opacity: 1, x: 0 }}
@@ -118,23 +118,23 @@ function MiniRAGPipeline() {
             >
               <FlowLine length={28} color="green" delay={7} />
               <FlowNode
-                label="vec.ready"
+                label="Reflexes"
                 color="gray"
                 size="sm"
                 delay={1.5}
               />
               <FlowLine length={24} color="green" delay={8} />
-              <StatusBadge status="delivered" label="indexed" />
+              <StatusBadge status="delivered" label="safe" />
             </motion.div>
           </div>
         </div>
 
         {/* Floating capability badges */}
         <div className="flex flex-wrap items-center justify-center gap-2 pt-2">
-          <FloatingBadge label="pgvector" delay={1.6} />
+          <FloatingBadge label="PII Vault" delay={1.6} />
           <FloatingBadge label="Multi-Tenant" delay={1.8} />
           <FloatingBadge label="Forge-Native" delay={2.0} />
-          <FloatingBadge label="Pluggable" delay={2.2} />
+          <FloatingBadge label="Plugin System" delay={2.2} />
         </div>
       </div>
     </motion.div>
@@ -150,7 +150,7 @@ export function Hero() {
 
       {/* Radial gradient overlays */}
       <div className="absolute inset-0 bg-gradient-to-b from-fd-background via-transparent to-fd-background" />
-      <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[600px] bg-gradient-to-b from-violet-500/8 to-transparent rounded-full blur-3xl" />
+      <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[600px] bg-gradient-to-b from-blue-500/8 to-transparent rounded-full blur-3xl" />
 
       <div className="relative container max-w-(--fd-layout-width) mx-auto px-4 sm:px-6">
         <div className="grid gap-12 lg:grid-cols-2 lg:gap-16 items-center py-20 sm:py-28 md:py-32">
@@ -162,8 +162,8 @@ export function Hero() {
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.4 }}
             >
-              <span className="inline-flex items-center rounded-full border border-violet-500/20 bg-violet-500/10 px-3.5 py-1 text-xs font-medium text-violet-600 dark:text-violet-400 mb-6">
-                Composable RAG pipeline engine for Go
+              <span className="inline-flex items-center rounded-full border border-blue-500/20 bg-blue-500/10 px-3.5 py-1 text-xs font-medium text-blue-600 dark:text-blue-400 mb-6">
+                Composable AI safety and governance for Go
               </span>
             </motion.div>
 
@@ -177,8 +177,8 @@ export function Hero() {
               transition={{ duration: 0.5, delay: 0.6 }}
               className="mt-6 text-lg text-fd-muted-foreground leading-relaxed max-w-lg"
             >
-              Ingest documents, chunk text, generate embeddings, store vectors,
-              and retrieve semantic context &mdash; tenant-scoped,
+              Scan inputs and outputs, detect and vault PII, enforce safety
+              policies, and generate compliance reports &mdash; tenant-scoped,
               plugin-extensible, and Forge-native.
             </motion.p>
 
@@ -191,7 +191,7 @@ export function Hero() {
             >
               <span className="text-fd-muted-foreground select-none">$</span>
               <code className="text-fd-foreground">
-                go get github.com/xraph/weave
+                go get github.com/xraph/shield
               </code>
             </motion.div>
 
@@ -206,14 +206,14 @@ export function Hero() {
                 href="/docs"
                 className={cn(
                   "inline-flex items-center justify-center rounded-lg px-5 py-2.5 text-sm font-medium transition-colors",
-                  "bg-violet-500 text-white hover:bg-violet-600",
-                  "shadow-sm shadow-violet-500/20",
+                  "bg-blue-500 text-white hover:bg-blue-600",
+                  "shadow-sm shadow-blue-500/20",
                 )}
               >
                 Get Started
               </Link>
               <a
-                href="https://github.com/xraph/weave"
+                href="https://github.com/xraph/shield"
                 target="_blank"
                 rel="noreferrer"
                 className={cn(
@@ -227,9 +227,9 @@ export function Hero() {
             </motion.div>
           </div>
 
-          {/* Right: Mini RAG pipeline diagram */}
+          {/* Right: Mini Safety pipeline diagram */}
           <div className="relative lg:pl-8">
-            <MiniRAGPipeline />
+            <MiniSafetyPipeline />
           </div>
         </div>
       </div>

@@ -1,36 +1,29 @@
 ---
 title: Configuration
-description: Options and defaults for the Cortex engine and Forge extension.
+description: Options and defaults for the Shield engine and Forge extension.
 ---
 
 ## Engine configuration
 
-`cortex.Config` holds global defaults that apply to all agents unless overridden at the agent level:
+`shield.Config` holds global defaults for the safety engine:
 
 ```go
 type Config struct {
-    DefaultModel         string        // LLM model (default: "smart")
-    DefaultMaxSteps      int           // max reasoning steps per run (default: 25)
-    DefaultMaxTokens     int           // max output tokens per LLM call (default: 4096)
-    DefaultTemperature   float64       // LLM sampling temperature (default: 0.7)
-    DefaultReasoningLoop string        // reasoning strategy (default: "react")
-    ShutdownTimeout      time.Duration // graceful shutdown timeout (default: 30s)
-    RunConcurrency       int           // max concurrent runs (default: 4)
+    DefaultProfile     string        // safety profile to use when none specified
+    ShutdownTimeout    time.Duration // graceful shutdown timeout (default: 30s)
+    ScanConcurrency    int           // max parallel scans (default: 10)
+    EnableShortCircuit bool          // skip deeper layers on block (default: true)
 }
 ```
 
 ### Defaults
 
 ```go
-cortex.DefaultConfig() // returns:
+shield.DefaultConfig() // returns:
 // Config{
-//     DefaultModel:         "smart",
-//     DefaultMaxSteps:      25,
-//     DefaultMaxTokens:     4096,
-//     DefaultTemperature:   0.7,
-//     DefaultReasoningLoop: "react",
-//     ShutdownTimeout:      30 * time.Second,
-//     RunConcurrency:       4,
+//     ShutdownTimeout:    30 * time.Second,
+//     ScanConcurrency:    10,
+//     EnableShortCircuit: true,
 // }
 ```
 
@@ -40,10 +33,10 @@ Pass a custom config via engine options:
 
 ```go
 eng, err := engine.New(
-    engine.WithConfig(cortex.Config{
-        DefaultModel:    "gpt-4o",
-        DefaultMaxSteps: 50,
-        RunConcurrency:  8,
+    engine.WithConfig(shield.Config{
+        DefaultProfile:     "strict",
+        ScanConcurrency:    20,
+        EnableShortCircuit: true,
     }),
     engine.WithStore(pgStore),
 )
@@ -53,27 +46,40 @@ eng, err := engine.New(
 
 | Option | Description |
 |--------|-------------|
-| `engine.WithStore(s)` | Sets the composite store (required) |
+| `engine.WithStore(s)` | Sets the composite store |
 | `engine.WithConfig(cfg)` | Sets the engine configuration |
-| `engine.WithExtension(ext)` | Registers a plugin extension |
+| `engine.WithPlugin(p)` | Registers a lifecycle plugin |
 | `engine.WithLogger(l)` | Sets the structured logger |
 
-## Agent-level overrides
+## Top-level Shield options
 
-Each `agent.Config` can override engine-level defaults:
+The root `shield` package provides options for composing safety primitives inline:
 
 ```go
-agentCfg := &agent.Config{
-    Model:       "claude-3-opus",  // overrides DefaultModel
-    MaxSteps:    50,               // overrides DefaultMaxSteps
-    MaxTokens:   8192,             // overrides DefaultMaxTokens
-    Temperature: 0.3,              // overrides DefaultTemperature
+type Options struct {
+    Config     Config
+    Profile    string     // default safety profile name
+    Instincts  []string   // inline instinct names
+    Awareness  []string   // inline awareness detector names
+    Values     []string   // inline value names
+    Boundaries []string   // inline boundary names
+    Judgments  []string   // inline judgment names
+    Reflexes   []string   // inline reflex names
 }
 ```
 
-If an agent field is zero-valued, the engine default applies.
+| Option | Description |
+|--------|-------------|
+| `shield.WithConfig(cfg)` | Sets the Shield configuration |
+| `shield.WithProfile(name)` | Sets the default safety profile |
+| `shield.WithInstincts(names...)` | Adds inline instinct names |
+| `shield.WithAwareness(names...)` | Adds inline awareness detector names |
+| `shield.WithValues(names...)` | Adds inline value names |
+| `shield.WithBoundaries(names...)` | Adds inline boundary names |
+| `shield.WithJudgments(names...)` | Adds inline judgment names |
+| `shield.WithReflexes(names...)` | Adds inline reflex names |
 
-## Extension configuration
+## Forge extension configuration
 
 The Forge extension wrapper has its own `Config`:
 
@@ -81,7 +87,7 @@ The Forge extension wrapper has its own `Config`:
 type Config struct {
     DisableRoutes  bool   // prevents HTTP route registration
     DisableMigrate bool   // prevents auto-migration on start
-    BasePath       string // URL prefix for all cortex routes
+    BasePath       string // URL prefix for all shield routes
 }
 ```
 
@@ -90,7 +96,7 @@ type Config struct {
 | Option | Description |
 |--------|-------------|
 | `extension.WithStore(s)` | Sets the composite store |
-| `extension.WithExtension(x)` | Registers a Cortex plugin extension |
+| `extension.WithPlugin(p)` | Registers a Shield lifecycle plugin |
 | `extension.WithEngineOption(opt)` | Passes an engine option directly |
 | `extension.WithConfig(cfg)` | Sets the extension configuration |
 | `extension.WithDisableRoutes()` | Disables HTTP route registration |

@@ -10,39 +10,39 @@ const footerLinks = {
     { label: "Architecture", href: "/docs/architecture" },
     { label: "Configuration", href: "/docs/concepts/configuration" },
   ],
-  Components: [
-    { label: "Ingestion", href: "/docs/subsystems/recording" },
-    { label: "Retrieval", href: "/docs/subsystems/verification" },
-    { label: "Chunker", href: "/docs/subsystems/erasure" },
-    { label: "Embedder", href: "/docs/subsystems/compliance" },
-    { label: "Extensions", href: "/docs/subsystems/plugins" },
+  "Safety Layers": [
+    { label: "Instincts", href: "/docs/subsystems/instincts" },
+    { label: "Awareness", href: "/docs/subsystems/awareness" },
+    { label: "Boundaries", href: "/docs/subsystems/boundaries" },
+    { label: "Values", href: "/docs/subsystems/values" },
+    { label: "Judgment", href: "/docs/subsystems/judgment" },
+    { label: "Reflexes", href: "/docs/subsystems/reflexes" },
   ],
-  Stores: [
-    { label: "Memory", href: "/docs/stores/memory" },
-    { label: "PostgreSQL", href: "/docs/stores/postgres" },
-    { label: "SQLite", href: "/docs/stores/sqlite" },
-    { label: "pgvector", href: "/docs/stores/bun" },
+  Extensions: [
+    { label: "Audit Hook", href: "/docs/extensions/audit-hook" },
+    { label: "Observability", href: "/docs/extensions/observability" },
+    { label: "Custom Plugin", href: "/docs/guides/custom-plugin" },
     { label: "Custom Store", href: "/docs/guides/custom-store" },
   ],
   Community: [
     {
       label: "GitHub",
-      href: "https://github.com/xraph/weave",
+      href: "https://github.com/xraph/shield",
       external: true,
     },
     {
       label: "Issues",
-      href: "https://github.com/xraph/weave/issues",
+      href: "https://github.com/xraph/shield/issues",
       external: true,
     },
     {
       label: "Discussions",
-      href: "https://github.com/xraph/weave/discussions",
+      href: "https://github.com/xraph/shield/discussions",
       external: true,
     },
     {
       label: "Contributing",
-      href: "https://github.com/xraph/weave/blob/main/CONTRIBUTING.md",
+      href: "https://github.com/xraph/shield/blob/main/CONTRIBUTING.md",
       external: true,
     },
   ],
@@ -58,16 +58,17 @@ export function Footer() {
           <div className="col-span-2 md:col-span-1">
             <Link href="/" className="inline-flex items-center gap-2 mb-4">
               <ThemedLogo />
-              <span className="font-bold text-lg">Weave</span>
+              <span className="font-bold text-lg">Shield</span>
             </Link>
             <p className="text-sm text-fd-muted-foreground leading-relaxed max-w-xs">
-              Composable RAG pipeline engine for Go. Ingest documents, generate
-              embeddings, and retrieve semantic context at scale.
+              Composable AI safety and governance library for Go. Scan inputs,
+              detect PII, enforce policies, and generate compliance reports at
+              scale.
             </p>
             {/* Social links */}
             <div className="flex items-center gap-3 mt-6">
               <a
-                href="https://github.com/xraph/weave"
+                href="https://github.com/xraph/shield"
                 target="_blank"
                 rel="noreferrer"
                 className="text-fd-muted-foreground hover:text-fd-foreground transition-colors"

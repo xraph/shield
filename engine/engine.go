@@ -20,7 +20,7 @@ import (
 	"time"
 
 	"github.com/xraph/shield"
-	"github.com/xraph/shield/ext"
+	"github.com/xraph/shield/plugin"
 	"github.com/xraph/shield/id"
 	"github.com/xraph/shield/scan"
 	"github.com/xraph/shield/store"
@@ -29,7 +29,7 @@ import (
 // Engine is the core safety execution engine.
 type Engine struct {
 	store      store.Store
-	registry   *ext.Registry
+	registry   *plugin.Registry
 	config     shield.Config
 	logger     *slog.Logger
 }
@@ -42,9 +42,9 @@ func WithStore(s store.Store) Option {
 	return func(e *Engine) { e.store = s }
 }
 
-// WithExtension registers a lifecycle extension.
-func WithExtension(x ext.Extension) Option {
-	return func(e *Engine) { e.registry.Register(x) }
+// WithPlugin registers a lifecycle plugin.
+func WithPlugin(p plugin.Plugin) Option {
+	return func(e *Engine) { e.registry.Register(p) }
 }
 
 // WithConfig sets the engine configuration.
@@ -60,7 +60,7 @@ func WithLogger(l *slog.Logger) Option {
 // New creates a new safety engine with the given options.
 func New(opts ...Option) (*Engine, error) {
 	e := &Engine{
-		registry: ext.NewRegistry(slog.Default()),
+		registry: plugin.NewRegistry(slog.Default()),
 		config:   shield.DefaultConfig(),
 		logger:   slog.Default(),
 	}

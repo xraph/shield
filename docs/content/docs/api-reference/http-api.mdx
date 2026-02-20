@@ -1,277 +1,172 @@
 ---
 title: HTTP API Reference
-description: Complete reference for all 12 Weave REST endpoints — collections, documents, retrieval, and search.
+description: REST API endpoints for Shield safety operations.
 ---
 
-All endpoints are under `/v1` and return JSON. Authentication and tenant resolution depend on your Forge middleware configuration.
+Shield's HTTP API is available when using the Forge extension. All endpoints return JSON. Authentication and tenant resolution depend on your Forge middleware configuration.
 
-## Collections
+## Safety Scanning
 
-### `POST /v1/collections`
+### `POST /v1/scan/input`
 
-Create a collection.
+Scan user input content for safety.
 
 **Request**
 
 ```json
 {
-  "name": "string (required)",
-  "description": "string",
-  "embedding_model": "string (default: text-embedding-3-small)",
-  "embedding_dims": 1536,
-  "chunk_strategy": "recursive | fixed | sliding | semantic | code",
-  "chunk_size": 512,
-  "chunk_overlap": 50,
+  "text": "string (required)",
+  "context": { "key": "value" },
   "metadata": { "key": "value" }
 }
 ```
 
-**Response** `201 Created`
+**Response** `200 OK`
 
 ```json
 {
-  "id": "col_01h455vbjdx6ycf56rnatbxqkh",
+  "id": "scan_01h455vbjdx6ycf56rnatbxqkh",
+  "direction": "input",
+  "decision": "allow",
+  "blocked": false,
+  "findings": [],
+  "redacted": "",
+  "pii_count": 0,
+  "profile_used": "default",
   "tenant_id": "tenant-1",
   "app_id": "myapp",
-  "name": "product-docs",
-  "embedding_model": "text-embedding-3-small",
-  "embedding_dims": 1536,
-  "chunk_strategy": "recursive",
-  "chunk_size": 512,
-  "chunk_overlap": 50,
-  "document_count": 0,
-  "chunk_count": 0,
-  "created_at": "2024-01-15T10:30:00Z",
-  "updated_at": "2024-01-15T10:30:00Z"
+  "duration": "12ms",
+  "created_at": "2024-01-15T10:30:00Z"
 }
 ```
 
 ---
 
-### `GET /v1/collections`
+### `POST /v1/scan/output`
 
-List collections for the current tenant.
-
-**Query parameters**
-
-| Param | Type | Description |
-|-------|------|-------------|
-| `limit` | int | Max results (default: 20) |
-| `offset` | int | Pagination offset |
-
-**Response** `200 OK` — array of Collection objects.
-
----
-
-### `GET /v1/collections/:collectionId`
-
-Get a collection by ID.
-
-**Response** `200 OK` — Collection object.
-
-**Error** `404 Not Found` if collection does not exist for the current tenant.
-
----
-
-### `DELETE /v1/collections/:collectionId`
-
-Delete a collection and all associated documents, chunks, and vectors.
-
-**Response** `204 No Content`
-
----
-
-### `GET /v1/collections/:collectionId/stats`
-
-Get aggregate statistics for a collection.
-
-**Response** `200 OK`
-
-```json
-{
-  "collection_id": "col_01h455...",
-  "collection_name": "product-docs",
-  "document_count": 42,
-  "chunk_count": 1204,
-  "embedding_model": "text-embedding-3-small",
-  "chunk_strategy": "recursive"
-}
-```
-
----
-
-### `POST /v1/collections/:collectionId/reindex`
-
-Re-embed and re-store all chunks in a collection. Use after changing the embedding model.
-
-**Response** `204 No Content`
-
----
-
-## Documents
-
-### `POST /v1/collections/:collectionId/documents`
-
-Ingest a document — runs the full load → chunk → embed → store pipeline synchronously.
+Scan agent output content before sending to users.
 
 **Request**
 
 ```json
 {
-  "title": "string",
-  "content": "string (required)",
-  "source": "string",
-  "source_type": "string (MIME type)",
+  "text": "string (required)",
+  "context": { "key": "value" },
   "metadata": { "key": "value" }
 }
 ```
 
-**Response** `201 Created`
-
-```json
-{
-  "document_id": "doc_01h455vbjdx6ycf56rnatbxqki",
-  "chunk_count": 12,
-  "state": "ready"
-}
-```
-
-**Error** `400 Bad Request` if content is empty.
+**Response** `200 OK` — same format as scan/input.
 
 ---
 
-### `POST /v1/collections/:collectionId/documents/batch`
+## Scan History
 
-Ingest multiple documents.
+### `GET /v1/scans`
 
-**Request**
-
-```json
-{
-  "documents": [
-    { "title": "Doc A", "content": "..." },
-    { "title": "Doc B", "content": "..." }
-  ]
-}
-```
-
-**Response** `201 Created` — array of IngestResult objects.
-
----
-
-### `GET /v1/collections/:collectionId/documents`
-
-List documents in a collection.
+List scan results for the current tenant.
 
 **Query parameters**
 
 | Param | Type | Description |
 |-------|------|-------------|
-| `state` | string | Filter by state: `pending`, `processing`, `ready`, `failed` |
+| `direction` | string | Filter by direction: `input`, `output` |
+| `decision` | string | Filter by decision: `allow`, `block`, `flag`, `redact` |
 | `limit` | int | Max results (default: 20) |
 | `offset` | int | Pagination offset |
 
-**Response** `200 OK` — array of Document objects.
+**Response** `200 OK` — array of Result objects.
 
 ---
 
-### `GET /v1/documents/:documentId`
+### `GET /v1/scans/:scanId`
 
-Get a document by ID.
+Get a scan result by ID.
+
+**Response** `200 OK` — Result object.
+
+**Error** `404 Not Found` if scan does not exist for the current tenant.
+
+---
+
+### `GET /v1/scans/stats`
+
+Get aggregated scan statistics.
+
+**Query parameters**
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `from` | string | Start date (ISO 8601) |
+| `to` | string | End date (ISO 8601) |
 
 **Response** `200 OK`
 
 ```json
 {
-  "id": "doc_01h455...",
-  "collection_id": "col_01h455...",
-  "tenant_id": "tenant-1",
-  "title": "Return Policy",
-  "source": "policy.md",
-  "source_type": "text/markdown",
-  "content_hash": "sha256:abc...",
-  "content_length": 1024,
-  "chunk_count": 12,
-  "state": "ready",
-  "error": "",
-  "metadata": {},
-  "created_at": "2024-01-15T10:30:00Z",
-  "updated_at": "2024-01-15T10:30:05Z"
-}
-```
-
----
-
-### `DELETE /v1/documents/:documentId`
-
-Delete a document and all its chunks from both metadata and vector stores.
-
-**Response** `204 No Content`
-
----
-
-## Retrieval
-
-### `POST /v1/collections/:collectionId/retrieve`
-
-Semantic retrieval within a collection.
-
-**Request**
-
-```json
-{
-  "query": "string (required)",
-  "top_k": 5,
-  "min_score": 0.75,
-  "strategy": "similarity | mmr | hybrid"
-}
-```
-
-**Response** `200 OK`
-
-```json
-[
-  {
-    "chunk": {
-      "id": "chunk_01h455...",
-      "document_id": "doc_01h455...",
-      "collection_id": "col_01h455...",
-      "tenant_id": "tenant-1",
-      "content": "Our return policy allows...",
-      "index": 0,
-      "start_offset": 0,
-      "end_offset": 312,
-      "token_count": 48,
-      "metadata": {}
-    },
-    "score": 0.94
+  "total_scans": 1542,
+  "blocked_count": 23,
+  "flagged_count": 89,
+  "allowed_count": 1430,
+  "by_direction": {
+    "input": 1200,
+    "output": 342
+  },
+  "by_decision": {
+    "allow": 1430,
+    "block": 23,
+    "flag": 89
   }
-]
-```
-
-Results are sorted by `score` descending.
-
----
-
-### `POST /v1/search`
-
-Hybrid search across one or more collections.
-
-**Request**
-
-```json
-{
-  "query": "string (required)",
-  "collections": ["col_01h455...", "col_02x..."],
-  "top_k": 10,
-  "min_score": 0.7,
-  "strategy": "similarity | mmr | hybrid"
 }
 ```
 
-When `collections` is omitted, searches all collections visible to the current tenant.
+---
 
-**Response** `200 OK` — array of ScoredChunk objects, merged and sorted by score.
+## Safety Primitives
+
+Each safety primitive (instincts, awareness, boundaries, values, judgments, reflexes) follows the same CRUD pattern:
+
+### `POST /v1/{primitive}s`
+
+Create a new safety primitive.
+
+### `GET /v1/{primitive}s`
+
+List primitives for the current app.
+
+### `GET /v1/{primitive}s/:id`
+
+Get a primitive by ID.
+
+### `PUT /v1/{primitive}s/:id`
+
+Update a primitive.
+
+### `DELETE /v1/{primitive}s/:id`
+
+Delete a primitive.
+
+Where `{primitive}` is one of: `instinct`, `awareness`, `boundary`, `value`, `judgment`, `reflex`, `profile`.
+
+---
+
+## Policies
+
+### `POST /v1/policies`
+
+Create a safety policy.
+
+### `GET /v1/policies`
+
+List policies for the current scope.
+
+### `POST /v1/policies/:policyId/assign`
+
+Assign a policy to a tenant.
+
+### `POST /v1/policies/:policyId/unassign`
+
+Unassign a policy from a tenant.
 
 ---
 
@@ -288,6 +183,7 @@ All error responses use a consistent JSON envelope:
 
 | HTTP status | `code` | Cause |
 |-------------|--------|-------|
-| `400` | `BAD_REQUEST` | Missing required field, empty content |
-| `404` | `NOT_FOUND` | Collection or document not found for tenant |
-| `500` | `INTERNAL_ERROR` | Store, embedder, or vector store failure |
+| `400` | `BAD_REQUEST` | Missing required field, invalid input |
+| `404` | `NOT_FOUND` | Entity not found for tenant |
+| `409` | `CONFLICT` | Entity with same name already exists |
+| `500` | `INTERNAL_ERROR` | Store or engine failure |

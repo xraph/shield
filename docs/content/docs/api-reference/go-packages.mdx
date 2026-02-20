@@ -1,15 +1,15 @@
 ---
 title: Go Packages
-description: Quick reference for all Weave Go packages and their public APIs.
+description: Quick reference for all Shield Go packages and their public APIs.
 ---
 
-All Weave packages are importable from `github.com/xraph/weave`.
+All Shield packages are importable from `github.com/xraph/shield`.
 
 ## Core packages
 
-### `github.com/xraph/weave`
+### `github.com/xraph/shield`
 
-Root package. Exports context helpers, error constants, and shared types.
+Root package. Exports context helpers, error constants, configuration, and shared types.
 
 | Export | Description |
 |--------|-------------|
@@ -19,161 +19,200 @@ Root package. Exports context helpers, error constants, and shared types.
 | `AppFromContext(ctx)` | Read app ID from context |
 | `Config` | Engine configuration struct |
 | `DefaultConfig()` | Returns default Config values |
-| `ErrNoStore`, `ErrNoEmbedder`, `ErrNoVectorStore`, `ErrNoChunker` | Missing-component errors |
-| `ErrEmptyContent`, `ErrInvalidInput` | Input validation errors |
+| `Entity` | Base type with timestamps |
+| `Version` | Current library version |
+| `ErrNoStore`, `ErrInputBlocked`, `ErrOutputBlocked`, ... | Sentinel errors |
 
-### `github.com/xraph/weave/engine`
+### `github.com/xraph/shield/engine`
 
-The central Engine and all ingestion/retrieval operations.
+The core layered safety engine.
 
 | Export | Description |
 |--------|-------------|
 | `New(...Option) (*Engine, error)` | Create an engine |
-| `Engine.CreateCollection` | Create a collection |
-| `Engine.GetCollection` | Get collection by ID |
-| `Engine.GetCollectionByName` | Get collection by name |
-| `Engine.ListCollections` | List collections |
-| `Engine.DeleteCollection` | Delete collection and all contents |
-| `Engine.CollectionStats` | Aggregate stats for a collection |
-| `Engine.Ingest` | Ingest a single document |
-| `Engine.IngestBatch` | Ingest multiple documents |
-| `Engine.GetDocument` | Get document by ID |
-| `Engine.ListDocuments` | List documents |
-| `Engine.DeleteDocument` | Delete document and chunks |
-| `Engine.Retrieve` | Semantic retrieval |
-| `Engine.HybridSearch` | Cross-collection search |
-| `Engine.ReindexCollection` | Re-embed all chunks |
-| `Engine.Stop` | Graceful shutdown |
-| `IngestInput` | Input struct for Ingest |
-| `IngestResult` | Output struct from Ingest |
-| `ScoredChunk` | Retrieved chunk with score |
-| `RetrieveOption` | Functional option for Retrieve |
-| `WithCollection`, `WithTopK`, `WithMinScore`, `WithStrategy`, `WithTenantID` | Retrieve options |
+| `Engine.ScanInput(ctx, *scan.Input)` | Scan user input content |
+| `Engine.ScanOutput(ctx, *scan.Input)` | Scan agent output content |
+| `Engine.Stop(ctx)` | Graceful shutdown |
+| `WithStore(s)` | Set composite store |
+| `WithPlugin(p)` | Register lifecycle plugin |
+| `WithConfig(cfg)` | Set engine configuration |
+| `WithLogger(l)` | Set structured logger |
 
-## Interface packages
+### `github.com/xraph/shield/scan`
 
-### `github.com/xraph/weave/chunker`
+Scan input/output types, findings, and results.
 
-```go
-type Chunker interface {
-    Chunk(ctx context.Context, text string, opts *Options) ([]ChunkResult, error)
-}
-```
+| Export | Description |
+|--------|-------------|
+| `Input` | Content to scan |
+| `Result` | Complete scan output |
+| `Finding` | Individual detection from a safety layer |
+| `Direction` | Input or output direction |
+| `Decision` | Allow, block, flag, or redact |
+| `Stats` | Aggregated scan statistics |
 
-### `github.com/xraph/weave/embedder`
+## Safety layer packages
 
-```go
-type Embedder interface {
-    Embed(ctx context.Context, texts []string) ([]EmbedResult, error)
-    Dimensions() int
-}
-```
+### `github.com/xraph/shield/instinct`
 
-### `github.com/xraph/weave/loader`
+Pre-conscious threat detection. Categories: injection, exfiltration, manipulation, jailbreak.
 
-```go
-type Loader interface {
-    Load(ctx context.Context, reader io.Reader) (*LoadResult, error)
-    Supports(mimeType string) bool
-}
-```
+| Export | Description |
+|--------|-------------|
+| `Instinct` | Entity with strategies, sensitivity, and action |
+| `Category` | Injection, Exfiltration, Manipulation, Jailbreak |
+| `Sensitivity` | Paranoid, Cautious, Balanced, Relaxed, Permissive |
+| `Strategy` | Detection strategy with name, weight, config |
+| `Store` | CRUD persistence interface |
 
-### `github.com/xraph/weave/retriever`
+### `github.com/xraph/shield/awareness`
 
-```go
-type Retriever interface {
-    Retrieve(ctx context.Context, query string, opts *Options) ([]Result, error)
-}
-```
+Perception layer — PII, topic, sentiment, intent, language detection.
 
-### `github.com/xraph/weave/store`
+| Export | Description |
+|--------|-------------|
+| `Awareness` | Entity with focus, detectors, and action |
+| `Focus` | PII, Topic, Sentiment, Intent, Language, Custom |
+| `Detector` | Named detector with patterns and config |
+| `PIIAction` | Redact, Flag, Block, Vault |
+| `Store` | CRUD persistence interface |
 
-```go
-type Store interface {
-    collection.Store
-    document.Store
-    chunk.Store
-    Migrate(ctx context.Context) error
-    Ping(ctx context.Context) error
-    Close() error
-}
-```
+### `github.com/xraph/shield/boundary`
 
-### `github.com/xraph/weave/vectorstore`
+Hard safety limits — binary pass/block checks.
 
-```go
-type VectorStore interface {
-    Upsert(ctx context.Context, entries []Entry) error
-    Search(ctx context.Context, vector []float32, opts *SearchOptions) ([]SearchResult, error)
-    Delete(ctx context.Context, ids []string) error
-    DeleteByMetadata(ctx context.Context, filter map[string]string) error
-}
-```
+| Export | Description |
+|--------|-------------|
+| `Boundary` | Entity with limits and canned response |
+| `Scope` | Topic, Action, Data, Output, Custom |
+| `Limit` | Deny/allow list with scope |
+| `Store` | CRUD persistence interface |
 
-## Extension packages
+### `github.com/xraph/shield/values`
 
-### `github.com/xraph/weave/ext`
+Ethical evaluation — toxicity, brand safety, honesty, respect, safety, privacy.
 
-All lifecycle hook interfaces: `CollectionCreated`, `CollectionDeleted`, `IngestStarted`, `IngestChunked`, `IngestEmbedded`, `IngestCompleted`, `IngestFailed`, `RetrievalStarted`, `RetrievalCompleted`, `RetrievalFailed`, `DocumentDeleted`, `ReindexStarted`, `ReindexCompleted`, `Shutdown`.
+| Export | Description |
+|--------|-------------|
+| `Values` | Entity with rules, severity, and action |
+| `Principle` | Toxicity, BrandSafety, Honesty, Respect, Safety, Privacy, Custom |
+| `Rule` | Principle with threshold, categories, guidelines |
+| `Store` | CRUD persistence interface |
 
-### `github.com/xraph/weave/observability`
+### `github.com/xraph/shield/judgment`
+
+Contextual risk assessment — grounding, relevance, consistency, compliance.
+
+| Export | Description |
+|--------|-------------|
+| `Judgment` | Entity with domain, assessors, threshold, action |
+| `RiskLevel` | None, Low, Medium, High, Critical |
+| `Domain` | Grounding, Relevance, Consistency, Compliance, Custom |
+| `Assessor` | Named assessor with weight and config |
+| `Store` | CRUD persistence interface |
+
+### `github.com/xraph/shield/reflex`
+
+Condition-action response rules — policy rules, rate limiting, escalation.
+
+| Export | Description |
+|--------|-------------|
+| `Reflex` | Entity with triggers, actions, priority |
+| `TriggerType` | OnScore, OnFinding, OnPattern, OnContext, OnRate, Always |
+| `ActionType` | Block, Redact, Flag, Rewrite, Escalate, Log, Throttle |
+| `Trigger` | Trigger definition with type, pattern, threshold |
+| `Action` | Action definition with type, target, value, fallback |
+| `Store` | CRUD persistence interface |
+
+## Composition packages
+
+### `github.com/xraph/shield/profile`
+
+SafetyProfile — composes all six safety layers into a reusable identity.
+
+| Export | Description |
+|--------|-------------|
+| `SafetyProfile` | Composition entity |
+| `InstinctAssignment` | Instinct with sensitivity override |
+| `JudgmentAssignment` | Judgment with threshold override |
+| `AwarenessAssignment` | Awareness detector assignment |
+| `Store` | CRUD persistence interface |
+
+### `github.com/xraph/shield/policy`
+
+Administrative governance — tenant-scoped safety rules.
+
+| Export | Description |
+|--------|-------------|
+| `Policy` | Entity with scope, rules |
+| `ScopeLevel` | App or Org |
+| `Rule` | CheckType + Condition + Action |
+| `Store` | CRUD + AssignToTenant/UnassignFromTenant |
+
+### `github.com/xraph/shield/pii`
+
+PII vault — AES-256-GCM encrypted token storage.
+
+| Export | Description |
+|--------|-------------|
+| `Token` | Encrypted PII token with expiry |
+| `Stats` | Vault statistics by type and tenant |
+| `Store` | Store/Load/Delete/Purge tokens |
+
+### `github.com/xraph/shield/compliance`
+
+Compliance reporting — EU AI Act, NIST AI RMF, SOC2.
+
+| Export | Description |
+|--------|-------------|
+| `Report` | Generated compliance report |
+| `Framework` | EUAIAct, NIST, SOC2 |
+| `Store` | Create/Get/List reports |
+
+## Plugin packages
+
+### `github.com/xraph/shield/plugin`
+
+All lifecycle hook interfaces: `ScanStarted`, `ScanCompleted`, `ScanBlocked`, `ScanFailed`, `InstinctTriggered`, `AwarenessDetected`, `JudgmentAssessed`, `ValueViolated`, `ReflexFired`, `BoundaryEnforced`, `PIIDetected`, `PIIRedacted`, `PolicyEvaluated`, `SafetyProfileResolved`, `Shutdown`.
+
+### `github.com/xraph/shield/observability`
 
 ```go
 func NewMetricsExtension() *MetricsExtension
 func NewMetricsExtensionWithFactory(factory gu.MetricFactory) *MetricsExtension
 ```
 
-## Assembler
-
-### `github.com/xraph/weave/assembler`
+### `github.com/xraph/shield/audit_hook`
 
 ```go
-func New(...Option) *Assembler
-func (a *Assembler) Assemble(ctx, []retriever.Result) (*AssembleResult, error)
-func AssembleSimple(results []retriever.Result) string
+func New(r Recorder, opts ...Option) *Extension
+func WithActions(actions ...string) Option
+func WithLogger(l *slog.Logger) Option
 ```
-
-## Implementations
-
-| Package | Implements | Notes |
-|---------|-----------|-------|
-| `store/memory` | `store.Store` | In-memory, for tests |
-| `store/postgres` | `store.Store` | PostgreSQL via bun |
-| `store/sqlite` | `store.Store` | SQLite via bun |
-| `vectorstore/memory` | `vectorstore.VectorStore` | Brute-force cosine similarity |
-| `vectorstore/pgvector` | `vectorstore.VectorStore` | PostgreSQL + pgvector |
-| `chunker/recursive` | `chunker.Chunker` | Default — splits on paragraph/sentence/word |
-| `chunker/fixed` | `chunker.Chunker` | Fixed token-size chunks |
-| `chunker/sliding` | `chunker.Chunker` | Sliding window |
-| `chunker/semantic` | `chunker.Chunker` | Topic-coherent groups |
-| `chunker/code` | `chunker.Chunker` | Function/class boundary splits |
-| `embedder/openai` | `embedder.Embedder` | OpenAI text-embedding-* models |
-| `embedder/local` | `embedder.Embedder` | Local model wrapper |
-| `retriever/similarity` | `retriever.Retriever` | Cosine similarity |
-| `retriever/mmr` | `retriever.Retriever` | Maximal Marginal Relevance |
-| `retriever/hybrid` | `retriever.Retriever` | Dense + keyword |
-| `retriever/reranker` | `retriever.Retriever` | Two-stage cross-encoder |
-| `loader/text` | `loader.Loader` | Plain text |
-| `loader/markdown` | `loader.Loader` | Markdown |
-| `loader/html` | `loader.Loader` | HTML |
-| `loader/csv` | `loader.Loader` | CSV |
-| `loader/json` | `loader.Loader` | JSON |
-| `loader/url` | `loader.Loader` | Fetches URL |
-| `loader/directory` | `loader.Loader` | Recursive directory |
-| `extension` | `forge.Extension` | Forge integration |
 
 ## ID package
 
-### `github.com/xraph/weave/id`
+### `github.com/xraph/shield/id`
 
 ```go
-func NewCollectionID() CollectionID
-func NewDocumentID() DocumentID
-func NewChunkID() ChunkID
-
-func ParseCollectionID(s string) (CollectionID, error)
-func ParseDocumentID(s string) (DocumentID, error)
-func ParseChunkID(s string) (ChunkID, error)
+func NewScanID() ScanID
+func NewPolicyID() PolicyID
+func NewInstinctID() InstinctID
+func NewJudgmentID() JudgmentID
+func NewAwarenessID() AwarenessID
+func NewValueID() ValueID
+func NewReflexID() ReflexID
+func NewBoundaryID() BoundaryID
+func NewSafetyProfileID() SafetyProfileID
+// ... + Parse* functions for each type
+func ParseAny(s string) (AnyID, error)
 ```
 
 All IDs implement `String() string` and are based on TypeID (UUIDv7, K-sortable).
+
+## Infrastructure packages
+
+| Package | Purpose |
+|---------|---------|
+| `store` | Composite store interface |
+| `extension` | Forge framework extension adapter |
