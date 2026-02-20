@@ -1,0 +1,199 @@
+---
+title: Custom Plugins
+description: Build plugins that react to Shield lifecycle events with metrics, audit trails, tracing, or custom logic.
+---
+
+Shield uses an opt-in plugin system. Implement the `plugin.Plugin` base interface and any combination of 15 lifecycle hook interfaces to receive only the events you care about.
+
+## The base interface
+
+Every plugin must implement `Name`:
+
+```go
+import "github.com/xraph/shield/plugin"
+
+type MyPlugin struct{}
+
+func (p *MyPlugin) Name() string { return "my-plugin" }
+```
+
+## Opting into lifecycle hooks
+
+Implement any subset of the hook interfaces. The registry only dispatches events to plugins that implement the relevant interface.
+
+```go
+// Receive scan completion events
+func (p *MyPlugin) OnScanCompleted(
+    ctx context.Context,
+    scanID id.ScanID,
+    decision string,
+    findingCount int,
+    elapsed time.Duration,
+) error {
+    log.Printf("scan %s completed: %s (%d findings, %s)",
+        scanID, decision, findingCount, elapsed)
+    return nil
+}
+
+// Receive instinct trigger events
+func (p *MyPlugin) OnInstinctTriggered(
+    ctx context.Context,
+    scanID id.ScanID,
+    instinctName string,
+    score float64,
+) error {
+    log.Printf("instinct %s triggered (score: %.2f)", instinctName, score)
+    return nil
+}
+```
+
+## Available hooks
+
+### Scan lifecycle
+
+| Interface | Method | Called when |
+|-----------|--------|------------|
+| `plugin.ScanStarted` | `OnScanStarted(ctx, scanID, direction, text)` | A scan begins |
+| `plugin.ScanCompleted` | `OnScanCompleted(ctx, scanID, decision, findingCount, elapsed)` | A scan finishes |
+| `plugin.ScanBlocked` | `OnScanBlocked(ctx, scanID, reason)` | Content is blocked |
+| `plugin.ScanFailed` | `OnScanFailed(ctx, scanID, err)` | A scan fails with error |
+
+### Safety primitive lifecycle
+
+| Interface | Method | Called when |
+|-----------|--------|------------|
+| `plugin.InstinctTriggered` | `OnInstinctTriggered(ctx, scanID, name, score)` | Instinct fires |
+| `plugin.AwarenessDetected` | `OnAwarenessDetected(ctx, scanID, detector, count)` | Awareness notices something |
+| `plugin.BoundaryEnforced` | `OnBoundaryEnforced(ctx, scanID, boundary)` | Boundary blocks content |
+| `plugin.ValueViolated` | `OnValueViolated(ctx, scanID, value, severity)` | Value rule violated |
+| `plugin.JudgmentAssessed` | `OnJudgmentAssessed(ctx, scanID, assessor, risk, confidence)` | Judgment completes |
+| `plugin.ReflexFired` | `OnReflexFired(ctx, scanID, reflex, action)` | Reflex triggers action |
+
+### Data lifecycle
+
+| Interface | Method | Called when |
+|-----------|--------|------------|
+| `plugin.PIIDetected` | `OnPIIDetected(ctx, scanID, piiType, count)` | PII found |
+| `plugin.PIIRedacted` | `OnPIIRedacted(ctx, scanID, piiType, count)` | PII redacted |
+| `plugin.PolicyEvaluated` | `OnPolicyEvaluated(ctx, scanID, policy, decision)` | Policy applied |
+| `plugin.SafetyProfileResolved` | `OnSafetyProfileResolved(ctx, scanID, profile)` | Profile loaded |
+
+### System
+
+| Interface | Method | Called when |
+|-----------|--------|------------|
+| `plugin.Shutdown` | `OnShutdown(ctx)` | Engine is shutting down |
+
+## Registering plugins
+
+Register plugins when creating the engine:
+
+```go
+eng, err := engine.New(
+    engine.WithPlugin(&MyPlugin{}),
+    engine.WithPlugin(observability.NewMetricsExtension()),
+)
+```
+
+Or via the Forge extension:
+
+```go
+ext := extension.New(
+    extension.WithPlugin(&MyPlugin{}),
+)
+```
+
+## Compile-time safety
+
+Use compile-time interface checks to ensure your plugin implements the hooks you intend:
+
+```go
+var (
+    _ plugin.Plugin         = (*MyPlugin)(nil)
+    _ plugin.ScanCompleted  = (*MyPlugin)(nil)
+    _ plugin.ScanBlocked    = (*MyPlugin)(nil)
+    _ plugin.PIIDetected    = (*MyPlugin)(nil)
+)
+```
+
+If you forget to implement a method, the compiler will tell you.
+
+## Error handling
+
+Hook errors are logged as warnings but never propagated to the scan. This prevents a broken plugin from disrupting safety evaluation:
+
+```go
+// Inside the registry — your plugin errors are logged, never panic
+r.logger.Warn("plugin: hook error",
+    "hook", "ScanCompleted",
+    "plugin", entry.name,
+    "error", err,
+)
+```
+
+Return errors from your hooks to signal failures. The registry handles them gracefully.
+
+## Example: Slack alerting plugin
+
+```go
+type SlackAlertPlugin struct {
+    webhookURL string
+    client     *http.Client
+}
+
+func (p *SlackAlertPlugin) Name() string { return "slack-alerts" }
+
+// Only implement the hooks you care about
+func (p *SlackAlertPlugin) OnScanBlocked(
+    ctx context.Context,
+    scanID id.ScanID,
+    reason string,
+) error {
+    msg := fmt.Sprintf("Shield blocked content: %s (scan: %s)", reason, scanID)
+    return p.sendSlackMessage(msg)
+}
+
+func (p *SlackAlertPlugin) OnInstinctTriggered(
+    ctx context.Context,
+    scanID id.ScanID,
+    instinctName string,
+    score float64,
+) error {
+    if score > 0.9 {
+        msg := fmt.Sprintf("High-confidence threat: %s (score: %.2f)", instinctName, score)
+        return p.sendSlackMessage(msg)
+    }
+    return nil
+}
+```
+
+## Built-in plugins
+
+Shield ships two built-in plugins:
+
+### `observability.MetricsExtension`
+
+Counts all 14 lifecycle events via `gu.MetricFactory` counters. Implements every hook.
+
+```go
+import "github.com/xraph/shield/observability"
+
+metrics := observability.NewMetricsExtension()
+// or with a custom factory:
+metrics := observability.NewMetricsExtensionWithFactory(fapp.Metrics())
+```
+
+### `audithook.Extension`
+
+Bridges lifecycle events to an audit trail backend via a local `Recorder` interface. Supports selective action filtering.
+
+```go
+import "github.com/xraph/shield/audit_hook"
+
+audit := audit_hook.New(myRecorder,
+    audit_hook.WithActions(
+        audit_hook.ActionScanBlocked,
+        audit_hook.ActionPIIDetected,
+    ),
+)
+```
