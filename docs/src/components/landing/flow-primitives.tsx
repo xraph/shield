@@ -7,7 +7,15 @@ import { cn } from "@/lib/cn";
 interface FlowNodeProps {
   label: string;
   sublabel?: string;
-  color?: "teal" | "amber" | "green" | "red" | "blue" | "gray" | "purple" | "violet";
+  color?:
+    | "teal"
+    | "amber"
+    | "green"
+    | "red"
+    | "blue"
+    | "gray"
+    | "purple"
+    | "violet";
   size?: "sm" | "md" | "lg";
   icon?: React.ReactNode;
   pulse?: boolean;
@@ -88,7 +96,15 @@ export function FlowNode({
 interface FlowLineProps {
   direction?: "horizontal" | "vertical";
   length?: number;
-  color?: "teal" | "amber" | "green" | "red" | "gray" | "blue" | "violet" | "purple";
+  color?:
+    | "teal"
+    | "amber"
+    | "green"
+    | "red"
+    | "gray"
+    | "blue"
+    | "violet"
+    | "purple";
   animated?: boolean;
   className?: string;
   delay?: number;
@@ -274,8 +290,7 @@ const statusConfig = {
     icon: "check",
   },
   retry: {
-    color:
-      "text-blue-600 dark:text-blue-400 bg-blue-500/10 border-blue-500/20",
+    color: "text-blue-600 dark:text-blue-400 bg-blue-500/10 border-blue-500/20",
     defaultLabel: "503 Retry",
     icon: "retry",
   },

@@ -72,7 +72,13 @@ function MiniSafetyPipeline() {
           <FlowLine length={24} color="blue" delay={2} />
           <FlowNode label="Awareness" color="teal" size="sm" delay={0.7} />
           <FlowLine length={24} color="blue" delay={3} />
-          <FlowNode label="Boundaries" color="blue" size="sm" pulse delay={0.85} />
+          <FlowNode
+            label="Boundaries"
+            color="blue"
+            size="sm"
+            pulse
+            delay={0.85}
+          />
         </div>
 
         {/* Row 2: Safety pipeline events */}
@@ -99,12 +105,7 @@ function MiniSafetyPipeline() {
               className="flex items-center gap-0"
             >
               <FlowLine length={28} color="blue" delay={5} />
-              <FlowNode
-                label="Judgment"
-                color="gray"
-                size="sm"
-                delay={1.3}
-              />
+              <FlowNode label="Judgment" color="gray" size="sm" delay={1.3} />
               <FlowLine length={24} color="blue" delay={6} />
               <StatusBadge status="retry" label="reviewing" />
             </motion.div>
@@ -117,12 +118,7 @@ function MiniSafetyPipeline() {
               className="flex items-center gap-0"
             >
               <FlowLine length={28} color="green" delay={7} />
-              <FlowNode
-                label="Reflexes"
-                color="gray"
-                size="sm"
-                delay={1.5}
-              />
+              <FlowNode label="Reflexes" color="gray" size="sm" delay={1.5} />
               <FlowLine length={24} color="green" delay={8} />
               <StatusBadge status="delivered" label="safe" />
             </motion.div>
