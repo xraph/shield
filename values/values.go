@@ -37,9 +37,9 @@ const (
 // Rule defines a specific value enforcement rule.
 type Rule struct {
 	Principle  Principle      `json:"principle"`
-	Threshold  float64        `json:"threshold,omitempty"`   // score threshold (0.0-1.0)
-	Categories []string       `json:"categories,omitempty"`  // e.g., toxicity subcategories
-	Guidelines []string       `json:"guidelines,omitempty"`  // brand guidelines as text
+	Threshold  float64        `json:"threshold,omitempty"`  // score threshold (0.0-1.0)
+	Categories []string       `json:"categories,omitempty"` // e.g., toxicity subcategories
+	Guidelines []string       `json:"guidelines,omitempty"` // brand guidelines as text
 	Config     map[string]any `json:"config,omitempty"`
 }
 

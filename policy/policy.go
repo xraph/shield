@@ -22,11 +22,11 @@ const (
 
 // Rule defines a specific enforcement rule within a policy.
 type Rule struct {
-	CheckType    string  `json:"check_type"`              // "instinct", "awareness", "values", "judgment", etc.
-	Condition    string  `json:"condition"`               // "score > 0.8", "pii_detected", etc.
-	Action       string  `json:"action"`                  // "block", "flag", "redact"
-	ErrorMessage string  `json:"error_message,omitempty"` // custom error message for blocks
-	Priority     int     `json:"priority,omitempty"`
+	CheckType    string `json:"check_type"`              // "instinct", "awareness", "values", "judgment", etc.
+	Condition    string `json:"condition"`               // "score > 0.8", "pii_detected", etc.
+	Action       string `json:"action"`                  // "block", "flag", "redact"
+	ErrorMessage string `json:"error_message,omitempty"` // custom error message for blocks
+	Priority     int    `json:"priority,omitempty"`
 }
 
 // Policy defines safety rules that can be assigned to tenants.

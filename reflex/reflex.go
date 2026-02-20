@@ -63,8 +63,8 @@ const (
 type Action struct {
 	Type     ActionType `json:"type"`
 	Target   string     `json:"target,omitempty"`   // what to act on
-	Value    any        `json:"value,omitempty"`     // action-specific value
-	Fallback string    `json:"fallback,omitempty"` // fallback response text
+	Value    any        `json:"value,omitempty"`    // action-specific value
+	Fallback string     `json:"fallback,omitempty"` // fallback response text
 }
 
 // Reflex represents a condition-triggered safety response.

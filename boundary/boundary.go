@@ -32,8 +32,8 @@ const (
 // Limit defines a specific boundary constraint.
 type Limit struct {
 	Scope    Scope    `json:"scope"`
-	Deny     []string `json:"deny,omitempty"`     // explicitly denied items
-	Allow    []string `json:"allow,omitempty"`    // explicitly allowed items (allowlist mode)
+	Deny     []string `json:"deny,omitempty"`      // explicitly denied items
+	Allow    []string `json:"allow,omitempty"`     // explicitly allowed items (allowlist mode)
 	UseAllow bool     `json:"use_allow,omitempty"` // true = allowlist mode, false = denylist mode
 }
 

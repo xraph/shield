@@ -6,11 +6,11 @@ type Option func(*Options)
 
 // Options holds resolved top-level Shield configuration.
 type Options struct {
-	Config   Config
-	Profile  string   // default safety profile name
-	Instincts []string // inline instinct names
-	Awareness []string // inline awareness names
-	Values    []string // inline value names
+	Config     Config
+	Profile    string   // default safety profile name
+	Instincts  []string // inline instinct names
+	Awareness  []string // inline awareness names
+	Values     []string // inline value names
 	Boundaries []string // inline boundary names
 	Judgments  []string // inline judgment names
 	Reflexes   []string // inline reflex names

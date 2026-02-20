@@ -34,10 +34,10 @@ type Report struct {
 
 // ListFilter defines filtering for compliance report list queries.
 type ListFilter struct {
-	ScopeKey   string
-	Framework  Framework
-	Limit      int
-	Offset     int
+	ScopeKey  string
+	Framework Framework
+	Limit     int
+	Offset    int
 }
 
 // Store defines persistence operations for compliance reports.

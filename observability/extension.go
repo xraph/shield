@@ -8,26 +8,26 @@ import (
 
 	gu "github.com/xraph/go-utils/metrics"
 
-	"github.com/xraph/shield/plugin"
 	"github.com/xraph/shield/id"
+	"github.com/xraph/shield/plugin"
 )
 
 // Compile-time interface checks.
 var (
-	_ plugin.Plugin           = (*MetricsExtension)(nil)
-	_ plugin.ScanStarted         = (*MetricsExtension)(nil)
-	_ plugin.ScanCompleted       = (*MetricsExtension)(nil)
-	_ plugin.ScanBlocked         = (*MetricsExtension)(nil)
-	_ plugin.ScanFailed          = (*MetricsExtension)(nil)
-	_ plugin.InstinctTriggered   = (*MetricsExtension)(nil)
-	_ plugin.AwarenessDetected   = (*MetricsExtension)(nil)
-	_ plugin.JudgmentAssessed    = (*MetricsExtension)(nil)
-	_ plugin.ValueViolated       = (*MetricsExtension)(nil)
-	_ plugin.ReflexFired         = (*MetricsExtension)(nil)
-	_ plugin.BoundaryEnforced    = (*MetricsExtension)(nil)
-	_ plugin.PIIDetected         = (*MetricsExtension)(nil)
-	_ plugin.PIIRedacted         = (*MetricsExtension)(nil)
-	_ plugin.PolicyEvaluated     = (*MetricsExtension)(nil)
+	_ plugin.Plugin                = (*MetricsExtension)(nil)
+	_ plugin.ScanStarted           = (*MetricsExtension)(nil)
+	_ plugin.ScanCompleted         = (*MetricsExtension)(nil)
+	_ plugin.ScanBlocked           = (*MetricsExtension)(nil)
+	_ plugin.ScanFailed            = (*MetricsExtension)(nil)
+	_ plugin.InstinctTriggered     = (*MetricsExtension)(nil)
+	_ plugin.AwarenessDetected     = (*MetricsExtension)(nil)
+	_ plugin.JudgmentAssessed      = (*MetricsExtension)(nil)
+	_ plugin.ValueViolated         = (*MetricsExtension)(nil)
+	_ plugin.ReflexFired           = (*MetricsExtension)(nil)
+	_ plugin.BoundaryEnforced      = (*MetricsExtension)(nil)
+	_ plugin.PIIDetected           = (*MetricsExtension)(nil)
+	_ plugin.PIIRedacted           = (*MetricsExtension)(nil)
+	_ plugin.PolicyEvaluated       = (*MetricsExtension)(nil)
 	_ plugin.SafetyProfileResolved = (*MetricsExtension)(nil)
 )
 

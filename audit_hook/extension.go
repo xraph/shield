@@ -11,13 +11,13 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/xraph/shield/plugin"
 	"github.com/xraph/shield/id"
+	"github.com/xraph/shield/plugin"
 )
 
 // Compile-time interface checks.
 var (
-	_ plugin.Plugin             = (*Extension)(nil)
+	_ plugin.Plugin                = (*Extension)(nil)
 	_ plugin.ScanStarted           = (*Extension)(nil)
 	_ plugin.ScanCompleted         = (*Extension)(nil)
 	_ plugin.ScanBlocked           = (*Extension)(nil)

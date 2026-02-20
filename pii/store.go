@@ -16,10 +16,10 @@ type Token struct {
 	ID             id.PIITokenID `json:"id" bun:",pk"`
 	ScanID         id.ScanID     `json:"scan_id" bun:",notnull"`
 	TenantID       string        `json:"tenant_id" bun:",notnull"`
-	PIIType        string        `json:"pii_type" bun:",notnull"` // "email", "ssn", "phone", "cc", etc.
-	Placeholder    string        `json:"placeholder" bun:",notnull"` // "[EMAIL_1]", "[SSN_1]"
+	PIIType        string        `json:"pii_type" bun:",notnull"`        // "email", "ssn", "phone", "cc", etc.
+	Placeholder    string        `json:"placeholder" bun:",notnull"`     // "[EMAIL_1]", "[SSN_1]"
 	EncryptedValue []byte        `json:"encrypted_value" bun:",notnull"` // AES-256-GCM encrypted
-	ExpiresAt      *time.Time    `json:"expires_at,omitempty"` // GDPR retention
+	ExpiresAt      *time.Time    `json:"expires_at,omitempty"`           // GDPR retention
 }
 
 // Stats holds PII vault statistics.
@@ -35,7 +35,7 @@ type Store interface {
 	LoadPIITokens(ctx context.Context, tokenIDs []id.PIITokenID) ([]*Token, error)
 	LoadPIITokensByScan(ctx context.Context, scanID id.ScanID) ([]*Token, error)
 	DeletePIITokens(ctx context.Context, tokenIDs []id.PIITokenID) error
-	DeletePIITokensByTenant(ctx context.Context, tenantID string) error // GDPR
+	DeletePIITokensByTenant(ctx context.Context, tenantID string) error     // GDPR
 	PurgePIITokens(ctx context.Context, olderThan time.Time) (int64, error) // retention
 	PIIStats(ctx context.Context, tenantID string) (*Stats, error)
 }

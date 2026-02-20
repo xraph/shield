@@ -98,7 +98,7 @@ type Registry struct {
 	scanFailed            []scanFailedEntry
 	instinctTriggered     []instinctTriggeredEntry
 	awarenessDetected     []awarenessDetectedEntry
-	judgmentAssessed       []judgmentAssessedEntry
+	judgmentAssessed      []judgmentAssessedEntry
 	valueViolated         []valueViolatedEntry
 	reflexFired           []reflexFiredEntry
 	boundaryEnforced      []boundaryEnforcedEntry

@@ -20,18 +20,18 @@ import (
 	"time"
 
 	"github.com/xraph/shield"
-	"github.com/xraph/shield/plugin"
 	"github.com/xraph/shield/id"
+	"github.com/xraph/shield/plugin"
 	"github.com/xraph/shield/scan"
 	"github.com/xraph/shield/store"
 )
 
 // Engine is the core safety execution engine.
 type Engine struct {
-	store      store.Store
-	registry   *plugin.Registry
-	config     shield.Config
-	logger     *slog.Logger
+	store    store.Store
+	registry *plugin.Registry
+	config   shield.Config
+	logger   *slog.Logger
 }
 
 // Option configures the Engine.

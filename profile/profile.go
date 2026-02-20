@@ -44,8 +44,8 @@ type SafetyProfile struct {
 	Instincts   []InstinctAssignment  `json:"instincts,omitempty" bun:"type:jsonb"`
 	Judgments   []JudgmentAssignment  `json:"judgments,omitempty" bun:"type:jsonb"`
 	Awareness   []AwarenessAssignment `json:"awareness,omitempty" bun:"type:jsonb"`
-	Values      []string              `json:"values,omitempty" bun:"type:jsonb"`      // value names
-	Reflexes    []string              `json:"reflexes,omitempty" bun:"type:jsonb"`    // reflex names
+	Values      []string              `json:"values,omitempty" bun:"type:jsonb"`     // value names
+	Reflexes    []string              `json:"reflexes,omitempty" bun:"type:jsonb"`   // reflex names
 	Boundaries  []string              `json:"boundaries,omitempty" bun:"type:jsonb"` // boundary names
 	Enabled     bool                  `json:"enabled" bun:",notnull,default:true"`
 	Metadata    map[string]any        `json:"metadata,omitempty" bun:"type:jsonb"`

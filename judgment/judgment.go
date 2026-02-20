@@ -49,7 +49,7 @@ const (
 type Assessor struct {
 	Name            string         `json:"name"`
 	Domain          Domain         `json:"domain"`
-	Weight          float64        `json:"weight,omitempty"`          // contribution to combined score
+	Weight          float64        `json:"weight,omitempty"` // contribution to combined score
 	Config          map[string]any `json:"config,omitempty"`
 	RequiresContext bool           `json:"requires_context,omitempty"` // needs source material
 }
@@ -66,7 +66,7 @@ type Judgment struct {
 	TenantID    string         `json:"tenant_id,omitempty"`
 	Domain      Domain         `json:"domain" bun:",notnull"`
 	Assessors   []Assessor     `json:"assessors,omitempty" bun:"type:jsonb"`
-	Threshold   float64        `json:"threshold,omitempty"` // risk threshold for action (0.0-1.0)
+	Threshold   float64        `json:"threshold,omitempty"`   // risk threshold for action (0.0-1.0)
 	Action      string         `json:"action" bun:",notnull"` // "flag", "block", "warn"
 	Enabled     bool           `json:"enabled" bun:",notnull,default:true"`
 	Metadata    map[string]any `json:"metadata,omitempty" bun:"type:jsonb"`

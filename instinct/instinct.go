@@ -66,7 +66,7 @@ const (
 // Strategy defines how an instinct detects threats.
 type Strategy struct {
 	Name   string         `json:"name"`             // e.g., "classifier", "canary", "perplexity", "hierarchy"
-	Weight float64        `json:"weight,omitempty"`  // contribution to combined score (0.0-1.0)
+	Weight float64        `json:"weight,omitempty"` // contribution to combined score (0.0-1.0)
 	Config map[string]any `json:"config,omitempty"`
 }
 
