@@ -83,7 +83,7 @@ func (m *MetricsExtension) Name() string { return "observability-metrics" }
 // ── Scan lifecycle hooks ──────────────────────────────
 
 // OnScanStarted implements plugin.ScanStarted.
-func (m *MetricsExtension) OnScanStarted(_ context.Context, _ id.ScanID, _ string, _ string) error {
+func (m *MetricsExtension) OnScanStarted(_ context.Context, _ id.ScanID, _, _ string) error {
 	m.ScanStartedCount.Inc()
 	return nil
 }
@@ -121,19 +121,19 @@ func (m *MetricsExtension) OnAwarenessDetected(_ context.Context, _ id.ScanID, _
 }
 
 // OnJudgmentAssessed implements plugin.JudgmentAssessed.
-func (m *MetricsExtension) OnJudgmentAssessed(_ context.Context, _ id.ScanID, _ string, _ string, _ float64) error {
+func (m *MetricsExtension) OnJudgmentAssessed(_ context.Context, _ id.ScanID, _, _ string, _ float64) error {
 	m.JudgmentAssessedCount.Inc()
 	return nil
 }
 
 // OnValueViolated implements plugin.ValueViolated.
-func (m *MetricsExtension) OnValueViolated(_ context.Context, _ id.ScanID, _ string, _ string) error {
+func (m *MetricsExtension) OnValueViolated(_ context.Context, _ id.ScanID, _, _ string) error {
 	m.ValueViolatedCount.Inc()
 	return nil
 }
 
 // OnReflexFired implements plugin.ReflexFired.
-func (m *MetricsExtension) OnReflexFired(_ context.Context, _ id.ScanID, _ string, _ string) error {
+func (m *MetricsExtension) OnReflexFired(_ context.Context, _ id.ScanID, _, _ string) error {
 	m.ReflexFiredCount.Inc()
 	return nil
 }
@@ -157,7 +157,7 @@ func (m *MetricsExtension) OnPIIRedacted(_ context.Context, _ id.ScanID, _ strin
 }
 
 // OnPolicyEvaluated implements plugin.PolicyEvaluated.
-func (m *MetricsExtension) OnPolicyEvaluated(_ context.Context, _ id.ScanID, _ string, _ string) error {
+func (m *MetricsExtension) OnPolicyEvaluated(_ context.Context, _ id.ScanID, _, _ string) error {
 	m.PolicyEvaluatedCount.Inc()
 	return nil
 }

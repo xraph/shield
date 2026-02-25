@@ -172,7 +172,7 @@ func (r *Registry) Register(p Plugin) {
 // ── Emit methods ─────────────────────────────────────
 
 // EmitScanStarted notifies all plugins that implement ScanStarted.
-func (r *Registry) EmitScanStarted(ctx context.Context, scanID id.ScanID, direction string, text string) {
+func (r *Registry) EmitScanStarted(ctx context.Context, scanID id.ScanID, direction, text string) {
 	for _, e := range r.scanStarted {
 		if err := e.hook.OnScanStarted(ctx, scanID, direction, text); err != nil {
 			r.logger.Warn("plugin: hook error", "hook", "ScanStarted", "plugin", e.name, "error", err)
@@ -226,7 +226,7 @@ func (r *Registry) EmitAwarenessDetected(ctx context.Context, scanID id.ScanID, 
 }
 
 // EmitJudgmentAssessed notifies all plugins that implement JudgmentAssessed.
-func (r *Registry) EmitJudgmentAssessed(ctx context.Context, scanID id.ScanID, assessorName string, riskLevel string, confidence float64) {
+func (r *Registry) EmitJudgmentAssessed(ctx context.Context, scanID id.ScanID, assessorName, riskLevel string, confidence float64) {
 	for _, e := range r.judgmentAssessed {
 		if err := e.hook.OnJudgmentAssessed(ctx, scanID, assessorName, riskLevel, confidence); err != nil {
 			r.logger.Warn("plugin: hook error", "hook", "JudgmentAssessed", "plugin", e.name, "error", err)
@@ -235,7 +235,7 @@ func (r *Registry) EmitJudgmentAssessed(ctx context.Context, scanID id.ScanID, a
 }
 
 // EmitValueViolated notifies all plugins that implement ValueViolated.
-func (r *Registry) EmitValueViolated(ctx context.Context, scanID id.ScanID, valueName string, severity string) {
+func (r *Registry) EmitValueViolated(ctx context.Context, scanID id.ScanID, valueName, severity string) {
 	for _, e := range r.valueViolated {
 		if err := e.hook.OnValueViolated(ctx, scanID, valueName, severity); err != nil {
 			r.logger.Warn("plugin: hook error", "hook", "ValueViolated", "plugin", e.name, "error", err)
@@ -244,7 +244,7 @@ func (r *Registry) EmitValueViolated(ctx context.Context, scanID id.ScanID, valu
 }
 
 // EmitReflexFired notifies all plugins that implement ReflexFired.
-func (r *Registry) EmitReflexFired(ctx context.Context, scanID id.ScanID, reflexName string, action string) {
+func (r *Registry) EmitReflexFired(ctx context.Context, scanID id.ScanID, reflexName, action string) {
 	for _, e := range r.reflexFired {
 		if err := e.hook.OnReflexFired(ctx, scanID, reflexName, action); err != nil {
 			r.logger.Warn("plugin: hook error", "hook", "ReflexFired", "plugin", e.name, "error", err)
@@ -280,7 +280,7 @@ func (r *Registry) EmitPIIRedacted(ctx context.Context, scanID id.ScanID, piiTyp
 }
 
 // EmitPolicyEvaluated notifies all plugins that implement PolicyEvaluated.
-func (r *Registry) EmitPolicyEvaluated(ctx context.Context, scanID id.ScanID, policyName string, decision string) {
+func (r *Registry) EmitPolicyEvaluated(ctx context.Context, scanID id.ScanID, policyName, decision string) {
 	for _, e := range r.policyEvaluated {
 		if err := e.hook.OnPolicyEvaluated(ctx, scanID, policyName, decision); err != nil {
 			r.logger.Warn("plugin: hook error", "hook", "PolicyEvaluated", "plugin", e.name, "error", err)

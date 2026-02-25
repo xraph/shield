@@ -1,0 +1,67 @@
+---
+title: SQLite Store
+description: Lightweight SQLite store for development, testing, and single-node deployments.
+---
+
+The `store/sqlite` package implements Shield's `store.Store` interface using the grove ORM with the SQLite driver. It requires no external database process, making it ideal for development, integration tests, and single-node deployments.
+
+## Usage
+
+```go
+import (
+    "context"
+    "log"
+
+    "github.com/xraph/grove"
+    "github.com/xraph/grove/drivers/sqlitedriver"
+    "github.com/xraph/shield/store/sqlite"
+)
+
+db, err := grove.Open(sqlitedriver.Open("shield.db"))
+if err != nil {
+    log.Fatal(err)
+}
+
+s := sqlite.New(db)
+if err := s.Migrate(context.Background()); err != nil {
+    log.Fatal(err)
+}
+```
+
+Pass `":memory:"` for a fully in-process, zero-persistence store useful in tests:
+
+```go
+db, err := grove.Open(sqlitedriver.Open(":memory:"))
+```
+
+## Tables
+
+| Table | Subsystem | Purpose |
+|-------|-----------|---------|
+| `shield_instincts` | instinct | Built-in safety rules and threat patterns |
+| `shield_awareness` | awareness | Context-aware detection configurations |
+| `shield_boundaries` | boundary | Input/output boundary enforcement rules |
+| `shield_values` | values | Value-alignment rule definitions |
+| `shield_judgments` | judgment | Content evaluation and scoring rules |
+| `shield_reflexes` | reflex | Automatic response and action triggers |
+| `shield_profiles` | profile | Composite safety profile configurations |
+| `shield_scans` | scan | Content scan results and audit log |
+| `shield_policies` | policy | Organizational safety policy definitions |
+| `shield_policy_tenants` | policy | Policy-to-tenant assignment mappings |
+| `shield_pii_tokens` | pii | Tokenized PII storage for redaction/recovery |
+| `shield_compliance_reports` | compliance | Generated compliance audit reports |
+
+## Internals
+
+| Aspect | Detail |
+|--------|--------|
+| Driver | grove ORM + sqlitedriver |
+| Migrations | grove orchestrator with programmatic migrations |
+| Transactions | SQLite-level transactions |
+| Concurrency | Multiple readers, single writer (WAL mode) |
+
+## When to use
+
+- Development and local testing without external dependencies.
+- Single-process or embedded deployments.
+- CI pipelines where spinning up PostgreSQL is impractical.

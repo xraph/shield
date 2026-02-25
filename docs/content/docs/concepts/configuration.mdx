@@ -79,27 +79,69 @@ type Options struct {
 | `shield.WithJudgments(names...)` | Adds inline judgment names |
 | `shield.WithReflexes(names...)` | Adds inline reflex names |
 
-## Forge extension configuration
+## Forge extension options
 
-The Forge extension wrapper has its own `Config`:
+The `extension.New` function accepts its own set of options:
 
 ```go
-type Config struct {
-    DisableRoutes  bool   // prevents HTTP route registration
-    DisableMigrate bool   // prevents auto-migration on start
-    BasePath       string // URL prefix for all shield routes
-}
+ext := extension.New(
+    extension.WithStore(pgStore),
+    extension.WithPlugin(metricsPlugin),
+    extension.WithDisableRoutes(),
+    extension.WithDisableMigrate(),
+    extension.WithBasePath("/shield"),
+    extension.WithGroveDatabase(""),
+)
 ```
 
-### Extension options
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `WithStore(s)` | `store.Store` | -- | Composite store (auto-resolved from grove if not set). |
+| `WithPlugin(p)` | `plugin.Plugin` | -- | Lifecycle plugin (repeatable). |
+| `WithEngineOption(opt)` | `engine.Option` | -- | Pass-through engine option. |
+| `WithConfig(cfg)` | `Config` | defaults | Full config struct. |
+| `WithDisableRoutes()` | -- | `false` | Skip HTTP route registration. |
+| `WithDisableMigrate()` | -- | `false` | Skip migrations on Start. |
+| `WithBasePath(path)` | `string` | `""` | URL prefix for shield routes. |
+| `WithGroveDatabase(name)` | `string` | `""` | Named grove.DB to resolve from DI. |
+| `WithRequireConfig(b)` | `bool` | `false` | Require config in YAML files. |
 
-| Option | Description |
-|--------|-------------|
-| `extension.WithStore(s)` | Sets the composite store |
-| `extension.WithPlugin(p)` | Registers a Shield lifecycle plugin |
-| `extension.WithEngineOption(opt)` | Passes an engine option directly |
-| `extension.WithConfig(cfg)` | Sets the extension configuration |
-| `extension.WithDisableRoutes()` | Disables HTTP route registration |
-| `extension.WithDisableMigrate()` | Disables auto-migration |
-| `extension.WithBasePath(path)` | Sets the URL prefix |
-| `extension.WithLogger(l)` | Sets the structured logger |
+## File-based configuration (YAML)
+
+When running as a Forge extension, Shield automatically loads configuration from YAML config files. The extension looks for config under the following keys (in order):
+
+1. `extensions.shield` -- standard Forge extension config namespace
+2. `shield` -- top-level shorthand
+
+### Example
+
+```yaml
+# forge.yaml
+extensions:
+  shield:
+    disable_routes: false
+    disable_migrate: false
+    base_path: "/shield"
+    default_profile: ""
+    shutdown_timeout: "30s"
+    scan_concurrency: 10
+    enable_short_circuit: true
+    grove_database: ""
+```
+
+### Config fields
+
+| YAML Key | Type | Default | Description |
+|----------|------|---------|-------------|
+| `disable_routes` | `bool` | `false` | Skip HTTP route registration |
+| `disable_migrate` | `bool` | `false` | Skip migrations on Start |
+| `base_path` | `string` | `""` | URL prefix for all routes |
+| `default_profile` | `string` | `""` | Safety profile when none specified |
+| `shutdown_timeout` | `duration` | `"30s"` | Max graceful shutdown wait |
+| `scan_concurrency` | `int` | `10` | Max parallel scan operations |
+| `enable_short_circuit` | `bool` | `true` | Skip deeper layers on block decision |
+| `grove_database` | `string` | `""` | Named grove.DB from DI |
+
+### Merge behaviour
+
+File-based configuration is merged with programmatic options. Programmatic boolean flags (`DisableRoutes`, `DisableMigrate`) always win when set to `true`. For other fields, YAML values take precedence, then programmatic values, then defaults.

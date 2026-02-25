@@ -39,7 +39,7 @@ func main() {
 | Lifecycle event | Behaviour |
 |----------------|-----------|
 | `Register` | Creates the engine from the provided options, registers it in the DI container |
-| `Start` | No-op (ready immediately) |
+| `Start` | Runs `store.Migrate` (unless disabled) |
 | `Stop` | Calls `engine.Stop` which emits `OnShutdown` to all plugins |
 | `Health` | Returns nil (healthy) |
 
@@ -47,14 +47,75 @@ func main() {
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `WithStore(s)` | `store.Store` | — | Composite store for persistence |
-| `WithPlugin(p)` | `plugin.Plugin` | — | Lifecycle plugin |
-| `WithEngineOption(opt)` | `engine.Option` | — | Pass-through engine option |
-| `WithConfig(cfg)` | `Config` | — | Extension configuration |
-| `WithLogger(l)` | `*slog.Logger` | `slog.Default()` | Logger |
-| `WithDisableRoutes()` | — | `false` | Skip HTTP route registration |
-| `WithDisableMigrate()` | — | `false` | Skip migrations on Start |
-| `WithBasePath(path)` | `string` | — | URL prefix for shield routes |
+| `WithStore(s)` | `store.Store` | -- | Composite store (auto-resolved from grove if not set) |
+| `WithPlugin(p)` | `plugin.Plugin` | -- | Lifecycle plugin (repeatable) |
+| `WithEngineOption(opt)` | `engine.Option` | -- | Pass-through engine option |
+| `WithConfig(cfg)` | `Config` | defaults | Full config struct |
+| `WithDisableRoutes()` | -- | `false` | Skip HTTP route registration |
+| `WithDisableMigrate()` | -- | `false` | Skip migrations on Start |
+| `WithBasePath(path)` | `string` | `""` | URL prefix for shield routes |
+| `WithGroveDatabase(name)` | `string` | `""` | Name of the grove.DB to resolve from DI |
+| `WithRequireConfig(b)` | `bool` | `false` | Require config in YAML files |
+
+## File-based configuration (YAML)
+
+When running in a Forge application, the Shield extension automatically loads configuration from YAML config files. The extension looks for config under the following keys (in order):
+
+1. `extensions.shield` -- standard Forge extension config namespace
+2. `shield` -- top-level shorthand
+
+### Example YAML config
+
+```yaml
+# forge.yaml
+extensions:
+  shield:
+    disable_routes: false
+    disable_migrate: false
+    base_path: "/shield"
+    default_profile: ""
+    shutdown_timeout: "30s"
+    scan_concurrency: 10
+    enable_short_circuit: true
+    grove_database: ""
+```
+
+Or using the top-level shorthand:
+
+```yaml
+# forge.yaml
+shield:
+  default_profile: "strict"
+  scan_concurrency: 20
+  enable_short_circuit: true
+```
+
+### Config fields
+
+| YAML Key | Type | Default | Description |
+|----------|------|---------|-------------|
+| `disable_routes` | `bool` | `false` | Skip HTTP route registration |
+| `disable_migrate` | `bool` | `false` | Skip migrations on Start |
+| `base_path` | `string` | `""` | URL prefix for all routes |
+| `default_profile` | `string` | `""` | Safety profile when none specified |
+| `shutdown_timeout` | `duration` | `"30s"` | Max graceful shutdown wait time |
+| `scan_concurrency` | `int` | `10` | Max parallel scan operations |
+| `enable_short_circuit` | `bool` | `true` | Skip deeper layers on block decision |
+| `grove_database` | `string` | `""` | Named grove.DB to resolve from DI |
+
+### Merge behaviour
+
+File-based configuration is merged with programmatic options. Programmatic boolean flags (`DisableRoutes`, `DisableMigrate`) always win when set to `true`. For other fields, YAML values take precedence, then programmatic values, then defaults.
+
+### Requiring configuration
+
+If your deployment requires YAML config to be present, use `WithRequireConfig`:
+
+```go
+ext := extension.New(
+    extension.WithRequireConfig(true), // error if no YAML config found
+)
+```
 
 ## Tenant middleware
 
@@ -73,6 +134,40 @@ func tenantMiddleware(next http.Handler) http.Handler {
 
 router.Use(tenantMiddleware)
 ```
+
+## Grove database integration
+
+When your Forge app uses the [Grove extension](https://github.com/xraph/grove) to manage database connections, Shield can automatically resolve a `grove.DB` from the DI container and construct the correct store backend based on the driver type.
+
+### Using the default grove database
+
+If the Grove extension registers a single database (or a default in multi-DB mode), use `WithGroveDatabase` with an empty name:
+
+```go
+ext := extension.New(
+    extension.WithGroveDatabase(""),
+)
+```
+
+### Using a named grove database
+
+In multi-database setups, reference a specific database by name:
+
+```go
+ext := extension.New(
+    extension.WithGroveDatabase("shield"),
+)
+```
+
+This resolves the grove.DB named `"shield"` from the DI container and auto-constructs the matching store. The driver type is detected automatically -- you do not need to import individual store packages.
+
+### Store resolution order
+
+The extension resolves its store in this order:
+
+1. **Explicit store** -- if `WithStore(s)` was called, it is used directly and grove is ignored.
+2. **Grove database** -- if `WithGroveDatabase(name)` was called, the named or default `grove.DB` is resolved from DI.
+3. **In-memory fallback** -- if neither is configured, an in-memory store is used.
 
 ## Adding metrics
 

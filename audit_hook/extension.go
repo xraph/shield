@@ -88,7 +88,7 @@ func (e *Extension) Name() string { return "audit-hook" }
 // ── Scan lifecycle hooks ──────────────────────────────
 
 // OnScanStarted implements plugin.ScanStarted.
-func (e *Extension) OnScanStarted(ctx context.Context, scanID id.ScanID, direction string, _ string) error {
+func (e *Extension) OnScanStarted(ctx context.Context, scanID id.ScanID, direction, _ string) error {
 	return e.record(ctx, ActionScanStarted, SeverityInfo, OutcomeSuccess,
 		ResourceScan, scanID.String(), CategorySafety, nil,
 		"direction", direction,
@@ -141,7 +141,7 @@ func (e *Extension) OnAwarenessDetected(ctx context.Context, scanID id.ScanID, d
 }
 
 // OnJudgmentAssessed implements plugin.JudgmentAssessed.
-func (e *Extension) OnJudgmentAssessed(ctx context.Context, scanID id.ScanID, assessorName string, riskLevel string, confidence float64) error {
+func (e *Extension) OnJudgmentAssessed(ctx context.Context, scanID id.ScanID, assessorName, riskLevel string, confidence float64) error {
 	return e.record(ctx, ActionJudgmentAssessed, SeverityInfo, OutcomeSuccess,
 		ResourceJudgment, scanID.String(), CategorySafety, nil,
 		"assessor", assessorName,
@@ -151,7 +151,7 @@ func (e *Extension) OnJudgmentAssessed(ctx context.Context, scanID id.ScanID, as
 }
 
 // OnValueViolated implements plugin.ValueViolated.
-func (e *Extension) OnValueViolated(ctx context.Context, scanID id.ScanID, valueName string, severity string) error {
+func (e *Extension) OnValueViolated(ctx context.Context, scanID id.ScanID, valueName, severity string) error {
 	return e.record(ctx, ActionValueViolated, SeverityWarning, OutcomeSuccess,
 		ResourceValue, scanID.String(), CategorySafety, nil,
 		"value", valueName,
@@ -160,7 +160,7 @@ func (e *Extension) OnValueViolated(ctx context.Context, scanID id.ScanID, value
 }
 
 // OnReflexFired implements plugin.ReflexFired.
-func (e *Extension) OnReflexFired(ctx context.Context, scanID id.ScanID, reflexName string, action string) error {
+func (e *Extension) OnReflexFired(ctx context.Context, scanID id.ScanID, reflexName, action string) error {
 	return e.record(ctx, ActionReflexFired, SeverityInfo, OutcomeSuccess,
 		ResourceReflex, scanID.String(), CategoryGovernance, nil,
 		"reflex", reflexName,
@@ -199,7 +199,7 @@ func (e *Extension) OnPIIRedacted(ctx context.Context, scanID id.ScanID, piiType
 // ── Policy lifecycle hooks ────────────────────────────
 
 // OnPolicyEvaluated implements plugin.PolicyEvaluated.
-func (e *Extension) OnPolicyEvaluated(ctx context.Context, scanID id.ScanID, policyName string, decision string) error {
+func (e *Extension) OnPolicyEvaluated(ctx context.Context, scanID id.ScanID, policyName, decision string) error {
 	return e.record(ctx, ActionPolicyCreated, SeverityInfo, OutcomeSuccess,
 		ResourcePolicy, scanID.String(), CategoryGovernance, nil,
 		"policy", policyName,

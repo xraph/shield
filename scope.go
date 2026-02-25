@@ -17,7 +17,10 @@ func WithTenant(ctx context.Context, tenantID string) context.Context {
 // TenantFromContext extracts the tenant ID from context.
 // Returns empty string if not set.
 func TenantFromContext(ctx context.Context) string {
-	v, _ := ctx.Value(tenantKey).(string)
+	v, ok := ctx.Value(tenantKey).(string)
+	if !ok {
+		return ""
+	}
 	return v
 }
 
@@ -29,6 +32,9 @@ func WithApp(ctx context.Context, appID string) context.Context {
 // AppFromContext extracts the app ID from context.
 // Returns empty string if not set.
 func AppFromContext(ctx context.Context) string {
-	v, _ := ctx.Value(appKey).(string)
+	v, ok := ctx.Value(appKey).(string)
+	if !ok {
+		return ""
+	}
 	return v
 }
