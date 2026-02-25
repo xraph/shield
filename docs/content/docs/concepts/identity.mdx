@@ -1,65 +1,83 @@
 ---
 title: Identity (TypeID)
-description: How Shield uses type-safe, prefix-qualified identifiers for every entity.
+description: How Shield uses prefix-qualified, globally unique identifiers for every entity.
 ---
 
-Every entity in Shield gets a type-prefixed, K-sortable, UUIDv7-based identifier using the [TypeID](https://github.com/jetify-com/typeid) specification. IDs are validated at parse time to ensure the prefix matches the expected type.
+Every entity in Shield has a TypeID. TypeIDs are globally unique, sortable, URL-safe identifiers built on UUIDv7 with a human-readable prefix that tells you what kind of entity you're looking at.
 
-## Prefix table
+A TypeID looks like this:
 
-| Type | Prefix | Go type | Example |
-|------|--------|---------|---------|
-| Scan | `scan_` | `id.ScanID` | `scan_01h2xcejqtf2nbrexx3vqjhp41` |
-| Policy | `pol_` | `id.PolicyID` | `pol_01h2xcejqtf2nbrexx3vqjhp41` |
-| Finding | `find_` | `id.FindingID` | `find_01h2xcejqtf2nbrexx3vqjhp41` |
-| PII Token | `pii_` | `id.PIITokenID` | `pii_01h2xcejqtf2nbrexx3vqjhp41` |
-| Compliance Report | `crpt_` | `id.ComplianceReportID` | `crpt_01h2xcejqtf2nbrexx3vqjhp41` |
-| Safety Check | `schk_` | `id.CheckID` | `schk_01h2xcejqtf2nbrexx3vqjhp41` |
-| Instinct | `inst_` | `id.InstinctID` | `inst_01h455vb4pex5vsknk084sn02q` |
-| Judgment | `jdg_` | `id.JudgmentID` | `jdg_01h455vb4pex5vsknk084sn02q` |
-| Awareness | `awr_` | `id.AwarenessID` | `awr_01h455vb4pex5vsknk084sn02q` |
-| Value | `val_` | `id.ValueID` | `val_01h455vb4pex5vsknk084sn02q` |
-| Reflex | `rflx_` | `id.ReflexID` | `rflx_01h455vb4pex5vsknk084sn02q` |
-| Boundary | `bnd_` | `id.BoundaryID` | `bnd_01h455vb4pex5vsknk084sn02q` |
-| SafetyProfile | `sprf_` | `id.SafetyProfileID` | `sprf_01h455vb4pex5vsknk084sn02q` |
+```
+scan_01h455vb4pex5vsknk084sn02q
+```
 
-## Constructors
+The `scan` prefix identifies this as a scan. The suffix is a base32-encoded UUIDv7 that encodes creation time, so IDs sort chronologically.
 
-Each type has a constructor that generates a new UUIDv7-based ID with the correct prefix:
+## The `id` package
+
+The `id` package wraps the [TypeID Go library](https://github.com/jetify-com/typeid-go) (v2) with a single `ID` struct. All entity types share the same struct -- the prefix distinguishes them.
+
+### Creating IDs
 
 ```go
 import "github.com/xraph/shield/id"
 
-scanID    := id.NewScanID()           // scan_01h...
-policyID  := id.NewPolicyID()         // pol_01h...
-instID    := id.NewInstinctID()       // inst_01h...
-judgID    := id.NewJudgmentID()       // jdg_01h...
-profileID := id.NewSafetyProfileID()  // sprf_01h...
+scanID             := id.New(id.PrefixScan)              // scan_01h455vb...
+policyID           := id.New(id.PrefixPolicy)            // pol_01h455vb...
+findingID          := id.New(id.PrefixFinding)           // find_01h455vb...
+piiTokenID         := id.New(id.PrefixPIIToken)          // pii_01h455vb...
+complianceReportID := id.New(id.PrefixComplianceReport)  // crpt_01h455vb...
+checkID            := id.New(id.PrefixCheck)             // schk_01h455vb...
+instinctID         := id.New(id.PrefixInstinct)          // inst_01h455vb...
+judgmentID         := id.New(id.PrefixJudgment)          // jdg_01h455vb...
+awarenessID        := id.New(id.PrefixAwareness)         // awr_01h455vb...
+valueID            := id.New(id.PrefixValue)             // val_01h455vb...
+reflexID           := id.New(id.PrefixReflex)            // rflx_01h455vb...
+boundaryID         := id.New(id.PrefixBoundary)          // bnd_01h455vb...
+safetyProfileID    := id.New(id.PrefixSafetyProfile)     // sprf_01h455vb...
 ```
 
-## Parsing
+Convenience constructors: `id.NewScanID()`, `id.NewPolicyID()`, `id.NewFindingID()`, `id.NewPIITokenID()`, `id.NewComplianceReportID()`, `id.NewCheckID()`, `id.NewInstinctID()`, `id.NewJudgmentID()`, `id.NewAwarenessID()`, `id.NewValueID()`, `id.NewReflexID()`, `id.NewBoundaryID()`, `id.NewSafetyProfileID()`.
 
-Parse functions validate both the format and the prefix:
+### Parsing IDs
 
 ```go
-scanID, err := id.ParseScanID("scan_01h2xcejqtf2nbrexx3vqjhp41")
-// err is nil — prefix matches
-
-_, err = id.ParseScanID("inst_01h455vb4pex5vsknk084sn02q")
-// err: id: expected prefix "scan", got "inst"
+parsed, err := id.Parse("scan_01h455vb4pex5vsknk084sn02q")
+parsed, err := id.ParseWithPrefix("scan_01h455vb...", id.PrefixScan)  // validates prefix
+parsed, err := id.ParseScanID("scan_01h455vb...")                     // convenience
 ```
 
-Use `id.ParseAny` when you need to accept any valid TypeID regardless of prefix:
+### Nil ID
 
 ```go
-anyID, err := id.ParseAny("inst_01h455vb4pex5vsknk084sn02q")
-// anyID.Prefix() == "inst"
+var empty id.ID
+empty.IsNil()  // true
+empty.String() // ""
+id.Nil.IsNil() // true
 ```
 
-## K-sortability
+### Database storage
 
-TypeIDs embed UUIDv7 timestamps, making them naturally sortable by creation time. This means:
+`id.ID` implements `Scanner` and `driver.Valuer`. Stores as a string, returns `NULL` for nil IDs.
 
-- Database indexes on TypeID columns are efficient for time-range queries
-- IDs created later always sort after earlier IDs
-- No need for separate `created_at` indexes for ordering
+### JSON serialization
+
+`id.ID` implements `TextMarshaler` and `TextUnmarshaler`. Nil IDs serialize as empty strings.
+
+## Prefix reference
+
+| Constant | Prefix | Entity |
+|----------|--------|--------|
+| `id.PrefixScan` | `scan` | Scan |
+| `id.PrefixPolicy` | `pol` | Policy |
+| `id.PrefixFinding` | `find` | Finding |
+| `id.PrefixPIIToken` | `pii` | PII token |
+| `id.PrefixComplianceReport` | `crpt` | Compliance report |
+| `id.PrefixCheck` | `schk` | Safety check |
+| `id.PrefixInstinct` | `inst` | Instinct |
+| `id.PrefixJudgment` | `jdg` | Judgment |
+| `id.PrefixAwareness` | `awr` | Awareness |
+| `id.PrefixValue` | `val` | Value |
+| `id.PrefixReflex` | `rflx` | Reflex |
+| `id.PrefixBoundary` | `bnd` | Boundary |
+| `id.PrefixSafetyProfile` | `sprf` | Safety profile |

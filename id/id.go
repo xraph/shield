@@ -1,225 +1,337 @@
-// Package id provides TypeID-based identity types for all Shield entities.
+// Package id defines TypeID-based identity types for all Shield entities.
 //
-// Every entity in Shield gets a type-prefixed, K-sortable, UUIDv7-based
-// identifier. IDs are validated at parse time to ensure the prefix matches
-// the expected type.
-//
-// Examples:
-//
-//	scan_01h2xcejqtf2nbrexx3vqjhp41
-//	pol_01h2xcejqtf2nbrexx3vqjhp41
-//	inst_01h455vb4pex5vsknk084sn02q
+// Every entity in Shield uses a single ID struct with a prefix that identifies
+// the entity type. IDs are K-sortable (UUIDv7-based), globally unique,
+// and URL-safe in the format "prefix_suffix".
 package id
 
 import (
+	"database/sql/driver"
 	"fmt"
 
 	"go.jetify.com/typeid/v2"
 )
 
-// ──────────────────────────────────────────────────
-// Prefix constants
-// ──────────────────────────────────────────────────
+// Prefix identifies the entity type encoded in a TypeID.
+type Prefix string
 
+// Prefix constants for all Shield entity types.
 const (
-	// PrefixScan is the TypeID prefix for scan results.
-	PrefixScan = "scan"
-
-	// PrefixPolicy is the TypeID prefix for policies.
-	PrefixPolicy = "pol"
-
-	// PrefixFinding is the TypeID prefix for findings.
-	PrefixFinding = "find"
-
-	// PrefixPIIToken is the TypeID prefix for PII tokens.
-	PrefixPIIToken = "pii"
-
-	// PrefixComplianceReport is the TypeID prefix for compliance reports.
-	PrefixComplianceReport = "crpt"
-
-	// PrefixCheck is the TypeID prefix for safety checks.
-	PrefixCheck = "schk"
-
-	// PrefixInstinct is the TypeID prefix for instincts.
-	PrefixInstinct = "inst"
-
-	// PrefixJudgment is the TypeID prefix for judgments.
-	PrefixJudgment = "jdg"
-
-	// PrefixAwareness is the TypeID prefix for awareness detectors.
-	PrefixAwareness = "awr"
-
-	// PrefixValue is the TypeID prefix for values.
-	PrefixValue = "val"
-
-	// PrefixReflex is the TypeID prefix for reflexes.
-	PrefixReflex = "rflx"
-
-	// PrefixBoundary is the TypeID prefix for boundaries.
-	PrefixBoundary = "bnd"
-
-	// PrefixSafetyProfile is the TypeID prefix for safety profiles.
-	PrefixSafetyProfile = "sprf"
+	PrefixScan             Prefix = "scan"
+	PrefixPolicy           Prefix = "pol"
+	PrefixFinding          Prefix = "find"
+	PrefixPIIToken         Prefix = "pii"
+	PrefixComplianceReport Prefix = "crpt"
+	PrefixCheck            Prefix = "schk"
+	PrefixInstinct         Prefix = "inst"
+	PrefixJudgment         Prefix = "jdg"
+	PrefixAwareness        Prefix = "awr"
+	PrefixValue            Prefix = "val"
+	PrefixReflex           Prefix = "rflx"
+	PrefixBoundary         Prefix = "bnd"
+	PrefixSafetyProfile    Prefix = "sprf"
 )
 
+// ID is the primary identifier type for all Shield entities.
+// It wraps a TypeID providing a prefix-qualified, globally unique,
+// sortable, URL-safe identifier in the format "prefix_suffix".
+//
+//nolint:recvcheck // Value receivers for read-only methods, pointer receivers for UnmarshalText/Scan.
+type ID struct {
+	inner typeid.TypeID
+	valid bool
+}
+
+// Nil is the zero-value ID.
+var Nil ID
+
+// New generates a new globally unique ID with the given prefix.
+// It panics if prefix is not a valid TypeID prefix (programming error).
+func New(prefix Prefix) ID {
+	tid, err := typeid.Generate(string(prefix))
+	if err != nil {
+		panic(fmt.Sprintf("id: invalid prefix %q: %v", prefix, err))
+	}
+
+	return ID{inner: tid, valid: true}
+}
+
+// Parse parses a TypeID string (e.g., "scan_01h2xcejqtf2nbrexx3vqjhp41")
+// into an ID. Returns an error if the string is not valid.
+func Parse(s string) (ID, error) {
+	if s == "" {
+		return Nil, fmt.Errorf("id: parse %q: empty string", s)
+	}
+
+	tid, err := typeid.Parse(s)
+	if err != nil {
+		return Nil, fmt.Errorf("id: parse %q: %w", s, err)
+	}
+
+	return ID{inner: tid, valid: true}, nil
+}
+
+// ParseWithPrefix parses a TypeID string and validates that its prefix
+// matches the expected value.
+func ParseWithPrefix(s string, expected Prefix) (ID, error) {
+	parsed, err := Parse(s)
+	if err != nil {
+		return Nil, err
+	}
+
+	if parsed.Prefix() != expected {
+		return Nil, fmt.Errorf("id: expected prefix %q, got %q", expected, parsed.Prefix())
+	}
+
+	return parsed, nil
+}
+
+// MustParse is like Parse but panics on error. Use for hardcoded ID values.
+func MustParse(s string) ID {
+	parsed, err := Parse(s)
+	if err != nil {
+		panic(fmt.Sprintf("id: must parse %q: %v", s, err))
+	}
+
+	return parsed
+}
+
+// MustParseWithPrefix is like ParseWithPrefix but panics on error.
+func MustParseWithPrefix(s string, expected Prefix) ID {
+	parsed, err := ParseWithPrefix(s, expected)
+	if err != nil {
+		panic(fmt.Sprintf("id: must parse with prefix %q: %v", expected, err))
+	}
+
+	return parsed
+}
+
 // ──────────────────────────────────────────────────
-// Type aliases for readability
+// Type aliases for backward compatibility
 // ──────────────────────────────────────────────────
 
 // ScanID is a type-safe identifier for scan results (prefix: "scan").
-type ScanID = typeid.TypeID
+type ScanID = ID
 
 // PolicyID is a type-safe identifier for policies (prefix: "pol").
-type PolicyID = typeid.TypeID
+type PolicyID = ID
 
 // FindingID is a type-safe identifier for findings (prefix: "find").
-type FindingID = typeid.TypeID
+type FindingID = ID
 
 // PIITokenID is a type-safe identifier for PII tokens (prefix: "pii").
-type PIITokenID = typeid.TypeID
+type PIITokenID = ID
 
 // ComplianceReportID is a type-safe identifier for compliance reports (prefix: "crpt").
-type ComplianceReportID = typeid.TypeID
+type ComplianceReportID = ID
 
 // CheckID is a type-safe identifier for safety checks (prefix: "schk").
-type CheckID = typeid.TypeID
+type CheckID = ID
 
 // InstinctID is a type-safe identifier for instincts (prefix: "inst").
-type InstinctID = typeid.TypeID
+type InstinctID = ID
 
 // JudgmentID is a type-safe identifier for judgments (prefix: "jdg").
-type JudgmentID = typeid.TypeID
+type JudgmentID = ID
 
 // AwarenessID is a type-safe identifier for awareness detectors (prefix: "awr").
-type AwarenessID = typeid.TypeID
+type AwarenessID = ID
 
 // ValueID is a type-safe identifier for values (prefix: "val").
-type ValueID = typeid.TypeID
+type ValueID = ID
 
 // ReflexID is a type-safe identifier for reflexes (prefix: "rflx").
-type ReflexID = typeid.TypeID
+type ReflexID = ID
 
 // BoundaryID is a type-safe identifier for boundaries (prefix: "bnd").
-type BoundaryID = typeid.TypeID
+type BoundaryID = ID
 
 // SafetyProfileID is a type-safe identifier for safety profiles (prefix: "sprf").
-type SafetyProfileID = typeid.TypeID
+type SafetyProfileID = ID
 
-// AnyID is a TypeID that accepts any valid prefix.
-type AnyID = typeid.TypeID
-
-// ──────────────────────────────────────────────────
-// Constructors
-// ──────────────────────────────────────────────────
-
-// NewScanID returns a new random ScanID.
-func NewScanID() ScanID { return must(typeid.Generate(PrefixScan)) }
-
-// NewPolicyID returns a new random PolicyID.
-func NewPolicyID() PolicyID { return must(typeid.Generate(PrefixPolicy)) }
-
-// NewFindingID returns a new random FindingID.
-func NewFindingID() FindingID { return must(typeid.Generate(PrefixFinding)) }
-
-// NewPIITokenID returns a new random PIITokenID.
-func NewPIITokenID() PIITokenID { return must(typeid.Generate(PrefixPIIToken)) }
-
-// NewComplianceReportID returns a new random ComplianceReportID.
-func NewComplianceReportID() ComplianceReportID { return must(typeid.Generate(PrefixComplianceReport)) }
-
-// NewCheckID returns a new random CheckID.
-func NewCheckID() CheckID { return must(typeid.Generate(PrefixCheck)) }
-
-// NewInstinctID returns a new random InstinctID.
-func NewInstinctID() InstinctID { return must(typeid.Generate(PrefixInstinct)) }
-
-// NewJudgmentID returns a new random JudgmentID.
-func NewJudgmentID() JudgmentID { return must(typeid.Generate(PrefixJudgment)) }
-
-// NewAwarenessID returns a new random AwarenessID.
-func NewAwarenessID() AwarenessID { return must(typeid.Generate(PrefixAwareness)) }
-
-// NewValueID returns a new random ValueID.
-func NewValueID() ValueID { return must(typeid.Generate(PrefixValue)) }
-
-// NewReflexID returns a new random ReflexID.
-func NewReflexID() ReflexID { return must(typeid.Generate(PrefixReflex)) }
-
-// NewBoundaryID returns a new random BoundaryID.
-func NewBoundaryID() BoundaryID { return must(typeid.Generate(PrefixBoundary)) }
-
-// NewSafetyProfileID returns a new random SafetyProfileID.
-func NewSafetyProfileID() SafetyProfileID { return must(typeid.Generate(PrefixSafetyProfile)) }
+// AnyID is a type alias that accepts any valid prefix.
+type AnyID = ID
 
 // ──────────────────────────────────────────────────
-// Parsing (validates prefix at parse time)
+// Convenience constructors
 // ──────────────────────────────────────────────────
 
-// ParseScanID parses a string into a ScanID.
-func ParseScanID(s string) (ScanID, error) { return parseWithPrefix(PrefixScan, s) }
+// NewScanID generates a new unique scan ID.
+func NewScanID() ID { return New(PrefixScan) }
 
-// ParsePolicyID parses a string into a PolicyID.
-func ParsePolicyID(s string) (PolicyID, error) { return parseWithPrefix(PrefixPolicy, s) }
+// NewPolicyID generates a new unique policy ID.
+func NewPolicyID() ID { return New(PrefixPolicy) }
 
-// ParseFindingID parses a string into a FindingID.
-func ParseFindingID(s string) (FindingID, error) { return parseWithPrefix(PrefixFinding, s) }
+// NewFindingID generates a new unique finding ID.
+func NewFindingID() ID { return New(PrefixFinding) }
 
-// ParsePIITokenID parses a string into a PIITokenID.
-func ParsePIITokenID(s string) (PIITokenID, error) { return parseWithPrefix(PrefixPIIToken, s) }
+// NewPIITokenID generates a new unique PII token ID.
+func NewPIITokenID() ID { return New(PrefixPIIToken) }
 
-// ParseComplianceReportID parses a string into a ComplianceReportID.
-func ParseComplianceReportID(s string) (ComplianceReportID, error) {
-	return parseWithPrefix(PrefixComplianceReport, s)
+// NewComplianceReportID generates a new unique compliance report ID.
+func NewComplianceReportID() ID { return New(PrefixComplianceReport) }
+
+// NewCheckID generates a new unique safety check ID.
+func NewCheckID() ID { return New(PrefixCheck) }
+
+// NewInstinctID generates a new unique instinct ID.
+func NewInstinctID() ID { return New(PrefixInstinct) }
+
+// NewJudgmentID generates a new unique judgment ID.
+func NewJudgmentID() ID { return New(PrefixJudgment) }
+
+// NewAwarenessID generates a new unique awareness ID.
+func NewAwarenessID() ID { return New(PrefixAwareness) }
+
+// NewValueID generates a new unique value ID.
+func NewValueID() ID { return New(PrefixValue) }
+
+// NewReflexID generates a new unique reflex ID.
+func NewReflexID() ID { return New(PrefixReflex) }
+
+// NewBoundaryID generates a new unique boundary ID.
+func NewBoundaryID() ID { return New(PrefixBoundary) }
+
+// NewSafetyProfileID generates a new unique safety profile ID.
+func NewSafetyProfileID() ID { return New(PrefixSafetyProfile) }
+
+// ──────────────────────────────────────────────────
+// Convenience parsers
+// ──────────────────────────────────────────────────
+
+// ParseScanID parses a string and validates the "scan" prefix.
+func ParseScanID(s string) (ID, error) { return ParseWithPrefix(s, PrefixScan) }
+
+// ParsePolicyID parses a string and validates the "pol" prefix.
+func ParsePolicyID(s string) (ID, error) { return ParseWithPrefix(s, PrefixPolicy) }
+
+// ParseFindingID parses a string and validates the "find" prefix.
+func ParseFindingID(s string) (ID, error) { return ParseWithPrefix(s, PrefixFinding) }
+
+// ParsePIITokenID parses a string and validates the "pii" prefix.
+func ParsePIITokenID(s string) (ID, error) { return ParseWithPrefix(s, PrefixPIIToken) }
+
+// ParseComplianceReportID parses a string and validates the "crpt" prefix.
+func ParseComplianceReportID(s string) (ID, error) { return ParseWithPrefix(s, PrefixComplianceReport) }
+
+// ParseCheckID parses a string and validates the "schk" prefix.
+func ParseCheckID(s string) (ID, error) { return ParseWithPrefix(s, PrefixCheck) }
+
+// ParseInstinctID parses a string and validates the "inst" prefix.
+func ParseInstinctID(s string) (ID, error) { return ParseWithPrefix(s, PrefixInstinct) }
+
+// ParseJudgmentID parses a string and validates the "jdg" prefix.
+func ParseJudgmentID(s string) (ID, error) { return ParseWithPrefix(s, PrefixJudgment) }
+
+// ParseAwarenessID parses a string and validates the "awr" prefix.
+func ParseAwarenessID(s string) (ID, error) { return ParseWithPrefix(s, PrefixAwareness) }
+
+// ParseValueID parses a string and validates the "val" prefix.
+func ParseValueID(s string) (ID, error) { return ParseWithPrefix(s, PrefixValue) }
+
+// ParseReflexID parses a string and validates the "rflx" prefix.
+func ParseReflexID(s string) (ID, error) { return ParseWithPrefix(s, PrefixReflex) }
+
+// ParseBoundaryID parses a string and validates the "bnd" prefix.
+func ParseBoundaryID(s string) (ID, error) { return ParseWithPrefix(s, PrefixBoundary) }
+
+// ParseSafetyProfileID parses a string and validates the "sprf" prefix.
+func ParseSafetyProfileID(s string) (ID, error) { return ParseWithPrefix(s, PrefixSafetyProfile) }
+
+// ParseAny parses a string into an ID without type checking the prefix.
+func ParseAny(s string) (ID, error) { return Parse(s) }
+
+// ──────────────────────────────────────────────────
+// ID methods
+// ──────────────────────────────────────────────────
+
+// String returns the full TypeID string representation (prefix_suffix).
+// Returns an empty string for the Nil ID.
+func (i ID) String() string {
+	if !i.valid {
+		return ""
+	}
+
+	return i.inner.String()
 }
 
-// ParseCheckID parses a string into a CheckID.
-func ParseCheckID(s string) (CheckID, error) { return parseWithPrefix(PrefixCheck, s) }
+// Prefix returns the prefix component of this ID.
+func (i ID) Prefix() Prefix {
+	if !i.valid {
+		return ""
+	}
 
-// ParseInstinctID parses a string into an InstinctID.
-func ParseInstinctID(s string) (InstinctID, error) { return parseWithPrefix(PrefixInstinct, s) }
-
-// ParseJudgmentID parses a string into a JudgmentID.
-func ParseJudgmentID(s string) (JudgmentID, error) { return parseWithPrefix(PrefixJudgment, s) }
-
-// ParseAwarenessID parses a string into an AwarenessID.
-func ParseAwarenessID(s string) (AwarenessID, error) { return parseWithPrefix(PrefixAwareness, s) }
-
-// ParseValueID parses a string into a ValueID.
-func ParseValueID(s string) (ValueID, error) { return parseWithPrefix(PrefixValue, s) }
-
-// ParseReflexID parses a string into a ReflexID.
-func ParseReflexID(s string) (ReflexID, error) { return parseWithPrefix(PrefixReflex, s) }
-
-// ParseBoundaryID parses a string into a BoundaryID.
-func ParseBoundaryID(s string) (BoundaryID, error) { return parseWithPrefix(PrefixBoundary, s) }
-
-// ParseSafetyProfileID parses a string into a SafetyProfileID.
-func ParseSafetyProfileID(s string) (SafetyProfileID, error) {
-	return parseWithPrefix(PrefixSafetyProfile, s)
+	return Prefix(i.inner.Prefix())
 }
 
-// ParseAny parses a string into an AnyID, accepting any valid prefix.
-func ParseAny(s string) (AnyID, error) { return typeid.Parse(s) }
+// IsNil reports whether this ID is the zero value.
+func (i ID) IsNil() bool {
+	return !i.valid
+}
 
-// ──────────────────────────────────────────────────
-// Helpers
-// ──────────────────────────────────────────────────
+// MarshalText implements encoding.TextMarshaler.
+func (i ID) MarshalText() ([]byte, error) {
+	if !i.valid {
+		return []byte{}, nil
+	}
 
-// parseWithPrefix parses a TypeID and validates that its prefix matches expected.
-func parseWithPrefix(expected, s string) (typeid.TypeID, error) {
-	tid, err := typeid.Parse(s)
+	return []byte(i.inner.String()), nil
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (i *ID) UnmarshalText(data []byte) error {
+	if len(data) == 0 {
+		*i = Nil
+
+		return nil
+	}
+
+	parsed, err := Parse(string(data))
 	if err != nil {
-		return tid, err
+		return err
 	}
-	if tid.Prefix() != expected {
-		return tid, fmt.Errorf("id: expected prefix %q, got %q", expected, tid.Prefix())
-	}
-	return tid, nil
+
+	*i = parsed
+
+	return nil
 }
 
-func must[T any](v T, err error) T {
-	if err != nil {
-		panic(err)
+// Value implements driver.Valuer for database storage.
+// Returns nil for the Nil ID so that optional foreign key columns store NULL.
+func (i ID) Value() (driver.Value, error) {
+	if !i.valid {
+		return nil, nil //nolint:nilnil // nil is the canonical NULL for driver.Valuer
 	}
-	return v
+
+	return i.inner.String(), nil
+}
+
+// Scan implements sql.Scanner for database retrieval.
+func (i *ID) Scan(src any) error {
+	if src == nil {
+		*i = Nil
+
+		return nil
+	}
+
+	switch v := src.(type) {
+	case string:
+		if v == "" {
+			*i = Nil
+
+			return nil
+		}
+
+		return i.UnmarshalText([]byte(v))
+	case []byte:
+		if len(v) == 0 {
+			*i = Nil
+
+			return nil
+		}
+
+		return i.UnmarshalText(v)
+	default:
+		return fmt.Errorf("id: cannot scan %T into ID", src)
+	}
 }
