@@ -83,6 +83,16 @@ func (e *Extension) Register(fapp forge.App) error {
 			return err
 		}
 		e.engineOpts = append(e.engineOpts, engine.WithStore(s))
+	} else if db, err := vessel.Inject[*grove.DB](fapp.Container()); err == nil {
+		// Auto-discover default grove.DB from container (matches authsome/cortex pattern).
+		s, err := e.buildStoreFromGroveDB(db)
+		if err != nil {
+			return err
+		}
+		e.engineOpts = append(e.engineOpts, engine.WithStore(s))
+		e.Logger().Info("shield: auto-discovered grove.DB from container",
+			forge.F("driver", db.Driver().Name()),
+		)
 	}
 
 	eng, err := engine.New(e.engineOpts...)

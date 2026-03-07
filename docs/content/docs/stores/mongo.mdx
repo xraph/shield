@@ -49,9 +49,20 @@ if err := s.Migrate(context.Background()); err != nil {
 | Aspect | Detail |
 |--------|--------|
 | Driver | grove ORM + mongodriver |
-| Migrations | Index creation on collections |
+| Migrations | Grove migrations with JSON Schema validation + indexes |
 | Transactions | MongoDB sessions (replica-set required for multi-doc txns) |
 | Concurrency | Document-level locking with horizontal scalability |
+
+## Grove Migrations
+
+The store exports a `Migrations` group for use with Grove's migration orchestrator. This enables tracked, versioned migrations across all stores in your application:
+
+```go
+import mongostore "github.com/xraph/shield/store/mongo"
+
+// mongostore.Migrations is a migrate.Group for the shield mongo store.
+// Register it with the grove migration orchestrator for coordinated migrations.
+```
 
 ## When to use
 

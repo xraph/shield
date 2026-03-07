@@ -16,7 +16,7 @@ package engine
 
 import (
 	"context"
-	"log/slog"
+	log "github.com/xraph/go-utils/log"
 	"time"
 
 	"github.com/xraph/shield"
@@ -31,7 +31,7 @@ type Engine struct {
 	store    store.Store
 	registry *plugin.Registry
 	config   shield.Config
-	logger   *slog.Logger
+	logger   log.Logger
 }
 
 // Option configures the Engine.
@@ -53,16 +53,16 @@ func WithConfig(cfg shield.Config) Option {
 }
 
 // WithLogger sets a custom logger.
-func WithLogger(l *slog.Logger) Option {
+func WithLogger(l log.Logger) Option {
 	return func(e *Engine) { e.logger = l }
 }
 
 // New creates a new safety engine with the given options.
 func New(opts ...Option) (*Engine, error) {
 	e := &Engine{
-		registry: plugin.NewRegistry(slog.Default()),
+		registry: plugin.NewRegistry(log.NewNoopLogger()),
 		config:   shield.DefaultConfig(),
-		logger:   slog.Default(),
+		logger:   log.NewNoopLogger(),
 	}
 	for _, opt := range opts {
 		opt(e)
@@ -128,11 +128,19 @@ func (e *Engine) executeScan(ctx context.Context, input *scan.Input) (*scan.Resu
 	// Persist result
 	if e.store != nil {
 		if err := e.store.CreateScan(ctx, result); err != nil {
-			e.logger.Warn("engine: failed to persist scan result", "scan_id", scanID, "error", err)
+			e.logger.Warn("engine: failed to persist scan result", log.String("scan_id", scanID.String()), log.Error(err))
 		}
 	}
 
 	return result, nil
+}
+
+// Health checks the health of the engine by pinging its store.
+func (e *Engine) Health(ctx context.Context) error {
+	if e.store != nil {
+		return e.store.Ping(ctx)
+	}
+	return nil
 }
 
 // Stop gracefully shuts down the engine.
