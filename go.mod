@@ -4,8 +4,8 @@ go 1.25.7
 
 require (
 	github.com/xraph/forge v0.9.12
-	github.com/xraph/go-utils v0.0.11
-	github.com/xraph/grove v0.0.5
+	github.com/xraph/go-utils v1.0.0
+	github.com/xraph/grove v1.0.0
 	github.com/xraph/grove/drivers/mongodriver v0.0.5
 	github.com/xraph/grove/drivers/pgdriver v0.0.5
 	github.com/xraph/grove/drivers/sqlitedriver v0.0.5
