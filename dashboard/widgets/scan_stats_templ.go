@@ -5,12 +5,13 @@ package widgets
 
 //lint:file-ignore SA4006 This context is only used if a nested component is present.
 
-import "github.com/a-h/templ"
-import templruntime "github.com/a-h/templ/runtime"
-
 import (
-	"github.com/xraph/shield/dashboard/components"
 	"strconv"
+
+	"github.com/a-h/templ"
+	templruntime "github.com/a-h/templ/runtime"
+
+	"github.com/xraph/shield/dashboard/components"
 )
 
 func ScanStatsWidget(total, blocked, flagged, allowed int64) templ.Component {

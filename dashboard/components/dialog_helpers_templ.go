@@ -5,10 +5,11 @@ package components
 
 //lint:file-ignore SA4006 This context is only used if a nested component is present.
 
-import "github.com/a-h/templ"
-import templruntime "github.com/a-h/templ/runtime"
-
-import "github.com/xraph/forgeui/components/dialog"
+import (
+	"github.com/a-h/templ"
+	templruntime "github.com/a-h/templ/runtime"
+	"github.com/xraph/forgeui/components/dialog"
+)
 
 // DialogHelpers renders the ForgeUI dialog script and provides tuiOpenDialog / tuiCloseDialog
 // helper functions. Safe to include multiple times — functions are always redefined (cheap),
