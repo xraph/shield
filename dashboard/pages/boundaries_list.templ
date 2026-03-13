@@ -1,0 +1,147 @@
+package pages
+
+import (
+	"fmt"
+	"strconv"
+
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/input"
+	"github.com/xraph/forgeui/components/table"
+	"github.com/xraph/shield/boundary"
+	"github.com/xraph/shield/dashboard/components"
+	"github.com/xraph/shield/dashboard/shared"
+)
+
+// truncateResponse returns a truncated version of the response text for display.
+func truncateResponse(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "..."
+}
+
+templ BoundariesListPage(items []*boundary.Boundary, scope string, pg shared.PaginationMeta) {
+	<div class="space-y-6">
+		@components.PageHeader("Boundaries", fmt.Sprintf("%d", pg.Total), "Layer 3: Hard safety limits") {
+			@button.Button(button.Props{
+				Attributes: templ.Attributes{
+					"hx-get":    "/boundaries/create",
+					"hx-target": "#content",
+				},
+			}) {
+				New Boundary
+			}
+		}
+		<div class="flex gap-4">
+			@input.Input(input.Props{
+				Type:        "search",
+				Placeholder: "Search boundaries...",
+				Class:       "max-w-sm",
+				Attributes: templ.Attributes{
+					"name":        "search",
+					"hx-get":      "/boundaries",
+					"hx-target":   "#content",
+					"hx-trigger":  "input changed delay:300ms",
+					"hx-push-url": "true",
+					"hx-include":  "[name='search'],[name='scope']",
+				},
+			})
+			<select name="scope" class="flex h-10 rounded-md border border-input bg-background px-3 py-2 text-sm"
+				hx-get="/boundaries"
+				hx-target="#content"
+				hx-trigger="change"
+				hx-push-url="true"
+				hx-include="[name='search'],[name='scope']">
+				<option value="">All Scopes</option>
+				<option value="topic" selected?={ scope == "topic" }>Topic</option>
+				<option value="action" selected?={ scope == "action" }>Action</option>
+				<option value="data" selected?={ scope == "data" }>Data</option>
+				<option value="output" selected?={ scope == "output" }>Output</option>
+				<option value="custom" selected?={ scope == "custom" }>Custom</option>
+			</select>
+		</div>
+		if len(items) == 0 {
+			@components.EmptyState("shield", "No boundaries found", "Create your first boundary to define hard safety limits")
+		} else {
+			@table.Table() {
+				@table.Header() {
+					@table.Row() {
+						@table.Head() { Name }
+						@table.Head() { Limits }
+						@table.Head() { Response }
+						@table.Head() { Enabled }
+						@table.Head() { Actions }
+					}
+				}
+				@table.Body() {
+					for _, bnd := range items {
+						@table.Row() {
+							@table.Cell() {
+								<a class="font-medium hover:underline cursor-pointer"
+									hx-get={ "/boundaries/detail?name=" + bnd.Name }
+									hx-target="#content">
+									{ bnd.Name }
+								</a>
+							}
+							@table.Cell() {
+								{ strconv.Itoa(len(bnd.Limits)) }
+							}
+							@table.Cell() {
+								<span class="text-sm text-muted-foreground">
+									{ truncateResponse(bnd.Response, 50) }
+								</span>
+							}
+							@table.Cell() {
+								@components.EnabledBadge(bnd.Enabled)
+							}
+							@table.Cell() {
+								<div class="flex gap-1">
+									@button.Button(button.Props{
+										Variant: button.VariantOutline,
+										Size:    button.SizeSm,
+										Attributes: templ.Attributes{
+											"hx-get":    "/boundaries/detail?name=" + bnd.Name,
+											"hx-target": "#content",
+										},
+									}) {
+										View
+									}
+									@button.Button(button.Props{
+										Variant: button.VariantOutline,
+										Size:    button.SizeSm,
+										Attributes: templ.Attributes{
+											"hx-get":    "/boundaries/edit?name=" + bnd.Name,
+											"hx-target": "#content",
+										},
+									}) {
+										Edit
+									}
+									@button.Button(button.Props{
+										Variant: button.VariantDestructive,
+										Size:    button.SizeSm,
+										Attributes: templ.Attributes{
+											"onclick": fmt.Sprintf("tuiOpenDialog('delete-boundary-%s')", bnd.Name),
+										},
+									}) {
+										Delete
+									}
+									@components.ConfirmDialog(components.ConfirmDialogProps{
+										ID:           "delete-boundary-" + bnd.Name,
+										Title:        "Delete Boundary",
+										Description:  "Are you sure you want to delete boundary \"" + bnd.Name + "\"? This action cannot be undone.",
+										ConfirmLabel: "Delete",
+										HxEndpoint:   "/shield/boundaries/" + bnd.Name,
+										HxMethod:     "delete",
+									})
+								</div>
+							}
+						}
+					}
+				}
+			}
+			{{ baseURL := "/boundaries?scope=" + scope }}
+			@Pagination(pg, baseURL)
+		}
+		@components.DialogHelpers()
+	</div>
+}

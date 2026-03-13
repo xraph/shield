@@ -8,8 +8,9 @@ package audithook
 import (
 	"context"
 	"fmt"
-	log "github.com/xraph/go-utils/log"
 	"time"
+
+	log "github.com/xraph/go-utils/log"
 
 	"github.com/xraph/shield/id"
 	"github.com/xraph/shield/plugin"

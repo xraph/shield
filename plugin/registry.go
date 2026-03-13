@@ -2,8 +2,9 @@ package plugin
 
 import (
 	"context"
-	log "github.com/xraph/go-utils/log"
 	"time"
+
+	log "github.com/xraph/go-utils/log"
 
 	"github.com/xraph/shield/id"
 )

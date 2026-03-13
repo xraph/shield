@@ -1,0 +1,138 @@
+package pages
+
+import (
+	"fmt"
+	"strconv"
+
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/input"
+	"github.com/xraph/forgeui/components/table"
+	"github.com/xraph/shield/dashboard/components"
+	"github.com/xraph/shield/dashboard/shared"
+	"github.com/xraph/shield/policy"
+)
+
+templ PoliciesListPage(items []*policy.Policy, scopeLevel string, pg shared.PaginationMeta) {
+	<div class="space-y-6">
+		@components.PageHeader("Policies", fmt.Sprintf("%d", pg.Total), "Administrative governance over safety rules") {
+			@button.Button(button.Props{
+				Attributes: templ.Attributes{
+					"hx-get":    "/policies/create",
+					"hx-target": "#content",
+				},
+			}) {
+				New Policy
+			}
+		}
+		<div class="flex gap-4">
+			@input.Input(input.Props{
+				Type:        "search",
+				Placeholder: "Search policies...",
+				Class:       "max-w-sm",
+				Attributes: templ.Attributes{
+					"name":        "search",
+					"hx-get":      "/policies",
+					"hx-target":   "#content",
+					"hx-trigger":  "input changed delay:300ms",
+					"hx-push-url": "true",
+					"hx-include":  "[name='search'],[name='scope_level']",
+				},
+			})
+			<select name="scope_level" class="flex h-10 rounded-md border border-input bg-background px-3 py-2 text-sm"
+				hx-get="/policies"
+				hx-target="#content"
+				hx-trigger="change"
+				hx-push-url="true"
+				hx-include="[name='search'],[name='scope_level']">
+				<option value="">All Scope Levels</option>
+				<option value="app" selected?={ scopeLevel == "app" }>App</option>
+				<option value="org" selected?={ scopeLevel == "org" }>Org</option>
+			</select>
+		</div>
+		if len(items) == 0 {
+			@components.EmptyState("gavel", "No policies found", "Create your first policy to define safety governance rules")
+		} else {
+			@table.Table() {
+				@table.Header() {
+					@table.Row() {
+						@table.Head() { Name }
+						@table.Head() { Scope Key }
+						@table.Head() { Scope Level }
+						@table.Head() { Rules }
+						@table.Head() { Enabled }
+						@table.Head() { Actions }
+					}
+				}
+				@table.Body() {
+					for _, pol := range items {
+						@table.Row() {
+							@table.Cell() {
+								<a class="font-medium hover:underline cursor-pointer"
+									hx-get={ "/policies/detail?name=" + pol.Name }
+									hx-target="#content">
+									{ pol.Name }
+								</a>
+							}
+							@table.Cell() {
+								<span class="text-sm font-mono">{ pol.ScopeKey }</span>
+							}
+							@table.Cell() {
+								@components.ScopeBadge(string(pol.ScopeLevel))
+							}
+							@table.Cell() {
+								{ strconv.Itoa(len(pol.Rules)) }
+							}
+							@table.Cell() {
+								@components.EnabledBadge(pol.Enabled)
+							}
+							@table.Cell() {
+								<div class="flex gap-1">
+									@button.Button(button.Props{
+										Variant: button.VariantOutline,
+										Size:    button.SizeSm,
+										Attributes: templ.Attributes{
+											"hx-get":    "/policies/detail?name=" + pol.Name,
+											"hx-target": "#content",
+										},
+									}) {
+										View
+									}
+									@button.Button(button.Props{
+										Variant: button.VariantOutline,
+										Size:    button.SizeSm,
+										Attributes: templ.Attributes{
+											"hx-get":    "/policies/edit?name=" + pol.Name,
+											"hx-target": "#content",
+										},
+									}) {
+										Edit
+									}
+									@button.Button(button.Props{
+										Variant: button.VariantDestructive,
+										Size:    button.SizeSm,
+										Attributes: templ.Attributes{
+											"onclick": fmt.Sprintf("tuiOpenDialog('delete-policy-%s')", pol.Name),
+										},
+									}) {
+										Delete
+									}
+									@components.ConfirmDialog(components.ConfirmDialogProps{
+										ID:           "delete-policy-" + pol.Name,
+										Title:        "Delete Policy",
+										Description:  "Are you sure you want to delete policy \"" + pol.Name + "\"? This action cannot be undone.",
+										ConfirmLabel: "Delete",
+										HxEndpoint:   "/shield/policies/" + pol.Name,
+										HxMethod:     "delete",
+									})
+								</div>
+							}
+						}
+					}
+				}
+			}
+			{{ baseURL := "/policies?scope_level=" + scopeLevel }}
+			@Pagination(pg, baseURL)
+		}
+		@components.DialogHelpers()
+	</div>
+}

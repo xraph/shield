@@ -1,0 +1,321 @@
+package pages
+
+import (
+	"encoding/json"
+	"fmt"
+	"strings"
+
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/card"
+	"github.com/xraph/forgeui/components/input"
+	"github.com/xraph/forgeui/components/textarea"
+	"github.com/xraph/shield/dashboard/components"
+	"github.com/xraph/shield/values"
+)
+
+func valuesFormAlpineData(val *values.Values) string {
+	if val == nil {
+		return `{
+			formData: {
+				name: '',
+				description: '',
+				severity: 'medium',
+				action: 'flag',
+				enabled: true,
+				rules: []
+			},
+			errors: null,
+			submitting: false,
+			addRule() {
+				this.formData.rules.push({ principle: 'toxicity', threshold: 0.5, categories: '', guidelines: '' });
+			},
+			removeRule(i) {
+				this.formData.rules.splice(i, 1);
+			},
+			async submitForm() {
+				this.submitting = true;
+				this.errors = null;
+				try {
+					const payload = {
+						...this.formData,
+						rules: this.formData.rules.filter(r => r.principle).map(r => ({
+							principle: r.principle,
+							threshold: parseFloat(r.threshold) || 0,
+							categories: r.categories ? r.categories.split(',').map(s => s.trim()).filter(Boolean) : [],
+							guidelines: r.guidelines ? r.guidelines.split(',').map(s => s.trim()).filter(Boolean) : []
+						}))
+					};
+					const resp = await fetch('/shield/values', {
+						method: 'POST',
+						headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify(payload)
+					});
+					if (!resp.ok) {
+						const text = await resp.text();
+						this.errors = text || 'Failed to create value';
+						return;
+					}
+					htmx.ajax('GET', '/values', { target: '#content' });
+				} catch (e) {
+					this.errors = e.message;
+				} finally {
+					this.submitting = false;
+				}
+			}
+		}`
+	}
+
+	rules := buildRulesJSON(val.Rules)
+	return fmt.Sprintf(`{
+		formData: {
+			name: %q,
+			description: %q,
+			severity: %q,
+			action: %q,
+			enabled: %t,
+			rules: %s
+		},
+		errors: null,
+		submitting: false,
+		addRule() {
+			this.formData.rules.push({ principle: 'toxicity', threshold: 0.5, categories: '', guidelines: '' });
+		},
+		removeRule(i) {
+			this.formData.rules.splice(i, 1);
+		},
+		async submitForm() {
+			this.submitting = true;
+			this.errors = null;
+			try {
+				const payload = {
+					...this.formData,
+					rules: this.formData.rules.filter(r => r.principle).map(r => ({
+						principle: r.principle,
+						threshold: parseFloat(r.threshold) || 0,
+						categories: typeof r.categories === 'string' ? r.categories.split(',').map(s => s.trim()).filter(Boolean) : (r.categories || []),
+						guidelines: typeof r.guidelines === 'string' ? r.guidelines.split(',').map(s => s.trim()).filter(Boolean) : (r.guidelines || [])
+					}))
+				};
+				const resp = await fetch('/shield/values/' + encodeURIComponent(%q), {
+					method: 'PUT',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify(payload)
+				});
+				if (!resp.ok) {
+					const text = await resp.text();
+					this.errors = text || 'Failed to update value';
+					return;
+				}
+				htmx.ajax('GET', '/values/detail?name=' + encodeURIComponent(%q), { target: '#content' });
+			} catch (e) {
+				this.errors = e.message;
+			} finally {
+				this.submitting = false;
+			}
+		}
+	}`, val.Name, val.Description, val.Severity, val.Action,
+		val.Enabled, rules, val.Name, val.Name)
+}
+
+func buildRulesJSON(rules []values.Rule) string {
+	if len(rules) == 0 {
+		return "[]"
+	}
+	type ruleForm struct {
+		Principle  string  `json:"principle"`
+		Threshold  float64 `json:"threshold"`
+		Categories string  `json:"categories"`
+		Guidelines string  `json:"guidelines"`
+	}
+	formRules := make([]ruleForm, len(rules))
+	for i, r := range rules {
+		formRules[i] = ruleForm{
+			Principle:  string(r.Principle),
+			Threshold:  r.Threshold,
+			Categories: strings.Join(r.Categories, ", "),
+			Guidelines: strings.Join(r.Guidelines, ", "),
+		}
+	}
+	b, err := json.Marshal(formRules)
+	if err != nil {
+		return "[]"
+	}
+	return string(b)
+}
+
+templ ValueFormPage(val *values.Values) {
+	{{ isEdit := val != nil }}
+	{{ title := "Create Value" }}
+	if isEdit {
+		{{ title = "Edit Value: " + val.Name }}
+	}
+	<div class="space-y-6" x-data={ valuesFormAlpineData(val) }>
+		@components.PageHeader(title, "", "") {
+			@button.Button(button.Props{
+				Variant: button.VariantOutline,
+				Attributes: templ.Attributes{
+					"hx-get":    "/values",
+					"hx-target": "#content",
+				},
+			}) {
+				Cancel
+			}
+		}
+		<template x-if="errors">
+			<div class="bg-destructive/15 text-destructive px-4 py-3 rounded-md text-sm" x-text="errors"></div>
+		</template>
+		@card.Card() {
+			@card.Header() {
+				@card.Title() {
+					Basic Information
+				}
+			}
+			@card.Content() {
+				<div class="space-y-4">
+					<div class="space-y-2">
+						<label class="text-sm font-medium">Name</label>
+						if isEdit {
+							@input.Input(input.Props{
+								Attributes: templ.Attributes{
+									"x-model":  "formData.name",
+									"disabled": "true",
+								},
+							})
+						} else {
+							@input.Input(input.Props{
+								Placeholder: "e.g., content-safety",
+								Attributes: templ.Attributes{
+									"x-model": "formData.name",
+								},
+							})
+						}
+					</div>
+					<div class="space-y-2">
+						<label class="text-sm font-medium">Description</label>
+						@textarea.Textarea(textarea.Props{
+							Placeholder: "Describe the ethical guidelines this value enforces...",
+							Attributes: templ.Attributes{
+								"x-model": "formData.description",
+								"rows":    "3",
+							},
+						})
+					</div>
+					<div class="space-y-2">
+						<label class="text-sm font-medium">Severity</label>
+						<select class="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+							x-model="formData.severity">
+							<option value="low">Low</option>
+							<option value="medium">Medium</option>
+							<option value="high">High</option>
+							<option value="critical">Critical</option>
+						</select>
+					</div>
+					<div class="space-y-2">
+						<label class="text-sm font-medium">Action</label>
+						<select class="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+							x-model="formData.action">
+							<option value="block">Block</option>
+							<option value="flag">Flag</option>
+							<option value="log">Log</option>
+						</select>
+					</div>
+					<div class="flex items-center gap-2">
+						<input type="checkbox" class="h-4 w-4 rounded border-input" x-model="formData.enabled"/>
+						<label class="text-sm font-medium">Enabled</label>
+					</div>
+				</div>
+			}
+		}
+		@card.Card() {
+			@card.Header() {
+				@card.Title() {
+					Rules
+				}
+				@card.Description() {
+					Define ethical principles and their thresholds.
+				}
+			}
+			@card.Content() {
+				<div class="space-y-4">
+					<template x-for="(rule, idx) in formData.rules" :key="idx">
+						<div class="border rounded-md p-4 space-y-3">
+							<div class="flex items-center justify-between">
+								<span class="text-sm font-medium" x-text="'Rule #' + (idx + 1)"></span>
+								<button type="button" class="text-sm text-destructive hover:underline"
+									@click="removeRule(idx)">
+									Remove
+								</button>
+							</div>
+							<div class="space-y-2">
+								<label class="text-sm font-medium">Principle</label>
+								<select class="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+									x-model="rule.principle">
+									<option value="toxicity">Toxicity</option>
+									<option value="brand_safety">Brand Safety</option>
+									<option value="honesty">Honesty</option>
+									<option value="respect">Respect</option>
+									<option value="safety">Safety</option>
+									<option value="privacy">Privacy</option>
+									<option value="custom">Custom</option>
+								</select>
+							</div>
+							<div class="space-y-2">
+								<label class="text-sm font-medium">Threshold</label>
+								<div class="flex items-center gap-3">
+									<input type="range" min="0" max="1" step="0.01" class="flex-1"
+										x-model.number="rule.threshold"/>
+									<span class="text-sm w-12 text-right" x-text="parseFloat(rule.threshold).toFixed(2)"></span>
+								</div>
+							</div>
+							<div class="space-y-2">
+								<label class="text-sm font-medium">Categories</label>
+								<input type="text" class="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+									placeholder="Comma-separated, e.g. hate, harassment, violence"
+									x-model="rule.categories"/>
+							</div>
+							<div class="space-y-2">
+								<label class="text-sm font-medium">Guidelines</label>
+								<input type="text" class="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+									placeholder="Comma-separated, e.g. no profanity, family friendly"
+									x-model="rule.guidelines"/>
+							</div>
+						</div>
+					</template>
+					@button.Button(button.Props{
+						Variant: button.VariantOutline,
+						Attributes: templ.Attributes{
+							"type":   "button",
+							"@click": "addRule()",
+						},
+					}) {
+						Add Rule
+					}
+				</div>
+			}
+		}
+		<div class="flex justify-end gap-2">
+			@button.Button(button.Props{
+				Variant: button.VariantOutline,
+				Attributes: templ.Attributes{
+					"hx-get":    "/values",
+					"hx-target": "#content",
+				},
+			}) {
+				Cancel
+			}
+			@button.Button(button.Props{
+				Attributes: templ.Attributes{
+					"type":      "button",
+					"@click":    "submitForm()",
+					":disabled": "submitting",
+				},
+			}) {
+				if isEdit {
+					Save Changes
+				} else {
+					Create Value
+				}
+			}
+		</div>
+	</div>
+}

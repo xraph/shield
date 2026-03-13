@@ -1,0 +1,180 @@
+package pages
+
+import (
+	"fmt"
+	"strconv"
+
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/card"
+	"github.com/xraph/forgeui/components/table"
+	"github.com/xraph/shield/dashboard/components"
+	"github.com/xraph/shield/instinct"
+)
+
+templ InstinctDetailPage(inst *instinct.Instinct, usageCount int) {
+	<div class="space-y-6">
+		@components.PageHeader(inst.Name, "", "Instinct configuration") {
+			@button.Button(button.Props{
+				Variant: button.VariantOutline,
+				Attributes: templ.Attributes{
+					"hx-get":    "/instincts",
+					"hx-target": "#content",
+				},
+			}) {
+				Back
+			}
+			@button.Button(button.Props{
+				Variant: button.VariantOutline,
+				Attributes: templ.Attributes{
+					"hx-get":    "/instincts/edit?name=" + inst.Name,
+					"hx-target": "#content",
+				},
+			}) {
+				Edit
+			}
+			@button.Button(button.Props{
+				Variant: button.VariantDestructive,
+				Attributes: templ.Attributes{
+					"onclick": fmt.Sprintf("tuiOpenDialog('delete-instinct-%s')", inst.Name),
+				},
+			}) {
+				Delete
+			}
+		}
+		<div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+			@card.Card() {
+				@card.Header() {
+					@card.Title() {
+						Configuration
+					}
+				}
+				@card.Content() {
+					<div class="space-y-4">
+						<div class="flex justify-between items-center">
+							<span class="text-sm font-medium text-muted-foreground">ID</span>
+							<span class="text-sm font-mono">{ inst.ID.String() }</span>
+						</div>
+						<div class="flex justify-between items-center">
+							<span class="text-sm font-medium text-muted-foreground">Category</span>
+							@components.CategoryBadge(string(inst.Category))
+						</div>
+						<div class="flex justify-between items-center">
+							<span class="text-sm font-medium text-muted-foreground">Sensitivity</span>
+							<div class="flex items-center gap-2">
+								<span class="text-sm">{ string(inst.Sensitivity) }</span>
+								<span class="text-xs text-muted-foreground">({ fmt.Sprintf("%.2f", inst.Sensitivity.Weight()) })</span>
+							</div>
+						</div>
+						<div>
+							<div class="flex justify-between mb-1">
+								<span class="text-sm font-medium text-muted-foreground">Sensitivity Level</span>
+							</div>
+							<div class="w-full bg-muted rounded-full h-2">
+								<div class="bg-primary rounded-full h-2" style={ fmt.Sprintf("width: %d%%", int(inst.Sensitivity.Weight()*100)) }></div>
+							</div>
+							<div class="flex justify-between mt-1">
+								<span class="text-xs text-muted-foreground">Paranoid</span>
+								<span class="text-xs text-muted-foreground">Permissive</span>
+							</div>
+						</div>
+						<div class="flex justify-between items-center">
+							<span class="text-sm font-medium text-muted-foreground">Action</span>
+							@components.ActionBadge(inst.Action)
+						</div>
+						<div class="flex justify-between items-center">
+							<span class="text-sm font-medium text-muted-foreground">Enabled</span>
+							@components.EnabledBadge(inst.Enabled)
+						</div>
+						if inst.Description != "" {
+							<div class="pt-2 border-t">
+								<span class="text-sm font-medium text-muted-foreground">Description</span>
+								<p class="text-sm mt-1">{ inst.Description }</p>
+							</div>
+						}
+						<div class="flex justify-between items-center">
+							<span class="text-sm font-medium text-muted-foreground">Usage</span>
+							<span class="text-sm">{ strconv.Itoa(usageCount) } profiles/agents</span>
+						</div>
+						<div class="flex justify-between items-center">
+							<span class="text-sm font-medium text-muted-foreground">Created</span>
+							<span class="text-sm">{ inst.CreatedAt.Format("2006-01-02 15:04:05") }</span>
+						</div>
+						<div class="flex justify-between items-center">
+							<span class="text-sm font-medium text-muted-foreground">Updated</span>
+							<span class="text-sm">{ inst.UpdatedAt.Format("2006-01-02 15:04:05") }</span>
+						</div>
+					</div>
+				}
+			}
+			@card.Card() {
+				@card.Header() {
+					@card.Title() {
+						Strategies
+					}
+					@card.Description() {
+						{ fmt.Sprintf("%d detection strategies configured", len(inst.Strategies)) }
+					}
+				}
+				@card.Content() {
+					if len(inst.Strategies) == 0 {
+						<p class="text-sm text-muted-foreground">No strategies configured.</p>
+					} else {
+						@table.Table() {
+							@table.Header() {
+								@table.Row() {
+									@table.Head() { Name }
+									@table.Head() { Weight }
+								}
+							}
+							@table.Body() {
+								for _, s := range inst.Strategies {
+									@table.Row() {
+										@table.Cell() {
+											<span class="font-medium">{ s.Name }</span>
+										}
+										@table.Cell() {
+											{ fmt.Sprintf("%.2f", s.Weight) }
+										}
+									}
+								}
+							}
+						}
+						<div class="mt-4 space-y-3">
+							for _, s := range inst.Strategies {
+								if len(s.Config) > 0 {
+									<div class="border rounded-md p-3">
+										<span class="text-sm font-medium">{ s.Name } Config</span>
+										<div class="mt-2">
+											@components.JsonViewer(s.Config)
+										</div>
+									</div>
+								}
+							}
+						</div>
+					}
+				}
+			}
+		</div>
+		if len(inst.Metadata) > 0 {
+			@card.Card() {
+				@card.Header() {
+					@card.Title() {
+						Metadata
+					}
+				}
+				@card.Content() {
+					@components.JsonViewer(inst.Metadata)
+				}
+			}
+		}
+		@components.ConfirmDialog(components.ConfirmDialogProps{
+			ID:           "delete-instinct-" + inst.Name,
+			Title:        "Delete Instinct",
+			Description:  "Are you sure you want to delete instinct \"" + inst.Name + "\"? This action cannot be undone.",
+			ConfirmLabel: "Delete",
+			HxEndpoint:   "/shield/instincts/" + inst.Name,
+			HxMethod:     "delete",
+		})
+		@components.DialogHelpers()
+	</div>
+}

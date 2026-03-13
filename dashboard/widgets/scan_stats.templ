@@ -1,0 +1,15 @@
+package widgets
+
+import (
+	"strconv"
+	"github.com/xraph/shield/dashboard/components"
+)
+
+templ ScanStatsWidget(total, blocked, flagged, allowed int64) {
+	<div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+		@components.StatCard("scan", "Total Scans", strconv.FormatInt(total, 10), "All scans")
+		@components.StatCard("ban", "Blocked", strconv.FormatInt(blocked, 10), "Blocked scans")
+		@components.StatCard("flag", "Flagged", strconv.FormatInt(flagged, 10), "Flagged scans")
+		@components.StatCard("check-circle", "Allowed", strconv.FormatInt(allowed, 10), "Allowed scans")
+	</div>
+}

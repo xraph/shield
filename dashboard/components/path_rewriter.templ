@@ -1,0 +1,47 @@
+package components
+
+// PathRewriter adds an HTMX configRequest interceptor that rewrites bare page paths
+// (e.g. "/instincts/create") to fully-qualified dashboard extension paths
+// (e.g. "/dashboard/ext/shield/pages/instincts/create").
+templ PathRewriter(pagesBase string) {
+	<div data-shield-pages-base={ pagesBase }>
+		{ children... }
+	</div>
+	<script>
+	(function(){
+		if (window.__shieldPathRewriterAttached) return;
+		window.__shieldPathRewriterAttached = true;
+
+		document.addEventListener('htmx:configRequest', function(e) {
+			var el = e.detail.elt;
+			var wrapper = el.closest('[data-shield-pages-base]');
+			if (!wrapper && document.querySelector('[data-shield-pages-base]')) {
+				wrapper = document.querySelector('[data-shield-pages-base]');
+			}
+			if (!wrapper) return;
+
+			var base = wrapper.getAttribute('data-shield-pages-base');
+			if (!base) return;
+
+			var dashBase = base.replace(/\/ext\/[^/]+\/pages$/, '');
+			var path = e.detail.path;
+			if (!path || !path.startsWith('/')) return;
+
+			// Already fully qualified
+			if (path.startsWith(base)) return;
+
+			// API paths — do not rewrite
+			if (path.startsWith('/shield/')) return;
+
+			// Partial ext path (from htmx.ajax calls) — add dashboard prefix
+			if (path.startsWith('/ext/')) {
+				e.detail.path = dashBase + path;
+				return;
+			}
+
+			// Bare page path — add full prefix
+			e.detail.path = base + path;
+		});
+	})();
+	</script>
+}

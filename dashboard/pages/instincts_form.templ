@@ -1,0 +1,281 @@
+package pages
+
+import (
+	"encoding/json"
+	"fmt"
+
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/card"
+	"github.com/xraph/forgeui/components/input"
+	"github.com/xraph/forgeui/components/textarea"
+	"github.com/xraph/shield/dashboard/components"
+	"github.com/xraph/shield/instinct"
+)
+
+func instinctFormAlpineData(inst *instinct.Instinct) string {
+	if inst == nil {
+		return `{
+			formData: {
+				name: '',
+				category: 'injection',
+				description: '',
+				sensitivity: 'balanced',
+				action: 'block',
+				enabled: true,
+				strategies: []
+			},
+			errors: null,
+			submitting: false,
+			addStrategy() {
+				this.formData.strategies.push({ name: '', weight: 0.5, config: {} });
+			},
+			removeStrategy(i) {
+				this.formData.strategies.splice(i, 1);
+			},
+			async submitForm() {
+				this.submitting = true;
+				this.errors = null;
+				try {
+					const resp = await fetch('/shield/instincts', {
+						method: 'POST',
+						headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify(this.formData)
+					});
+					if (!resp.ok) {
+						const text = await resp.text();
+						this.errors = text || 'Failed to create instinct';
+						return;
+					}
+					htmx.ajax('GET', '/instincts', { target: '#content' });
+				} catch (e) {
+					this.errors = e.message;
+				} finally {
+					this.submitting = false;
+				}
+			}
+		}`
+	}
+
+	strategies := buildStrategiesJSON(inst.Strategies)
+	return fmt.Sprintf(`{
+		formData: {
+			name: %q,
+			category: %q,
+			description: %q,
+			sensitivity: %q,
+			action: %q,
+			enabled: %t,
+			strategies: %s
+		},
+		errors: null,
+		submitting: false,
+		addStrategy() {
+			this.formData.strategies.push({ name: '', weight: 0.5, config: {} });
+		},
+		removeStrategy(i) {
+			this.formData.strategies.splice(i, 1);
+		},
+		async submitForm() {
+			this.submitting = true;
+			this.errors = null;
+			try {
+				const resp = await fetch('/shield/instincts/' + encodeURIComponent(%q), {
+					method: 'PUT',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify(this.formData)
+				});
+				if (!resp.ok) {
+					const text = await resp.text();
+					this.errors = text || 'Failed to update instinct';
+					return;
+				}
+				htmx.ajax('GET', '/instincts/detail?name=' + encodeURIComponent(%q), { target: '#content' });
+			} catch (e) {
+				this.errors = e.message;
+			} finally {
+				this.submitting = false;
+			}
+		}
+	}`, inst.Name, string(inst.Category), inst.Description, string(inst.Sensitivity),
+		inst.Action, inst.Enabled, strategies, inst.Name, inst.Name)
+}
+
+func buildStrategiesJSON(strategies []instinct.Strategy) string {
+	if len(strategies) == 0 {
+		return "[]"
+	}
+	b, err := json.Marshal(strategies)
+	if err != nil {
+		return "[]"
+	}
+	return string(b)
+}
+
+templ InstinctFormPage(inst *instinct.Instinct) {
+	{{ isEdit := inst != nil }}
+	{{ title := "Create Instinct" }}
+	if isEdit {
+		{{ title = "Edit Instinct: " + inst.Name }}
+	}
+	<div class="space-y-6" x-data={ instinctFormAlpineData(inst) }>
+		@components.PageHeader(title, "", "") {
+			@button.Button(button.Props{
+				Variant: button.VariantOutline,
+				Attributes: templ.Attributes{
+					"hx-get":    "/instincts",
+					"hx-target": "#content",
+				},
+			}) {
+				Cancel
+			}
+		}
+		<template x-if="errors">
+			<div class="bg-destructive/15 text-destructive px-4 py-3 rounded-md text-sm" x-text="errors"></div>
+		</template>
+		@card.Card() {
+			@card.Header() {
+				@card.Title() {
+					Basic Information
+				}
+			}
+			@card.Content() {
+				<div class="space-y-4">
+					<div class="space-y-2">
+						<label class="text-sm font-medium">Name</label>
+						if isEdit {
+							@input.Input(input.Props{
+								Attributes: templ.Attributes{
+									"x-model":  "formData.name",
+									"disabled": "true",
+								},
+							})
+						} else {
+							@input.Input(input.Props{
+								Placeholder: "e.g., injection-detector",
+								Attributes: templ.Attributes{
+									"x-model": "formData.name",
+								},
+							})
+						}
+					</div>
+					<div class="space-y-2">
+						<label class="text-sm font-medium">Category</label>
+						<select class="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+							x-model="formData.category">
+							<option value="injection">Injection</option>
+							<option value="exfiltration">Exfiltration</option>
+							<option value="manipulation">Manipulation</option>
+							<option value="jailbreak">Jailbreak</option>
+						</select>
+					</div>
+					<div class="space-y-2">
+						<label class="text-sm font-medium">Description</label>
+						@textarea.Textarea(textarea.Props{
+							Placeholder: "Describe what this instinct detects...",
+							Attributes: templ.Attributes{
+								"x-model": "formData.description",
+								"rows":    "3",
+							},
+						})
+					</div>
+					<div class="space-y-2">
+						<label class="text-sm font-medium">Sensitivity</label>
+						<select class="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+							x-model="formData.sensitivity">
+							<option value="paranoid">Paranoid (0.20)</option>
+							<option value="cautious">Cautious (0.40)</option>
+							<option value="balanced">Balanced (0.60)</option>
+							<option value="relaxed">Relaxed (0.80)</option>
+							<option value="permissive">Permissive (0.95)</option>
+						</select>
+					</div>
+					<div class="space-y-2">
+						<label class="text-sm font-medium">Action</label>
+						<select class="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+							x-model="formData.action">
+							<option value="block">Block</option>
+							<option value="flag">Flag</option>
+							<option value="log">Log</option>
+						</select>
+					</div>
+					<div class="flex items-center gap-2">
+						<input type="checkbox" class="h-4 w-4 rounded border-input" x-model="formData.enabled"/>
+						<label class="text-sm font-medium">Enabled</label>
+					</div>
+				</div>
+			}
+		}
+		@card.Card() {
+			@card.Header() {
+				@card.Title() {
+					Strategies
+				}
+				@card.Description() {
+					Define how this instinct detects threats.
+				}
+			}
+			@card.Content() {
+				<div class="space-y-4">
+					<template x-for="(strategy, idx) in formData.strategies" :key="idx">
+						<div class="border rounded-md p-4 space-y-3">
+							<div class="flex items-center justify-between">
+								<span class="text-sm font-medium" x-text="'Strategy #' + (idx + 1)"></span>
+								<button type="button" class="text-sm text-destructive hover:underline"
+									@click="removeStrategy(idx)">
+									Remove
+								</button>
+							</div>
+							<div class="space-y-2">
+								<label class="text-sm font-medium">Name</label>
+								<input type="text" class="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+									placeholder="e.g., classifier, canary, perplexity"
+									x-model="strategy.name"/>
+							</div>
+							<div class="space-y-2">
+								<label class="text-sm font-medium">Weight</label>
+								<div class="flex items-center gap-3">
+									<input type="range" min="0" max="1" step="0.01" class="flex-1"
+										x-model.number="strategy.weight"/>
+									<span class="text-sm w-12 text-right" x-text="strategy.weight.toFixed(2)"></span>
+								</div>
+							</div>
+						</div>
+					</template>
+					@button.Button(button.Props{
+						Variant: button.VariantOutline,
+						Attributes: templ.Attributes{
+							"type":   "button",
+							"@click": "addStrategy()",
+						},
+					}) {
+						Add Strategy
+					}
+				</div>
+			}
+		}
+		<div class="flex justify-end gap-2">
+			@button.Button(button.Props{
+				Variant: button.VariantOutline,
+				Attributes: templ.Attributes{
+					"hx-get":    "/instincts",
+					"hx-target": "#content",
+				},
+			}) {
+				Cancel
+			}
+			@button.Button(button.Props{
+				Attributes: templ.Attributes{
+					"type":       "button",
+					"@click":     "submitForm()",
+					":disabled":  "submitting",
+				},
+			}) {
+				if isEdit {
+					Save Changes
+				} else {
+					Create Instinct
+				}
+			}
+		</div>
+	</div>
+}

@@ -14,9 +14,12 @@ import (
 	"fmt"
 
 	"github.com/xraph/forge"
+	"github.com/xraph/forge/extensions/dashboard"
+	"github.com/xraph/forge/extensions/dashboard/contributor"
 	"github.com/xraph/grove"
 	"github.com/xraph/vessel"
 
+	shielddash "github.com/xraph/shield/dashboard"
 	"github.com/xraph/shield/engine"
 	"github.com/xraph/shield/store"
 	mongostore "github.com/xraph/shield/store/mongo"
@@ -33,8 +36,11 @@ const ExtensionDescription = "Human-centric AI safety and governance"
 // ExtensionVersion is the semantic version.
 const ExtensionVersion = "0.1.0"
 
-// Ensure Extension implements forge.Extension at compile time.
-var _ forge.Extension = (*Extension)(nil)
+// Ensure Extension implements forge.Extension and dashboard.DashboardAware at compile time.
+var (
+	_ forge.Extension          = (*Extension)(nil)
+	_ dashboard.DashboardAware = (*Extension)(nil)
+)
 
 // Extension adapts Shield as a Forge extension.
 type Extension struct {
@@ -280,4 +286,12 @@ func (e *Extension) buildStoreFromGroveDB(db *grove.DB) (store.Store, error) {
 	default:
 		return nil, fmt.Errorf("shield: unsupported grove driver %q", driverName)
 	}
+}
+
+// DashboardContributor implements dashboard.DashboardAware. It returns a
+// LocalContributor that renders shield pages, widgets, and settings in the
+// Forge dashboard using templ + ForgeUI.
+func (e *Extension) DashboardContributor() contributor.LocalContributor {
+	manifest := shielddash.NewManifest()
+	return shielddash.New(manifest, e.eng)
 }

@@ -1,0 +1,163 @@
+package pages
+
+import (
+	"fmt"
+	"strconv"
+
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/card"
+	"github.com/xraph/forgeui/components/table"
+	"github.com/xraph/shield/dashboard/components"
+	"github.com/xraph/shield/policy"
+)
+
+templ PolicyDetailPage(pol *policy.Policy) {
+	<div class="space-y-6">
+		@components.PageHeader(pol.Name, "", "Policy configuration") {
+			@button.Button(button.Props{
+				Variant: button.VariantOutline,
+				Attributes: templ.Attributes{
+					"hx-get":    "/policies",
+					"hx-target": "#content",
+				},
+			}) {
+				Back
+			}
+			@button.Button(button.Props{
+				Variant: button.VariantOutline,
+				Attributes: templ.Attributes{
+					"hx-get":    "/policies/edit?name=" + pol.Name,
+					"hx-target": "#content",
+				},
+			}) {
+				Edit
+			}
+			@button.Button(button.Props{
+				Variant: button.VariantDestructive,
+				Attributes: templ.Attributes{
+					"onclick": fmt.Sprintf("tuiOpenDialog('delete-policy-%s')", pol.Name),
+				},
+			}) {
+				Delete
+			}
+		}
+		<div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+			<!-- Configuration Card -->
+			@card.Card() {
+				@card.Header() {
+					@card.Title() {
+						Configuration
+					}
+				}
+				@card.Content() {
+					<div class="space-y-4">
+						<div class="flex justify-between items-center">
+							<span class="text-sm font-medium text-muted-foreground">ID</span>
+							<span class="text-sm font-mono">{ pol.ID.String() }</span>
+						</div>
+						if pol.Description != "" {
+							<div class="pt-2 border-t">
+								<span class="text-sm font-medium text-muted-foreground">Description</span>
+								<p class="text-sm mt-1">{ pol.Description }</p>
+							</div>
+						}
+						<div class="flex justify-between items-center">
+							<span class="text-sm font-medium text-muted-foreground">Scope Key</span>
+							<span class="text-sm font-mono">{ pol.ScopeKey }</span>
+						</div>
+						<div class="flex justify-between items-center">
+							<span class="text-sm font-medium text-muted-foreground">Scope Level</span>
+							@components.ScopeBadge(string(pol.ScopeLevel))
+						</div>
+						<div class="flex justify-between items-center">
+							<span class="text-sm font-medium text-muted-foreground">Enabled</span>
+							@components.EnabledBadge(pol.Enabled)
+						</div>
+						<div class="flex justify-between items-center">
+							<span class="text-sm font-medium text-muted-foreground">Created</span>
+							<span class="text-sm">{ pol.CreatedAt.Format("2006-01-02 15:04:05") }</span>
+						</div>
+						<div class="flex justify-between items-center">
+							<span class="text-sm font-medium text-muted-foreground">Updated</span>
+							<span class="text-sm">{ pol.UpdatedAt.Format("2006-01-02 15:04:05") }</span>
+						</div>
+					</div>
+				}
+			}
+			<!-- Rules Card -->
+			@card.Card() {
+				@card.Header() {
+					@card.Title() {
+						Rules
+					}
+					@card.Description() {
+						{ fmt.Sprintf("%d enforcement rules configured", len(pol.Rules)) }
+					}
+				}
+				@card.Content() {
+					if len(pol.Rules) == 0 {
+						<p class="text-sm text-muted-foreground">No rules configured.</p>
+					} else {
+						@table.Table() {
+							@table.Header() {
+								@table.Row() {
+									@table.Head() { Check Type }
+									@table.Head() { Condition }
+									@table.Head() { Action }
+									@table.Head() { Error Message }
+									@table.Head() { Priority }
+								}
+							}
+							@table.Body() {
+								for _, rule := range pol.Rules {
+									@table.Row() {
+										@table.Cell() {
+											<span class="font-medium">{ rule.CheckType }</span>
+										}
+										@table.Cell() {
+											<span class="text-sm font-mono">{ rule.Condition }</span>
+										}
+										@table.Cell() {
+											@components.ActionBadge(rule.Action)
+										}
+										@table.Cell() {
+											if rule.ErrorMessage != "" {
+												<span class="text-sm">{ rule.ErrorMessage }</span>
+											} else {
+												<span class="text-sm text-muted-foreground">-</span>
+											}
+										}
+										@table.Cell() {
+											{ strconv.Itoa(rule.Priority) }
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		</div>
+		if len(pol.Metadata) > 0 {
+			@card.Card() {
+				@card.Header() {
+					@card.Title() {
+						Metadata
+					}
+				}
+				@card.Content() {
+					@components.JsonViewer(pol.Metadata)
+				}
+			}
+		}
+		@components.ConfirmDialog(components.ConfirmDialogProps{
+			ID:           "delete-policy-" + pol.Name,
+			Title:        "Delete Policy",
+			Description:  "Are you sure you want to delete policy \"" + pol.Name + "\"? This action cannot be undone.",
+			ConfirmLabel: "Delete",
+			HxEndpoint:   "/shield/policies/" + pol.Name,
+			HxMethod:     "delete",
+		})
+		@components.DialogHelpers()
+	</div>
+}

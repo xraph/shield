@@ -1,0 +1,145 @@
+package pages
+
+import (
+	"fmt"
+	"strconv"
+
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/input"
+	"github.com/xraph/forgeui/components/table"
+	"github.com/xraph/shield/dashboard/components"
+	"github.com/xraph/shield/dashboard/shared"
+	"github.com/xraph/shield/judgment"
+)
+
+templ JudgmentsListPage(items []*judgment.Judgment, domain string, pg shared.PaginationMeta) {
+	<div class="space-y-6">
+		@components.PageHeader("Judgments", fmt.Sprintf("%d", pg.Total), "Layer 5: Contextual risk assessment") {
+			@button.Button(button.Props{
+				Attributes: templ.Attributes{
+					"hx-get":    "/judgments/create",
+					"hx-target": "#content",
+				},
+			}) {
+				New Judgment
+			}
+		}
+		<div class="flex gap-4">
+			@input.Input(input.Props{
+				Type:        "search",
+				Placeholder: "Search judgments...",
+				Class:       "max-w-sm",
+				Attributes: templ.Attributes{
+					"name":        "search",
+					"hx-get":      "/judgments",
+					"hx-target":   "#content",
+					"hx-trigger":  "input changed delay:300ms",
+					"hx-push-url": "true",
+					"hx-include":  "[name='search'],[name='domain']",
+				},
+			})
+			<select name="domain" class="flex h-10 rounded-md border border-input bg-background px-3 py-2 text-sm"
+				hx-get="/judgments"
+				hx-target="#content"
+				hx-trigger="change"
+				hx-push-url="true"
+				hx-include="[name='search'],[name='domain']">
+				<option value="">All Domains</option>
+				<option value="grounding" selected?={ domain == "grounding" }>Grounding</option>
+				<option value="relevance" selected?={ domain == "relevance" }>Relevance</option>
+				<option value="consistency" selected?={ domain == "consistency" }>Consistency</option>
+				<option value="compliance" selected?={ domain == "compliance" }>Compliance</option>
+				<option value="custom" selected?={ domain == "custom" }>Custom</option>
+			</select>
+		</div>
+		if len(items) == 0 {
+			@components.EmptyState("scale", "No judgments found", "Create your first judgment to define contextual risk assessment")
+		} else {
+			@table.Table() {
+				@table.Header() {
+					@table.Row() {
+						@table.Head() { Name }
+						@table.Head() { Domain }
+						@table.Head() { Assessors }
+						@table.Head() { Threshold }
+						@table.Head() { Action }
+						@table.Head() { Enabled }
+						@table.Head() { Actions }
+					}
+				}
+				@table.Body() {
+					for _, jdg := range items {
+						@table.Row() {
+							@table.Cell() {
+								<a class="font-medium hover:underline cursor-pointer"
+									hx-get={ "/judgments/detail?name=" + jdg.Name }
+									hx-target="#content">
+									{ jdg.Name }
+								</a>
+							}
+							@table.Cell() {
+								@components.DomainBadge(string(jdg.Domain))
+							}
+							@table.Cell() {
+								{ strconv.Itoa(len(jdg.Assessors)) }
+							}
+							@table.Cell() {
+								{ fmt.Sprintf("%.2f", jdg.Threshold) }
+							}
+							@table.Cell() {
+								@components.ActionBadge(jdg.Action)
+							}
+							@table.Cell() {
+								@components.EnabledBadge(jdg.Enabled)
+							}
+							@table.Cell() {
+								<div class="flex gap-1">
+									@button.Button(button.Props{
+										Variant: button.VariantOutline,
+										Size:    button.SizeSm,
+										Attributes: templ.Attributes{
+											"hx-get":    "/judgments/detail?name=" + jdg.Name,
+											"hx-target": "#content",
+										},
+									}) {
+										View
+									}
+									@button.Button(button.Props{
+										Variant: button.VariantOutline,
+										Size:    button.SizeSm,
+										Attributes: templ.Attributes{
+											"hx-get":    "/judgments/edit?name=" + jdg.Name,
+											"hx-target": "#content",
+										},
+									}) {
+										Edit
+									}
+									@button.Button(button.Props{
+										Variant: button.VariantDestructive,
+										Size:    button.SizeSm,
+										Attributes: templ.Attributes{
+											"onclick": fmt.Sprintf("tuiOpenDialog('delete-judgment-%s')", jdg.Name),
+										},
+									}) {
+										Delete
+									}
+									@components.ConfirmDialog(components.ConfirmDialogProps{
+										ID:           "delete-judgment-" + jdg.Name,
+										Title:        "Delete Judgment",
+										Description:  "Are you sure you want to delete judgment \"" + jdg.Name + "\"? This action cannot be undone.",
+										ConfirmLabel: "Delete",
+										HxEndpoint:   "/shield/judgments/" + jdg.Name,
+										HxMethod:     "delete",
+									})
+								</div>
+							}
+						}
+					}
+				}
+			}
+			{{ baseURL := "/judgments?domain=" + domain }}
+			@Pagination(pg, baseURL)
+		}
+		@components.DialogHelpers()
+	</div>
+}

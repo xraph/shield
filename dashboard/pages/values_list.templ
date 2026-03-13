@@ -1,0 +1,128 @@
+package pages
+
+import (
+	"fmt"
+	"strconv"
+
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/input"
+	"github.com/xraph/forgeui/components/table"
+	"github.com/xraph/shield/dashboard/components"
+	"github.com/xraph/shield/dashboard/shared"
+	"github.com/xraph/shield/values"
+)
+
+templ ValuesListPage(items []*values.Values, pg shared.PaginationMeta) {
+	<div class="space-y-6">
+		@components.PageHeader("Values", fmt.Sprintf("%d", pg.Total), "Layer 4: Moral compass and ethical guidelines") {
+			@button.Button(button.Props{
+				Attributes: templ.Attributes{
+					"hx-get":    "/values/create",
+					"hx-target": "#content",
+				},
+			}) {
+				New Value
+			}
+		}
+		<div class="flex gap-4">
+			@input.Input(input.Props{
+				Type:        "search",
+				Placeholder: "Search values...",
+				Class:       "max-w-sm",
+				Attributes: templ.Attributes{
+					"name":        "search",
+					"hx-get":      "/values",
+					"hx-target":   "#content",
+					"hx-trigger":  "input changed delay:300ms",
+					"hx-push-url": "true",
+					"hx-include":  "[name='search']",
+				},
+			})
+		</div>
+		if len(items) == 0 {
+			@components.EmptyState("heart", "No values found", "Create your first value to define ethical guidelines")
+		} else {
+			@table.Table() {
+				@table.Header() {
+					@table.Row() {
+						@table.Head() { Name }
+						@table.Head() { Rules }
+						@table.Head() { Severity }
+						@table.Head() { Action }
+						@table.Head() { Enabled }
+						@table.Head() { Actions }
+					}
+				}
+				@table.Body() {
+					for _, val := range items {
+						@table.Row() {
+							@table.Cell() {
+								<a class="font-medium hover:underline cursor-pointer"
+									hx-get={ "/values/detail?name=" + val.Name }
+									hx-target="#content">
+									{ val.Name }
+								</a>
+							}
+							@table.Cell() {
+								{ strconv.Itoa(len(val.Rules)) }
+							}
+							@table.Cell() {
+								@components.SeverityBadge(val.Severity)
+							}
+							@table.Cell() {
+								@components.ActionBadge(val.Action)
+							}
+							@table.Cell() {
+								@components.EnabledBadge(val.Enabled)
+							}
+							@table.Cell() {
+								<div class="flex gap-1">
+									@button.Button(button.Props{
+										Variant: button.VariantOutline,
+										Size:    button.SizeSm,
+										Attributes: templ.Attributes{
+											"hx-get":    "/values/detail?name=" + val.Name,
+											"hx-target": "#content",
+										},
+									}) {
+										View
+									}
+									@button.Button(button.Props{
+										Variant: button.VariantOutline,
+										Size:    button.SizeSm,
+										Attributes: templ.Attributes{
+											"hx-get":    "/values/edit?name=" + val.Name,
+											"hx-target": "#content",
+										},
+									}) {
+										Edit
+									}
+									@button.Button(button.Props{
+										Variant: button.VariantDestructive,
+										Size:    button.SizeSm,
+										Attributes: templ.Attributes{
+											"onclick": fmt.Sprintf("tuiOpenDialog('delete-value-%s')", val.Name),
+										},
+									}) {
+										Delete
+									}
+									@components.ConfirmDialog(components.ConfirmDialogProps{
+										ID:           "delete-value-" + val.Name,
+										Title:        "Delete Value",
+										Description:  "Are you sure you want to delete value \"" + val.Name + "\"? This action cannot be undone.",
+										ConfirmLabel: "Delete",
+										HxEndpoint:   "/shield/values/" + val.Name,
+										HxMethod:     "delete",
+									})
+								</div>
+							}
+						}
+					}
+				}
+			}
+			{{ baseURL := "/values?" }}
+			@Pagination(pg, baseURL)
+		}
+		@components.DialogHelpers()
+	</div>
+}

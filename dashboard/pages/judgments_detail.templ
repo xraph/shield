@@ -1,0 +1,178 @@
+package pages
+
+import (
+	"fmt"
+	"strconv"
+
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/card"
+	"github.com/xraph/forgeui/components/table"
+	"github.com/xraph/shield/dashboard/components"
+	"github.com/xraph/shield/judgment"
+)
+
+templ JudgmentDetailPage(jdg *judgment.Judgment, usageCount int) {
+	<div class="space-y-6">
+		@components.PageHeader(jdg.Name, "", "Judgment configuration") {
+			@button.Button(button.Props{
+				Variant: button.VariantOutline,
+				Attributes: templ.Attributes{
+					"hx-get":    "/judgments",
+					"hx-target": "#content",
+				},
+			}) {
+				Back
+			}
+			@button.Button(button.Props{
+				Variant: button.VariantOutline,
+				Attributes: templ.Attributes{
+					"hx-get":    "/judgments/edit?name=" + jdg.Name,
+					"hx-target": "#content",
+				},
+			}) {
+				Edit
+			}
+			@button.Button(button.Props{
+				Variant: button.VariantDestructive,
+				Attributes: templ.Attributes{
+					"onclick": fmt.Sprintf("tuiOpenDialog('delete-judgment-%s')", jdg.Name),
+				},
+			}) {
+				Delete
+			}
+		}
+		<div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+			@card.Card() {
+				@card.Header() {
+					@card.Title() {
+						Configuration
+					}
+				}
+				@card.Content() {
+					<div class="space-y-4">
+						<div class="flex justify-between items-center">
+							<span class="text-sm font-medium text-muted-foreground">ID</span>
+							<span class="text-sm font-mono">{ jdg.ID.String() }</span>
+						</div>
+						<div class="flex justify-between items-center">
+							<span class="text-sm font-medium text-muted-foreground">Domain</span>
+							@components.DomainBadge(string(jdg.Domain))
+						</div>
+						<div>
+							<div class="flex justify-between mb-1">
+								<span class="text-sm font-medium text-muted-foreground">Threshold</span>
+								<span class="text-sm">{ fmt.Sprintf("%.2f", jdg.Threshold) }</span>
+							</div>
+							<div class="w-full bg-muted rounded-full h-2">
+								<div class="bg-primary rounded-full h-2" style={ fmt.Sprintf("width: %d%%", int(jdg.Threshold*100)) }></div>
+							</div>
+							<div class="flex justify-between mt-1">
+								<span class="text-xs text-muted-foreground">Strict</span>
+								<span class="text-xs text-muted-foreground">Lenient</span>
+							</div>
+						</div>
+						<div class="flex justify-between items-center">
+							<span class="text-sm font-medium text-muted-foreground">Action</span>
+							@components.ActionBadge(jdg.Action)
+						</div>
+						<div class="flex justify-between items-center">
+							<span class="text-sm font-medium text-muted-foreground">Enabled</span>
+							@components.EnabledBadge(jdg.Enabled)
+						</div>
+						if jdg.Description != "" {
+							<div class="pt-2 border-t">
+								<span class="text-sm font-medium text-muted-foreground">Description</span>
+								<p class="text-sm mt-1">{ jdg.Description }</p>
+							</div>
+						}
+						<div class="flex justify-between items-center">
+							<span class="text-sm font-medium text-muted-foreground">Usage</span>
+							<span class="text-sm">{ strconv.Itoa(usageCount) } profiles/agents</span>
+						</div>
+						<div class="flex justify-between items-center">
+							<span class="text-sm font-medium text-muted-foreground">Created</span>
+							<span class="text-sm">{ jdg.CreatedAt.Format("2006-01-02 15:04:05") }</span>
+						</div>
+						<div class="flex justify-between items-center">
+							<span class="text-sm font-medium text-muted-foreground">Updated</span>
+							<span class="text-sm">{ jdg.UpdatedAt.Format("2006-01-02 15:04:05") }</span>
+						</div>
+					</div>
+				}
+			}
+			@card.Card() {
+				@card.Header() {
+					@card.Title() {
+						Assessors
+					}
+					@card.Description() {
+						{ fmt.Sprintf("%d assessors configured", len(jdg.Assessors)) }
+					}
+				}
+				@card.Content() {
+					if len(jdg.Assessors) == 0 {
+						<p class="text-sm text-muted-foreground">No assessors configured.</p>
+					} else {
+						@table.Table() {
+							@table.Header() {
+								@table.Row() {
+									@table.Head() { Name }
+									@table.Head() { Description }
+								}
+							}
+							@table.Body() {
+								for _, a := range jdg.Assessors {
+									@table.Row() {
+										@table.Cell() {
+											<span class="font-medium">{ a.Name }</span>
+										}
+										@table.Cell() {
+											{{ desc := a.Name }}
+											if len(a.Config) > 0 {
+												{{ desc = fmt.Sprintf("%d config keys", len(a.Config)) }}
+											}
+											<span class="text-sm text-muted-foreground">{ desc }</span>
+										}
+									}
+								}
+							}
+						}
+						<div class="mt-4 space-y-3">
+							for _, a := range jdg.Assessors {
+								if len(a.Config) > 0 {
+									<div class="border rounded-md p-3">
+										<span class="text-sm font-medium">{ a.Name } Config</span>
+										<div class="mt-2">
+											@components.JsonViewer(a.Config)
+										</div>
+									</div>
+								}
+							}
+						</div>
+					}
+				}
+			}
+		</div>
+		if len(jdg.Metadata) > 0 {
+			@card.Card() {
+				@card.Header() {
+					@card.Title() {
+						Metadata
+					}
+				}
+				@card.Content() {
+					@components.JsonViewer(jdg.Metadata)
+				}
+			}
+		}
+		@components.ConfirmDialog(components.ConfirmDialogProps{
+			ID:           "delete-judgment-" + jdg.Name,
+			Title:        "Delete Judgment",
+			Description:  "Are you sure you want to delete judgment \"" + jdg.Name + "\"? This action cannot be undone.",
+			ConfirmLabel: "Delete",
+			HxEndpoint:   "/shield/judgments/" + jdg.Name,
+			HxMethod:     "delete",
+		})
+		@components.DialogHelpers()
+	</div>
+}

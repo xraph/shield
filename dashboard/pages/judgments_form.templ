@@ -1,0 +1,304 @@
+package pages
+
+import (
+	"encoding/json"
+	"fmt"
+
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/card"
+	"github.com/xraph/forgeui/components/input"
+	"github.com/xraph/forgeui/components/textarea"
+	"github.com/xraph/shield/dashboard/components"
+	"github.com/xraph/shield/judgment"
+)
+
+func judgmentFormAlpineData(jdg *judgment.Judgment) string {
+	if jdg == nil {
+		return `{
+			formData: {
+				name: '',
+				description: '',
+				domain: 'grounding',
+				threshold: 0.5,
+				action: 'flag',
+				enabled: true,
+				assessors: []
+			},
+			errors: null,
+			submitting: false,
+			addAssessor() {
+				this.formData.assessors.push({ name: '', description: '' });
+			},
+			removeAssessor(i) {
+				this.formData.assessors.splice(i, 1);
+			},
+			async submitForm() {
+				this.submitting = true;
+				this.errors = null;
+				try {
+					const payload = {
+						...this.formData,
+						threshold: parseFloat(this.formData.threshold) || 0,
+						assessors: this.formData.assessors.filter(a => a.name).map(a => ({
+							name: a.name,
+							description: a.description || ''
+						}))
+					};
+					const resp = await fetch('/shield/judgments', {
+						method: 'POST',
+						headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify(payload)
+					});
+					if (!resp.ok) {
+						const text = await resp.text();
+						this.errors = text || 'Failed to create judgment';
+						return;
+					}
+					htmx.ajax('GET', '/judgments', { target: '#content' });
+				} catch (e) {
+					this.errors = e.message;
+				} finally {
+					this.submitting = false;
+				}
+			}
+		}`
+	}
+
+	assessors := buildAssessorsJSON(jdg.Assessors)
+	return fmt.Sprintf(`{
+		formData: {
+			name: %q,
+			description: %q,
+			domain: %q,
+			threshold: %.2f,
+			action: %q,
+			enabled: %t,
+			assessors: %s
+		},
+		errors: null,
+		submitting: false,
+		addAssessor() {
+			this.formData.assessors.push({ name: '', description: '' });
+		},
+		removeAssessor(i) {
+			this.formData.assessors.splice(i, 1);
+		},
+		async submitForm() {
+			this.submitting = true;
+			this.errors = null;
+			try {
+				const payload = {
+					...this.formData,
+					threshold: parseFloat(this.formData.threshold) || 0,
+					assessors: this.formData.assessors.filter(a => a.name).map(a => ({
+						name: a.name,
+						description: a.description || ''
+					}))
+				};
+				const resp = await fetch('/shield/judgments/' + encodeURIComponent(%q), {
+					method: 'PUT',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify(payload)
+				});
+				if (!resp.ok) {
+					const text = await resp.text();
+					this.errors = text || 'Failed to update judgment';
+					return;
+				}
+				htmx.ajax('GET', '/judgments/detail?name=' + encodeURIComponent(%q), { target: '#content' });
+			} catch (e) {
+				this.errors = e.message;
+			} finally {
+				this.submitting = false;
+			}
+		}
+	}`, jdg.Name, jdg.Description, string(jdg.Domain), jdg.Threshold,
+		jdg.Action, jdg.Enabled, assessors, jdg.Name, jdg.Name)
+}
+
+func buildAssessorsJSON(assessors []judgment.Assessor) string {
+	if len(assessors) == 0 {
+		return "[]"
+	}
+	type assessorForm struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+	}
+	formAssessors := make([]assessorForm, len(assessors))
+	for i, a := range assessors {
+		formAssessors[i] = assessorForm{
+			Name:        a.Name,
+			Description: fmt.Sprintf("Domain: %s, Weight: %.2f", a.Domain, a.Weight),
+		}
+	}
+	b, err := json.Marshal(formAssessors)
+	if err != nil {
+		return "[]"
+	}
+	return string(b)
+}
+
+templ JudgmentFormPage(jdg *judgment.Judgment) {
+	{{ isEdit := jdg != nil }}
+	{{ title := "Create Judgment" }}
+	if isEdit {
+		{{ title = "Edit Judgment: " + jdg.Name }}
+	}
+	<div class="space-y-6" x-data={ judgmentFormAlpineData(jdg) }>
+		@components.PageHeader(title, "", "") {
+			@button.Button(button.Props{
+				Variant: button.VariantOutline,
+				Attributes: templ.Attributes{
+					"hx-get":    "/judgments",
+					"hx-target": "#content",
+				},
+			}) {
+				Cancel
+			}
+		}
+		<template x-if="errors">
+			<div class="bg-destructive/15 text-destructive px-4 py-3 rounded-md text-sm" x-text="errors"></div>
+		</template>
+		@card.Card() {
+			@card.Header() {
+				@card.Title() {
+					Basic Information
+				}
+			}
+			@card.Content() {
+				<div class="space-y-4">
+					<div class="space-y-2">
+						<label class="text-sm font-medium">Name</label>
+						if isEdit {
+							@input.Input(input.Props{
+								Attributes: templ.Attributes{
+									"x-model":  "formData.name",
+									"disabled": "true",
+								},
+							})
+						} else {
+							@input.Input(input.Props{
+								Placeholder: "e.g., hallucination-detector",
+								Attributes: templ.Attributes{
+									"x-model": "formData.name",
+								},
+							})
+						}
+					</div>
+					<div class="space-y-2">
+						<label class="text-sm font-medium">Description</label>
+						@textarea.Textarea(textarea.Props{
+							Placeholder: "Describe what this judgment assesses...",
+							Attributes: templ.Attributes{
+								"x-model": "formData.description",
+								"rows":    "3",
+							},
+						})
+					</div>
+					<div class="space-y-2">
+						<label class="text-sm font-medium">Domain</label>
+						<select class="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+							x-model="formData.domain">
+							<option value="grounding">Grounding</option>
+							<option value="relevance">Relevance</option>
+							<option value="consistency">Consistency</option>
+							<option value="compliance">Compliance</option>
+							<option value="custom">Custom</option>
+						</select>
+					</div>
+					<div class="space-y-2">
+						<label class="text-sm font-medium">Threshold</label>
+						<div class="flex items-center gap-3">
+							<input type="range" min="0" max="1" step="0.01" class="flex-1"
+								x-model.number="formData.threshold"/>
+							<span class="text-sm w-12 text-right" x-text="parseFloat(formData.threshold).toFixed(2)"></span>
+						</div>
+					</div>
+					<div class="space-y-2">
+						<label class="text-sm font-medium">Action</label>
+						<select class="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+							x-model="formData.action">
+							<option value="block">Block</option>
+							<option value="flag">Flag</option>
+							<option value="log">Log</option>
+						</select>
+					</div>
+					<div class="flex items-center gap-2">
+						<input type="checkbox" class="h-4 w-4 rounded border-input" x-model="formData.enabled"/>
+						<label class="text-sm font-medium">Enabled</label>
+					</div>
+				</div>
+			}
+		}
+		@card.Card() {
+			@card.Header() {
+				@card.Title() {
+					Assessors
+				}
+				@card.Description() {
+					Define assessment strategies for this judgment.
+				}
+			}
+			@card.Content() {
+				<div class="space-y-4">
+					<template x-for="(assessor, idx) in formData.assessors" :key="idx">
+						<div class="border rounded-md p-4 space-y-3">
+							<div class="flex items-center justify-between">
+								<span class="text-sm font-medium" x-text="'Assessor #' + (idx + 1)"></span>
+								<button type="button" class="text-sm text-destructive hover:underline"
+									@click="removeAssessor(idx)">
+									Remove
+								</button>
+							</div>
+							<div class="space-y-2">
+								<label class="text-sm font-medium">Name</label>
+								<input type="text" class="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+									placeholder="e.g., grounding-scorer, relevance-checker"
+									x-model="assessor.name"/>
+							</div>
+							<div class="space-y-2">
+								<label class="text-sm font-medium">Description</label>
+								<input type="text" class="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+									placeholder="What this assessor evaluates..."
+									x-model="assessor.description"/>
+							</div>
+						</div>
+					</template>
+					@button.Button(button.Props{
+						Variant: button.VariantOutline,
+						Attributes: templ.Attributes{
+							"type":   "button",
+							"@click": "addAssessor()",
+						},
+					}) {
+						Add Assessor
+					}
+				</div>
+			}
+		}
+		<div class="flex justify-end gap-2">
+			@button.Button(button.Props{
+				Variant: button.VariantOutline,
+				Attributes: templ.Attributes{
+					"hx-get":    "/judgments",
+					"hx-target": "#content",
+				},
+			}) {
+				Cancel
+			}
+			@button.Button(button.Props{
+				Attributes: templ.Attributes{
+					"type":      "button",
+					"@click":    "submitForm()",
+					":disabled": "submitting",
+				},
+			}) {
+				if isEdit {
+					Save Changes
+				} else {
+					Create Judgment
+				}
+			}
+		</div>
+	</div>
+}

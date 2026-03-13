@@ -1,0 +1,139 @@
+package pages
+
+import (
+	"fmt"
+
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/input"
+	"github.com/xraph/forgeui/components/table"
+	"github.com/xraph/shield/dashboard/components"
+	"github.com/xraph/shield/dashboard/shared"
+	"github.com/xraph/shield/instinct"
+)
+
+templ InstinctsListPage(instincts []*instinct.Instinct, category string, pg shared.PaginationMeta) {
+	<div class="space-y-6">
+		@components.PageHeader("Instincts", fmt.Sprintf("%d", pg.Total), "Layer 1: Pre-conscious threat detection") {
+			@button.Button(button.Props{
+				Attributes: templ.Attributes{
+					"hx-get":    "/instincts/create",
+					"hx-target": "#content",
+				},
+			}) {
+				New Instinct
+			}
+		}
+		<div class="flex gap-4">
+			@input.Input(input.Props{
+				Type:        "search",
+				Placeholder: "Search instincts...",
+				Class:       "max-w-sm",
+				Attributes: templ.Attributes{
+					"name":        "search",
+					"hx-get":      "/instincts",
+					"hx-target":   "#content",
+					"hx-trigger":  "input changed delay:300ms",
+					"hx-push-url": "true",
+					"hx-include":  "[name='search'],[name='category']",
+				},
+			})
+			<select name="category" class="flex h-10 rounded-md border border-input bg-background px-3 py-2 text-sm"
+				hx-get="/instincts"
+				hx-target="#content"
+				hx-trigger="change"
+				hx-push-url="true"
+				hx-include="[name='search'],[name='category']">
+				<option value="">All Categories</option>
+				<option value="injection" selected?={ category == "injection" }>Injection</option>
+				<option value="exfiltration" selected?={ category == "exfiltration" }>Exfiltration</option>
+				<option value="manipulation" selected?={ category == "manipulation" }>Manipulation</option>
+				<option value="jailbreak" selected?={ category == "jailbreak" }>Jailbreak</option>
+			</select>
+		</div>
+		if len(instincts) == 0 {
+			@components.EmptyState("zap", "No instincts found", "Create your first instinct to define threat detection")
+		} else {
+			@table.Table() {
+				@table.Header() {
+					@table.Row() {
+						@table.Head() { Name }
+						@table.Head() { Category }
+						@table.Head() { Sensitivity }
+						@table.Head() { Action }
+						@table.Head() { Enabled }
+						@table.Head() { Actions }
+					}
+				}
+				@table.Body() {
+					for _, inst := range instincts {
+						@table.Row() {
+							@table.Cell() {
+								<a class="font-medium hover:underline cursor-pointer"
+									hx-get={ "/instincts/detail?name=" + inst.Name }
+									hx-target="#content">
+									{ inst.Name }
+								</a>
+							}
+							@table.Cell() {
+								@components.CategoryBadge(string(inst.Category))
+							}
+							@table.Cell() {
+								{ string(inst.Sensitivity) }
+							}
+							@table.Cell() {
+								@components.ActionBadge(inst.Action)
+							}
+							@table.Cell() {
+								@components.EnabledBadge(inst.Enabled)
+							}
+							@table.Cell() {
+								<div class="flex gap-1">
+									@button.Button(button.Props{
+										Variant: button.VariantOutline,
+										Size:    button.SizeSm,
+										Attributes: templ.Attributes{
+											"hx-get":    "/instincts/detail?name=" + inst.Name,
+											"hx-target": "#content",
+										},
+									}) {
+										View
+									}
+									@button.Button(button.Props{
+										Variant: button.VariantOutline,
+										Size:    button.SizeSm,
+										Attributes: templ.Attributes{
+											"hx-get":    "/instincts/edit?name=" + inst.Name,
+											"hx-target": "#content",
+										},
+									}) {
+										Edit
+									}
+									@button.Button(button.Props{
+										Variant: button.VariantDestructive,
+										Size:    button.SizeSm,
+										Attributes: templ.Attributes{
+											"onclick": fmt.Sprintf("tuiOpenDialog('delete-instinct-%s')", inst.Name),
+										},
+									}) {
+										Delete
+									}
+									@components.ConfirmDialog(components.ConfirmDialogProps{
+										ID:           "delete-instinct-" + inst.Name,
+										Title:        "Delete Instinct",
+										Description:  "Are you sure you want to delete instinct \"" + inst.Name + "\"? This action cannot be undone.",
+										ConfirmLabel: "Delete",
+										HxEndpoint:   "/shield/instincts/" + inst.Name,
+										HxMethod:     "delete",
+									})
+								</div>
+							}
+						}
+					}
+				}
+			}
+			{{ baseURL := "/instincts?category=" + category }}
+			@Pagination(pg, baseURL)
+		}
+		@components.DialogHelpers()
+	</div>
+}

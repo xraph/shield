@@ -1,0 +1,250 @@
+package pages
+
+import (
+	"encoding/json"
+	"fmt"
+	"strconv"
+
+	"github.com/xraph/forgeui/components/badge"
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/card"
+	"github.com/xraph/forgeui/components/table"
+	"github.com/xraph/shield/dashboard/components"
+	"github.com/xraph/shield/pii"
+	"github.com/xraph/shield/scan"
+)
+
+templ ScanDetailPage(result *scan.Result, piiTokens []*pii.Token) {
+	<div class="space-y-6">
+		{{ scanID := result.ID.String() }}
+		{{ truncatedID := scanID }}
+		if len(scanID) > 12 {
+			{{ truncatedID = scanID[:12] + "..." }}
+		}
+		@components.PageHeader("Scan: "+truncatedID, "", "Scan result details") {
+			@button.Button(button.Props{
+				Variant: button.VariantOutline,
+				Attributes: templ.Attributes{
+					"hx-get":    "/scans",
+					"hx-target": "#content",
+				},
+			}) {
+				Back
+			}
+		}
+		<div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+			<!-- Scan Info Card -->
+			@card.Card() {
+				@card.Header() {
+					@card.Title() {
+						Scan Information
+					}
+				}
+				@card.Content() {
+					<div class="space-y-4">
+						<div class="flex justify-between items-center">
+							<span class="text-sm font-medium text-muted-foreground">ID</span>
+							<span class="text-sm font-mono break-all">{ scanID }</span>
+						</div>
+						<div class="flex justify-between items-center">
+							<span class="text-sm font-medium text-muted-foreground">Direction</span>
+							@components.DirectionBadge(string(result.Direction))
+						</div>
+						<div class="flex justify-between items-center">
+							<span class="text-sm font-medium text-muted-foreground">Decision</span>
+							@components.DecisionBadge(string(result.Decision))
+						</div>
+						<div class="flex justify-between items-center">
+							<span class="text-sm font-medium text-muted-foreground">Blocked</span>
+							if result.Blocked {
+								@badge.Badge(badge.Props{Variant: badge.VariantDestructive}) {
+									Yes
+								}
+							} else {
+								@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+									No
+								}
+							}
+						</div>
+						<div class="flex justify-between items-center">
+							<span class="text-sm font-medium text-muted-foreground">Duration</span>
+							<span class="text-sm">{ result.Duration.String() }</span>
+						</div>
+						<div class="flex justify-between items-center">
+							<span class="text-sm font-medium text-muted-foreground">PII Count</span>
+							<span class="text-sm">{ strconv.Itoa(result.PIICount) }</span>
+						</div>
+						if result.ProfileUsed != "" {
+							<div class="flex justify-between items-center">
+								<span class="text-sm font-medium text-muted-foreground">Profile Used</span>
+								<span class="text-sm font-medium">{ result.ProfileUsed }</span>
+							</div>
+						}
+						if len(result.PoliciesUsed) > 0 {
+							<div class="pt-2 border-t">
+								<span class="text-sm font-medium text-muted-foreground">Policies Used</span>
+								<div class="flex flex-wrap gap-2 mt-2">
+									for _, pol := range result.PoliciesUsed {
+										@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+											{ pol }
+										}
+									}
+								</div>
+							</div>
+						}
+						if result.TenantID != "" {
+							<div class="flex justify-between items-center">
+								<span class="text-sm font-medium text-muted-foreground">Tenant ID</span>
+								<span class="text-sm font-mono">{ result.TenantID }</span>
+							</div>
+						}
+						if result.AppID != "" {
+							<div class="flex justify-between items-center">
+								<span class="text-sm font-medium text-muted-foreground">App ID</span>
+								<span class="text-sm font-mono">{ result.AppID }</span>
+							</div>
+						}
+						<div class="flex justify-between items-center">
+							<span class="text-sm font-medium text-muted-foreground">Created</span>
+							<span class="text-sm">{ result.CreatedAt.Format("2006-01-02 15:04:05") }</span>
+						</div>
+					</div>
+				}
+			}
+			<!-- Findings Card -->
+			@card.Card() {
+				@card.Header() {
+					@card.Title() {
+						Findings
+					}
+					@card.Description() {
+						{ fmt.Sprintf("%d findings from safety layers", len(result.Findings)) }
+					}
+				}
+				@card.Content() {
+					if len(result.Findings) == 0 {
+						<p class="text-sm text-muted-foreground">No findings generated.</p>
+					} else {
+						@table.Table() {
+							@table.Header() {
+								@table.Row() {
+									@table.Head() { Layer }
+									@table.Head() { Source }
+									@table.Head() { Severity }
+									@table.Head() { Score }
+									@table.Head() { Action }
+								}
+							}
+							@table.Body() {
+								for _, f := range result.Findings {
+									@table.Row() {
+										@table.Cell() {
+											<span class="text-sm">{ f.Layer }</span>
+										}
+										@table.Cell() {
+											<span class="text-sm font-medium">{ f.Source }</span>
+										}
+										@table.Cell() {
+											@components.SeverityBadge(f.Severity)
+										}
+										@table.Cell() {
+											{ fmt.Sprintf("%.2f", f.Score) }
+										}
+										@table.Cell() {
+											@components.ActionBadge(f.Action)
+										}
+									}
+								}
+							}
+						}
+						<!-- Finding Details -->
+						for _, f := range result.Findings {
+							if len(f.Details) > 0 {
+								{{ detailsBytes, _ := json.MarshalIndent(f.Details, "", "  ") }}
+								{{ detailsStr := string(detailsBytes) }}
+								<div class="border rounded-md p-3 mt-3">
+									<span class="text-sm font-medium">{ f.Source } Details</span>
+									<div class="mt-2">
+										@components.JSONViewer("", detailsStr)
+									</div>
+								</div>
+							}
+						}
+					}
+				}
+			}
+		</div>
+		<!-- PII Tokens Card -->
+		if len(piiTokens) > 0 {
+			@card.Card() {
+				@card.Header() {
+					@card.Title() {
+						PII Tokens
+					}
+					@card.Description() {
+						{ fmt.Sprintf("%d PII tokens detected and vaulted", len(piiTokens)) }
+					}
+				}
+				@card.Content() {
+					@table.Table() {
+						@table.Header() {
+							@table.Row() {
+								@table.Head() { PII Type }
+								@table.Head() { Placeholder }
+								@table.Head() { Expires At }
+							}
+						}
+						@table.Body() {
+							for _, tok := range piiTokens {
+								@table.Row() {
+									@table.Cell() {
+										@badge.Badge(badge.Props{Variant: badge.VariantDefault}) {
+											{ tok.PIIType }
+										}
+									}
+									@table.Cell() {
+										<span class="font-mono text-xs">{ tok.Placeholder }</span>
+									}
+									@table.Cell() {
+										if tok.ExpiresAt != nil {
+											{{ expires := tok.ExpiresAt.Format("2006-01-02 15:04:05") }}
+											<span class="text-xs text-muted-foreground">{ expires }</span>
+										} else {
+											<span class="text-xs text-muted-foreground">No expiry</span>
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		<!-- Redacted Text Card -->
+		if result.Redacted != "" {
+			@card.Card() {
+				@card.Header() {
+					@card.Title() {
+						Redacted Text
+					}
+				}
+				@card.Content() {
+					<pre class="bg-muted rounded-md p-3 text-xs font-mono overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap">{ result.Redacted }</pre>
+				}
+			}
+		}
+		<!-- Metadata -->
+		if len(result.Metadata) > 0 {
+			@card.Card() {
+				@card.Header() {
+					@card.Title() {
+						Metadata
+					}
+				}
+				@card.Content() {
+					@components.JsonViewer(result.Metadata)
+				}
+			}
+		}
+	</div>
+}

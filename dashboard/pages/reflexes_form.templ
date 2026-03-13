@@ -1,0 +1,430 @@
+package pages
+
+import (
+	"encoding/json"
+	"fmt"
+
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/card"
+	"github.com/xraph/forgeui/components/input"
+	"github.com/xraph/forgeui/components/textarea"
+	"github.com/xraph/shield/dashboard/components"
+	"github.com/xraph/shield/reflex"
+)
+
+func reflexFormAlpineData(rflx *reflex.Reflex) string {
+	if rflx == nil {
+		return `{
+			formData: {
+				name: '',
+				description: '',
+				priority: 0,
+				enabled: true,
+				triggers: [],
+				actions: []
+			},
+			errors: null,
+			submitting: false,
+			addTrigger() {
+				this.formData.triggers.push({ type: 'on_score', pattern: '', threshold: 0.5, window: '' });
+			},
+			removeTrigger(i) {
+				this.formData.triggers.splice(i, 1);
+			},
+			addAction() {
+				this.formData.actions.push({ type: 'block', target: '', value: '', fallback: '' });
+			},
+			removeAction(i) {
+				this.formData.actions.splice(i, 1);
+			},
+			async submitForm() {
+				this.submitting = true;
+				this.errors = null;
+				try {
+					const payload = {
+						...this.formData,
+						priority: parseInt(this.formData.priority) || 0,
+						triggers: this.formData.triggers.filter(t => t.type).map(t => ({
+							type: t.type,
+							pattern: t.pattern || '',
+							threshold: parseFloat(t.threshold) || 0,
+							window: t.window || ''
+						})),
+						actions: this.formData.actions.filter(a => a.type).map(a => ({
+							type: a.type,
+							target: a.target || '',
+							value: a.value || '',
+							fallback: a.fallback || ''
+						}))
+					};
+					const resp = await fetch('/shield/reflexes', {
+						method: 'POST',
+						headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify(payload)
+					});
+					if (!resp.ok) {
+						const text = await resp.text();
+						this.errors = text || 'Failed to create reflex';
+						return;
+					}
+					htmx.ajax('GET', '/reflexes', { target: '#content' });
+				} catch (e) {
+					this.errors = e.message;
+				} finally {
+					this.submitting = false;
+				}
+			}
+		}`
+	}
+
+	triggers := buildTriggersJSON(rflx.Triggers)
+	actions := buildActionsJSON(rflx.Actions)
+	return fmt.Sprintf(`{
+		formData: {
+			name: %q,
+			description: %q,
+			priority: %d,
+			enabled: %t,
+			triggers: %s,
+			actions: %s
+		},
+		errors: null,
+		submitting: false,
+		addTrigger() {
+			this.formData.triggers.push({ type: 'on_score', pattern: '', threshold: 0.5, window: '' });
+		},
+		removeTrigger(i) {
+			this.formData.triggers.splice(i, 1);
+		},
+		addAction() {
+			this.formData.actions.push({ type: 'block', target: '', value: '', fallback: '' });
+		},
+		removeAction(i) {
+			this.formData.actions.splice(i, 1);
+		},
+		async submitForm() {
+			this.submitting = true;
+			this.errors = null;
+			try {
+				const payload = {
+					...this.formData,
+					priority: parseInt(this.formData.priority) || 0,
+					triggers: this.formData.triggers.filter(t => t.type).map(t => ({
+						type: t.type,
+						pattern: t.pattern || '',
+						threshold: parseFloat(t.threshold) || 0,
+						window: t.window || ''
+					})),
+					actions: this.formData.actions.filter(a => a.type).map(a => ({
+						type: a.type,
+						target: a.target || '',
+						value: a.value || '',
+						fallback: a.fallback || ''
+					}))
+				};
+				const resp = await fetch('/shield/reflexes/' + encodeURIComponent(%q), {
+					method: 'PUT',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify(payload)
+				});
+				if (!resp.ok) {
+					const text = await resp.text();
+					this.errors = text || 'Failed to update reflex';
+					return;
+				}
+				htmx.ajax('GET', '/reflexes/detail?name=' + encodeURIComponent(%q), { target: '#content' });
+			} catch (e) {
+				this.errors = e.message;
+			} finally {
+				this.submitting = false;
+			}
+		}
+	}`, rflx.Name, rflx.Description, rflx.Priority, rflx.Enabled,
+		triggers, actions, rflx.Name, rflx.Name)
+}
+
+func buildTriggersJSON(triggers []reflex.Trigger) string {
+	if len(triggers) == 0 {
+		return "[]"
+	}
+	type triggerForm struct {
+		Type      string  `json:"type"`
+		Pattern   string  `json:"pattern"`
+		Threshold float64 `json:"threshold"`
+		Window    string  `json:"window"`
+	}
+	formTriggers := make([]triggerForm, len(triggers))
+	for i, t := range triggers {
+		formTriggers[i] = triggerForm{
+			Type:      string(t.Type),
+			Pattern:   t.Pattern,
+			Threshold: t.Threshold,
+			Window:    t.Window,
+		}
+	}
+	b, err := json.Marshal(formTriggers)
+	if err != nil {
+		return "[]"
+	}
+	return string(b)
+}
+
+func buildActionsJSON(actions []reflex.Action) string {
+	if len(actions) == 0 {
+		return "[]"
+	}
+	type actionForm struct {
+		Type     string `json:"type"`
+		Target   string `json:"target"`
+		Value    string `json:"value"`
+		Fallback string `json:"fallback"`
+	}
+	formActions := make([]actionForm, len(actions))
+	for i, a := range actions {
+		formActions[i] = actionForm{
+			Type:     string(a.Type),
+			Target:   a.Target,
+			Value:    fmt.Sprintf("%v", a.Value),
+			Fallback: a.Fallback,
+		}
+	}
+	b, err := json.Marshal(formActions)
+	if err != nil {
+		return "[]"
+	}
+	return string(b)
+}
+
+templ ReflexFormPage(rflx *reflex.Reflex) {
+	{{ isEdit := rflx != nil }}
+	{{ title := "Create Reflex" }}
+	if isEdit {
+		{{ title = "Edit Reflex: " + rflx.Name }}
+	}
+	<div class="space-y-6" x-data={ reflexFormAlpineData(rflx) }>
+		@components.PageHeader(title, "", "") {
+			@button.Button(button.Props{
+				Variant: button.VariantOutline,
+				Attributes: templ.Attributes{
+					"hx-get":    "/reflexes",
+					"hx-target": "#content",
+				},
+			}) {
+				Cancel
+			}
+		}
+		<template x-if="errors">
+			<div class="bg-destructive/15 text-destructive px-4 py-3 rounded-md text-sm" x-text="errors"></div>
+		</template>
+		@card.Card() {
+			@card.Header() {
+				@card.Title() {
+					Basic Information
+				}
+			}
+			@card.Content() {
+				<div class="space-y-4">
+					<div class="space-y-2">
+						<label class="text-sm font-medium">Name</label>
+						if isEdit {
+							@input.Input(input.Props{
+								Attributes: templ.Attributes{
+									"x-model":  "formData.name",
+									"disabled": "true",
+								},
+							})
+						} else {
+							@input.Input(input.Props{
+								Placeholder: "e.g., rate-limiter",
+								Attributes: templ.Attributes{
+									"x-model": "formData.name",
+								},
+							})
+						}
+					</div>
+					<div class="space-y-2">
+						<label class="text-sm font-medium">Description</label>
+						@textarea.Textarea(textarea.Props{
+							Placeholder: "Describe what this reflex does...",
+							Attributes: templ.Attributes{
+								"x-model": "formData.description",
+								"rows":    "3",
+							},
+						})
+					</div>
+					<div class="space-y-2">
+						<label class="text-sm font-medium">Priority</label>
+						@input.Input(input.Props{
+							Type:        "number",
+							Placeholder: "0",
+							Attributes: templ.Attributes{
+								"x-model.number": "formData.priority",
+								"min":            "0",
+							},
+						})
+						<p class="text-xs text-muted-foreground">Higher priority reflexes are evaluated first.</p>
+					</div>
+					<div class="flex items-center gap-2">
+						<input type="checkbox" class="h-4 w-4 rounded border-input" x-model="formData.enabled"/>
+						<label class="text-sm font-medium">Enabled</label>
+					</div>
+				</div>
+			}
+		}
+		@card.Card() {
+			@card.Header() {
+				@card.Title() {
+					Triggers
+				}
+				@card.Description() {
+					Define conditions that activate this reflex.
+				}
+			}
+			@card.Content() {
+				<div class="space-y-4">
+					<template x-for="(trigger, idx) in formData.triggers" :key="idx">
+						<div class="border rounded-md p-4 space-y-3">
+							<div class="flex items-center justify-between">
+								<span class="text-sm font-medium" x-text="'Trigger #' + (idx + 1)"></span>
+								<button type="button" class="text-sm text-destructive hover:underline"
+									@click="removeTrigger(idx)">
+									Remove
+								</button>
+							</div>
+							<div class="space-y-2">
+								<label class="text-sm font-medium">Type</label>
+								<select class="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+									x-model="trigger.type">
+									<option value="on_score">On Score</option>
+									<option value="on_finding">On Finding</option>
+									<option value="on_pattern">On Pattern</option>
+									<option value="on_context">On Context</option>
+									<option value="on_rate">On Rate</option>
+									<option value="always">Always</option>
+								</select>
+							</div>
+							<div class="space-y-2">
+								<label class="text-sm font-medium">Pattern</label>
+								<input type="text" class="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+									placeholder="Regex or matching pattern"
+									x-model="trigger.pattern"/>
+							</div>
+							<div class="space-y-2">
+								<label class="text-sm font-medium">Threshold</label>
+								<div class="flex items-center gap-3">
+									<input type="range" min="0" max="1" step="0.01" class="flex-1"
+										x-model.number="trigger.threshold"/>
+									<span class="text-sm w-12 text-right" x-text="parseFloat(trigger.threshold).toFixed(2)"></span>
+								</div>
+							</div>
+							<div class="space-y-2">
+								<label class="text-sm font-medium">Window</label>
+								<input type="text" class="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+									placeholder="e.g., 1m, 5m, 1h"
+									x-model="trigger.window"/>
+							</div>
+						</div>
+					</template>
+					@button.Button(button.Props{
+						Variant: button.VariantOutline,
+						Attributes: templ.Attributes{
+							"type":   "button",
+							"@click": "addTrigger()",
+						},
+					}) {
+						Add Trigger
+					}
+				</div>
+			}
+		}
+		@card.Card() {
+			@card.Header() {
+				@card.Title() {
+					Actions
+				}
+				@card.Description() {
+					Define what happens when triggers activate.
+				}
+			}
+			@card.Content() {
+				<div class="space-y-4">
+					<template x-for="(action, idx) in formData.actions" :key="idx">
+						<div class="border rounded-md p-4 space-y-3">
+							<div class="flex items-center justify-between">
+								<span class="text-sm font-medium" x-text="'Action #' + (idx + 1)"></span>
+								<button type="button" class="text-sm text-destructive hover:underline"
+									@click="removeAction(idx)">
+									Remove
+								</button>
+							</div>
+							<div class="space-y-2">
+								<label class="text-sm font-medium">Type</label>
+								<select class="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+									x-model="action.type">
+									<option value="block">Block</option>
+									<option value="redact">Redact</option>
+									<option value="flag">Flag</option>
+									<option value="rewrite">Rewrite</option>
+									<option value="escalate">Escalate</option>
+									<option value="log">Log</option>
+									<option value="throttle">Throttle</option>
+								</select>
+							</div>
+							<div class="space-y-2">
+								<label class="text-sm font-medium">Target</label>
+								<input type="text" class="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+									placeholder="What to act on"
+									x-model="action.target"/>
+							</div>
+							<div class="space-y-2">
+								<label class="text-sm font-medium">Value</label>
+								<input type="text" class="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+									placeholder="Action-specific value"
+									x-model="action.value"/>
+							</div>
+							<div class="space-y-2">
+								<label class="text-sm font-medium">Fallback</label>
+								<input type="text" class="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+									placeholder="Fallback response text"
+									x-model="action.fallback"/>
+							</div>
+						</div>
+					</template>
+					@button.Button(button.Props{
+						Variant: button.VariantOutline,
+						Attributes: templ.Attributes{
+							"type":   "button",
+							"@click": "addAction()",
+						},
+					}) {
+						Add Action
+					}
+				</div>
+			}
+		}
+		<div class="flex justify-end gap-2">
+			@button.Button(button.Props{
+				Variant: button.VariantOutline,
+				Attributes: templ.Attributes{
+					"hx-get":    "/reflexes",
+					"hx-target": "#content",
+				},
+			}) {
+				Cancel
+			}
+			@button.Button(button.Props{
+				Attributes: templ.Attributes{
+					"type":      "button",
+					"@click":    "submitForm()",
+					":disabled": "submitting",
+				},
+			}) {
+				if isEdit {
+					Save Changes
+				} else {
+					Create Reflex
+				}
+			}
+		</div>
+	</div>
+}

@@ -1,0 +1,306 @@
+package pages
+
+import (
+	"fmt"
+	"strconv"
+
+	"github.com/xraph/forgeui/components/badge"
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/card"
+	"github.com/xraph/forgeui/components/table"
+	"github.com/xraph/shield/dashboard/components"
+	"github.com/xraph/shield/profile"
+)
+
+templ ProfileDetailPage(prof *profile.SafetyProfile) {
+	<div class="space-y-6">
+		@components.PageHeader(prof.Name, "", "Safety profile configuration") {
+			@button.Button(button.Props{
+				Variant: button.VariantOutline,
+				Attributes: templ.Attributes{
+					"hx-get":    "/profiles",
+					"hx-target": "#content",
+				},
+			}) {
+				Back
+			}
+			@button.Button(button.Props{
+				Variant: button.VariantOutline,
+				Attributes: templ.Attributes{
+					"hx-get":    "/profiles/edit?name=" + prof.Name,
+					"hx-target": "#content",
+				},
+			}) {
+				Edit
+			}
+			@button.Button(button.Props{
+				Variant: button.VariantDestructive,
+				Attributes: templ.Attributes{
+					"onclick": fmt.Sprintf("tuiOpenDialog('delete-profile-%s')", prof.Name),
+				},
+			}) {
+				Delete
+			}
+		}
+		<div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+			<!-- Configuration Card -->
+			@card.Card() {
+				@card.Header() {
+					@card.Title() {
+						Configuration
+					}
+				}
+				@card.Content() {
+					<div class="space-y-4">
+						<div class="flex justify-between items-center">
+							<span class="text-sm font-medium text-muted-foreground">ID</span>
+							<span class="text-sm font-mono">{ prof.ID.String() }</span>
+						</div>
+						if prof.Description != "" {
+							<div class="pt-2 border-t">
+								<span class="text-sm font-medium text-muted-foreground">Description</span>
+								<p class="text-sm mt-1">{ prof.Description }</p>
+							</div>
+						}
+						<div class="flex justify-between items-center">
+							<span class="text-sm font-medium text-muted-foreground">Enabled</span>
+							@components.EnabledBadge(prof.Enabled)
+						</div>
+						if prof.AppID != "" {
+							<div class="flex justify-between items-center">
+								<span class="text-sm font-medium text-muted-foreground">App ID</span>
+								<span class="text-sm font-mono">{ prof.AppID }</span>
+							</div>
+						}
+						if prof.TenantID != "" {
+							<div class="flex justify-between items-center">
+								<span class="text-sm font-medium text-muted-foreground">Tenant ID</span>
+								<span class="text-sm font-mono">{ prof.TenantID }</span>
+							</div>
+						}
+						<div class="flex justify-between items-center">
+							<span class="text-sm font-medium text-muted-foreground">Created</span>
+							<span class="text-sm">{ prof.CreatedAt.Format("2006-01-02 15:04:05") }</span>
+						</div>
+						<div class="flex justify-between items-center">
+							<span class="text-sm font-medium text-muted-foreground">Updated</span>
+							<span class="text-sm">{ prof.UpdatedAt.Format("2006-01-02 15:04:05") }</span>
+						</div>
+					</div>
+				}
+			}
+			<!-- Instincts Card -->
+			@card.Card() {
+				@card.Header() {
+					@card.Title() {
+						Instincts
+					}
+					@card.Description() {
+						{ fmt.Sprintf("%d instinct assignments", len(prof.Instincts)) }
+					}
+				}
+				@card.Content() {
+					if len(prof.Instincts) == 0 {
+						<p class="text-sm text-muted-foreground">No instincts assigned.</p>
+					} else {
+						@table.Table() {
+							@table.Header() {
+								@table.Row() {
+									@table.Head() { Name }
+									@table.Head() { Sensitivity Override }
+								}
+							}
+							@table.Body() {
+								for _, ia := range prof.Instincts {
+									@table.Row() {
+										@table.Cell() {
+											<span class="font-medium">{ ia.InstinctName }</span>
+										}
+										@table.Cell() {
+											if ia.Sensitivity != "" {
+												{ string(ia.Sensitivity) }
+											} else {
+												<span class="text-muted-foreground">default</span>
+											}
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		</div>
+		<div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+			<!-- Awareness Card -->
+			@card.Card() {
+				@card.Header() {
+					@card.Title() {
+						Awareness
+					}
+					@card.Description() {
+						{ fmt.Sprintf("%d awareness assignments", len(prof.Awareness)) }
+					}
+				}
+				@card.Content() {
+					if len(prof.Awareness) == 0 {
+						<p class="text-sm text-muted-foreground">No awareness detectors assigned.</p>
+					} else {
+						@table.Table() {
+							@table.Header() {
+								@table.Row() {
+									@table.Head() { Name }
+								}
+							}
+							@table.Body() {
+								for _, aa := range prof.Awareness {
+									@table.Row() {
+										@table.Cell() {
+											<span class="font-medium">{ aa.AwarenessName }</span>
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+			<!-- Judgments Card -->
+			@card.Card() {
+				@card.Header() {
+					@card.Title() {
+						Judgments
+					}
+					@card.Description() {
+						{ fmt.Sprintf("%d judgment assignments", len(prof.Judgments)) }
+					}
+				}
+				@card.Content() {
+					if len(prof.Judgments) == 0 {
+						<p class="text-sm text-muted-foreground">No judgments assigned.</p>
+					} else {
+						@table.Table() {
+							@table.Header() {
+								@table.Row() {
+									@table.Head() { Name }
+									@table.Head() { Threshold Override }
+								}
+							}
+							@table.Body() {
+								for _, ja := range prof.Judgments {
+									@table.Row() {
+										@table.Cell() {
+											<span class="font-medium">{ ja.JudgmentName }</span>
+										}
+										@table.Cell() {
+											if ja.Threshold > 0 {
+												{ fmt.Sprintf("%.2f", ja.Threshold) }
+											} else {
+												<span class="text-muted-foreground">default</span>
+											}
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		</div>
+		<div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+			<!-- Boundaries Card -->
+			@card.Card() {
+				@card.Header() {
+					@card.Title() {
+						Boundaries
+					}
+					@card.Description() {
+						{ strconv.Itoa(len(prof.Boundaries)) + " boundaries" }
+					}
+				}
+				@card.Content() {
+					if len(prof.Boundaries) == 0 {
+						<p class="text-sm text-muted-foreground">No boundaries assigned.</p>
+					} else {
+						<div class="flex flex-wrap gap-2">
+							for _, b := range prof.Boundaries {
+								@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+									{ b }
+								}
+							}
+						</div>
+					}
+				}
+			}
+			<!-- Values Card -->
+			@card.Card() {
+				@card.Header() {
+					@card.Title() {
+						Values
+					}
+					@card.Description() {
+						{ strconv.Itoa(len(prof.Values)) + " values" }
+					}
+				}
+				@card.Content() {
+					if len(prof.Values) == 0 {
+						<p class="text-sm text-muted-foreground">No values assigned.</p>
+					} else {
+						<div class="flex flex-wrap gap-2">
+							for _, v := range prof.Values {
+								@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+									{ v }
+								}
+							}
+						</div>
+					}
+				}
+			}
+			<!-- Reflexes Card -->
+			@card.Card() {
+				@card.Header() {
+					@card.Title() {
+						Reflexes
+					}
+					@card.Description() {
+						{ strconv.Itoa(len(prof.Reflexes)) + " reflexes" }
+					}
+				}
+				@card.Content() {
+					if len(prof.Reflexes) == 0 {
+						<p class="text-sm text-muted-foreground">No reflexes assigned.</p>
+					} else {
+						<div class="flex flex-wrap gap-2">
+							for _, r := range prof.Reflexes {
+								@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+									{ r }
+								}
+							}
+						</div>
+					}
+				}
+			}
+		</div>
+		if len(prof.Metadata) > 0 {
+			@card.Card() {
+				@card.Header() {
+					@card.Title() {
+						Metadata
+					}
+				}
+				@card.Content() {
+					@components.JsonViewer(prof.Metadata)
+				}
+			}
+		}
+		@components.ConfirmDialog(components.ConfirmDialogProps{
+			ID:           "delete-profile-" + prof.Name,
+			Title:        "Delete Profile",
+			Description:  "Are you sure you want to delete profile \"" + prof.Name + "\"? This action cannot be undone.",
+			ConfirmLabel: "Delete",
+			HxEndpoint:   "/shield/profiles/" + prof.Name,
+			HxMethod:     "delete",
+		})
+		@components.DialogHelpers()
+	</div>
+}

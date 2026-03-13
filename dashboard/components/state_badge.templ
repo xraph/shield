@@ -1,0 +1,123 @@
+package components
+
+import "github.com/xraph/forgeui/components/badge"
+
+templ DecisionBadge(decision string) {
+	switch decision {
+		case "allow":
+			@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+				Allow
+			}
+		case "block":
+			@badge.Badge(badge.Props{Variant: badge.VariantDestructive}) {
+				Block
+			}
+		case "flag":
+			@badge.Badge(badge.Props{Variant: badge.VariantDefault}) {
+				Flag
+			}
+		case "redact":
+			@badge.Badge(badge.Props{Variant: badge.VariantDefault}) {
+				Redact
+			}
+		default:
+			@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+				{ decision }
+			}
+	}
+}
+
+templ DirectionBadge(direction string) {
+	switch direction {
+		case "input":
+			@badge.Badge(badge.Props{Variant: badge.VariantDefault}) {
+				Input
+			}
+		case "output":
+			@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+				Output
+			}
+		default:
+			@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+				{ direction }
+			}
+	}
+}
+
+templ CategoryBadge(category string) {
+	switch category {
+		case "injection":
+			@badge.Badge(badge.Props{Variant: badge.VariantDestructive}) {
+				Injection
+			}
+		case "exfiltration":
+			@badge.Badge(badge.Props{Variant: badge.VariantDestructive}) {
+				Exfiltration
+			}
+		case "manipulation":
+			@badge.Badge(badge.Props{Variant: badge.VariantDefault}) {
+				Manipulation
+			}
+		case "jailbreak":
+			@badge.Badge(badge.Props{Variant: badge.VariantDestructive}) {
+				Jailbreak
+			}
+		default:
+			@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+				{ category }
+			}
+	}
+}
+
+templ ActionBadge(action string) {
+	switch action {
+		case "block":
+			@badge.Badge(badge.Props{Variant: badge.VariantDestructive}) {
+				Block
+			}
+		case "flag":
+			@badge.Badge(badge.Props{Variant: badge.VariantDefault}) {
+				Flag
+			}
+		case "redact":
+			@badge.Badge(badge.Props{Variant: badge.VariantDefault}) {
+				Redact
+			}
+		case "vault":
+			@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+				Vault
+			}
+		case "log":
+			@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+				Log
+			}
+		case "escalate":
+			@badge.Badge(badge.Props{Variant: badge.VariantDestructive}) {
+				Escalate
+			}
+		case "rewrite":
+			@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+				Rewrite
+			}
+		case "throttle":
+			@badge.Badge(badge.Props{Variant: badge.VariantDefault}) {
+				Throttle
+			}
+		default:
+			@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+				{ action }
+			}
+	}
+}
+
+templ EnabledBadge(enabled bool) {
+	if enabled {
+		@badge.Badge(badge.Props{Variant: badge.VariantDefault}) {
+			Enabled
+		}
+	} else {
+		@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+			Disabled
+		}
+	}
+}

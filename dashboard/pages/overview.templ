@@ -1,0 +1,90 @@
+package pages
+
+import (
+	"strconv"
+	"github.com/xraph/shield/scan"
+	"github.com/xraph/shield/dashboard/shared"
+	"github.com/xraph/shield/dashboard/components"
+	"github.com/xraph/forgeui/components/card"
+	"github.com/xraph/forgeui/components/table"
+)
+
+templ OverviewPage(counts shared.EntityCounts, recentScans []*scan.Result, stats *scan.Stats) {
+	<div class="space-y-6">
+		<!-- Scan Stats Summary -->
+		<div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+			@components.StatCard("scan", "Total Scans", strconv.FormatInt(stats.TotalScans, 10), "All scans processed")
+			@components.StatCard("ban", "Blocked", strconv.FormatInt(stats.BlockedCount, 10), "Blocked by safety layers")
+			@components.StatCard("flag", "Flagged", strconv.FormatInt(stats.FlaggedCount, 10), "Flagged for review")
+			@components.StatCard("check-circle", "Allowed", strconv.FormatInt(stats.AllowedCount, 10), "Passed all checks")
+		</div>
+		<!-- Safety Layer Counts -->
+		<div>
+			<h3 class="text-lg font-semibold mb-3">Safety Layers</h3>
+			<div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+				@components.StatCard("zap", "Instincts", strconv.FormatInt(counts.Instincts, 10), "Layer 1")
+				@components.StatCard("eye", "Awareness", strconv.FormatInt(counts.Awareness, 10), "Layer 2")
+				@components.StatCard("shield-off", "Boundaries", strconv.FormatInt(counts.Boundaries, 10), "Layer 3")
+				@components.StatCard("heart", "Values", strconv.FormatInt(counts.Values, 10), "Layer 4")
+				@components.StatCard("scale", "Judgments", strconv.FormatInt(counts.Judgments, 10), "Layer 5")
+				@components.StatCard("activity", "Reflexes", strconv.FormatInt(counts.Reflexes, 10), "Layer 6")
+				@components.StatCard("shield-check", "Profiles", strconv.FormatInt(counts.Profiles, 10), "Composed")
+				@components.StatCard("scan", "Scans", strconv.FormatInt(counts.Scans, 10), "Total scan results")
+				@components.StatCard("gavel", "Policies", strconv.FormatInt(counts.Policies, 10), "Active policies")
+			</div>
+		</div>
+		<!-- Recent Scans Table -->
+		@card.Card() {
+			@card.Header() {
+				@card.Title() { Recent Scans }
+				@card.Description() { Latest scan results across all directions. }
+			}
+			@card.Content() {
+				if len(recentScans) == 0 {
+					@components.EmptyState("scan", "No scans yet", "Scan results will appear here once content is processed.")
+				} else {
+					@table.Table() {
+						@table.Header() {
+							@table.Row() {
+								@table.Head() { ID }
+								@table.Head() { Direction }
+								@table.Head() { Decision }
+								@table.Head() { Duration }
+								@table.Head() { Created }
+							}
+						}
+						@table.Body() {
+							for _, s := range recentScans {
+								@table.Row() {
+									@table.Cell() {
+										{{ scanID := s.ID.String() }}
+										if len(scanID) > 12 {
+											{{ truncated := scanID[:12] + "..." }}
+											<span class="font-mono text-xs" title={ scanID }>{ truncated }</span>
+										} else {
+											<span class="font-mono text-xs">{ scanID }</span>
+										}
+									}
+									@table.Cell() {
+										@components.DirectionBadge(string(s.Direction))
+									}
+									@table.Cell() {
+										@components.DecisionBadge(string(s.Decision))
+									}
+									@table.Cell() {
+										{{ dur := s.Duration.String() }}
+										<span class="text-xs text-muted-foreground">{ dur }</span>
+									}
+									@table.Cell() {
+										{{ created := s.CreatedAt.Format("Jan 02 15:04") }}
+										<span class="text-xs text-muted-foreground">{ created }</span>
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	</div>
+}

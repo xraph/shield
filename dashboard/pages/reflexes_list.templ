@@ -1,0 +1,128 @@
+package pages
+
+import (
+	"fmt"
+	"strconv"
+
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/input"
+	"github.com/xraph/forgeui/components/table"
+	"github.com/xraph/shield/dashboard/components"
+	"github.com/xraph/shield/dashboard/shared"
+	"github.com/xraph/shield/reflex"
+)
+
+templ ReflexesListPage(items []*reflex.Reflex, pg shared.PaginationMeta) {
+	<div class="space-y-6">
+		@components.PageHeader("Reflexes", fmt.Sprintf("%d", pg.Total), "Layer 6: Condition-triggered safety responses") {
+			@button.Button(button.Props{
+				Attributes: templ.Attributes{
+					"hx-get":    "/reflexes/create",
+					"hx-target": "#content",
+				},
+			}) {
+				New Reflex
+			}
+		}
+		<div class="flex gap-4">
+			@input.Input(input.Props{
+				Type:        "search",
+				Placeholder: "Search reflexes...",
+				Class:       "max-w-sm",
+				Attributes: templ.Attributes{
+					"name":        "search",
+					"hx-get":      "/reflexes",
+					"hx-target":   "#content",
+					"hx-trigger":  "input changed delay:300ms",
+					"hx-push-url": "true",
+					"hx-include":  "[name='search']",
+				},
+			})
+		</div>
+		if len(items) == 0 {
+			@components.EmptyState("activity", "No reflexes found", "Create your first reflex to define condition-triggered responses")
+		} else {
+			@table.Table() {
+				@table.Header() {
+					@table.Row() {
+						@table.Head() { Name }
+						@table.Head() { Triggers }
+						@table.Head() { Actions }
+						@table.Head() { Priority }
+						@table.Head() { Enabled }
+						@table.Head() { Actions }
+					}
+				}
+				@table.Body() {
+					for _, rflx := range items {
+						@table.Row() {
+							@table.Cell() {
+								<a class="font-medium hover:underline cursor-pointer"
+									hx-get={ "/reflexes/detail?name=" + rflx.Name }
+									hx-target="#content">
+									{ rflx.Name }
+								</a>
+							}
+							@table.Cell() {
+								{ strconv.Itoa(len(rflx.Triggers)) }
+							}
+							@table.Cell() {
+								{ strconv.Itoa(len(rflx.Actions)) }
+							}
+							@table.Cell() {
+								{ strconv.Itoa(rflx.Priority) }
+							}
+							@table.Cell() {
+								@components.EnabledBadge(rflx.Enabled)
+							}
+							@table.Cell() {
+								<div class="flex gap-1">
+									@button.Button(button.Props{
+										Variant: button.VariantOutline,
+										Size:    button.SizeSm,
+										Attributes: templ.Attributes{
+											"hx-get":    "/reflexes/detail?name=" + rflx.Name,
+											"hx-target": "#content",
+										},
+									}) {
+										View
+									}
+									@button.Button(button.Props{
+										Variant: button.VariantOutline,
+										Size:    button.SizeSm,
+										Attributes: templ.Attributes{
+											"hx-get":    "/reflexes/edit?name=" + rflx.Name,
+											"hx-target": "#content",
+										},
+									}) {
+										Edit
+									}
+									@button.Button(button.Props{
+										Variant: button.VariantDestructive,
+										Size:    button.SizeSm,
+										Attributes: templ.Attributes{
+											"onclick": fmt.Sprintf("tuiOpenDialog('delete-reflex-%s')", rflx.Name),
+										},
+									}) {
+										Delete
+									}
+									@components.ConfirmDialog(components.ConfirmDialogProps{
+										ID:           "delete-reflex-" + rflx.Name,
+										Title:        "Delete Reflex",
+										Description:  "Are you sure you want to delete reflex \"" + rflx.Name + "\"? This action cannot be undone.",
+										ConfirmLabel: "Delete",
+										HxEndpoint:   "/shield/reflexes/" + rflx.Name,
+										HxMethod:     "delete",
+									})
+								</div>
+							}
+						}
+					}
+				}
+			}
+			{{ baseURL := "/reflexes?" }}
+			@Pagination(pg, baseURL)
+		}
+		@components.DialogHelpers()
+	</div>
+}

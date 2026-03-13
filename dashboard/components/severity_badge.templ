@@ -1,0 +1,123 @@
+package components
+
+import "github.com/xraph/forgeui/components/badge"
+
+templ SeverityBadge(severity string) {
+	switch severity {
+		case "critical":
+			@badge.Badge(badge.Props{Variant: badge.VariantDestructive}) {
+				Critical
+			}
+		case "high":
+			@badge.Badge(badge.Props{Variant: badge.VariantDestructive}) {
+				High
+			}
+		case "medium":
+			@badge.Badge(badge.Props{Variant: badge.VariantDefault}) {
+				Medium
+			}
+		case "low":
+			@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+				Low
+			}
+		case "none":
+			@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+				None
+			}
+		default:
+			@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+				{ severity }
+			}
+	}
+}
+
+templ ScopeBadge(scope string) {
+	switch scope {
+		case "topic":
+			@badge.Badge(badge.Props{Variant: badge.VariantDefault}) {
+				Topic
+			}
+		case "action":
+			@badge.Badge(badge.Props{Variant: badge.VariantDefault}) {
+				Action
+			}
+		case "data":
+			@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+				Data
+			}
+		case "output":
+			@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+				Output
+			}
+		case "custom":
+			@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+				Custom
+			}
+		default:
+			@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+				{ scope }
+			}
+	}
+}
+
+templ FocusBadge(focus string) {
+	switch focus {
+		case "pii":
+			@badge.Badge(badge.Props{Variant: badge.VariantDestructive}) {
+				PII
+			}
+		case "topic":
+			@badge.Badge(badge.Props{Variant: badge.VariantDefault}) {
+				Topic
+			}
+		case "sentiment":
+			@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+				Sentiment
+			}
+		case "intent":
+			@badge.Badge(badge.Props{Variant: badge.VariantDefault}) {
+				Intent
+			}
+		case "language":
+			@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+				Language
+			}
+		case "custom":
+			@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+				Custom
+			}
+		default:
+			@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+				{ focus }
+			}
+	}
+}
+
+templ DomainBadge(domain string) {
+	switch domain {
+		case "grounding":
+			@badge.Badge(badge.Props{Variant: badge.VariantDefault}) {
+				Grounding
+			}
+		case "relevance":
+			@badge.Badge(badge.Props{Variant: badge.VariantSecondary}) {
+				Relevance
+			}
+		case "consistency":
+			@badge.Badge(badge.Props{Variant: badge.VariantDefault}) {
+				Consistency
+			}
+		case "compliance":
+			@badge.Badge(badge.Props{Variant: badge.VariantDestructive}) {
+				Compliance
+			}
+		case "custom":
+			@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+				Custom
+			}
+		default:
+			@badge.Badge(badge.Props{Variant: badge.VariantOutline}) {
+				{ domain }
+			}
+	}
+}

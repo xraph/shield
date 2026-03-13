@@ -1,0 +1,142 @@
+package pages
+
+import (
+	"fmt"
+	"strconv"
+
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/input"
+	"github.com/xraph/forgeui/components/table"
+	"github.com/xraph/shield/awareness"
+	"github.com/xraph/shield/dashboard/components"
+	"github.com/xraph/shield/dashboard/shared"
+)
+
+templ AwarenessListPage(items []*awareness.Awareness, focus string, pg shared.PaginationMeta) {
+	<div class="space-y-6">
+		@components.PageHeader("Awareness", fmt.Sprintf("%d", pg.Total), "Layer 2: Content perception and detection") {
+			@button.Button(button.Props{
+				Attributes: templ.Attributes{
+					"hx-get":    "/awareness/create",
+					"hx-target": "#content",
+				},
+			}) {
+				New Awareness
+			}
+		}
+		<div class="flex gap-4">
+			@input.Input(input.Props{
+				Type:        "search",
+				Placeholder: "Search awareness rules...",
+				Class:       "max-w-sm",
+				Attributes: templ.Attributes{
+					"name":        "search",
+					"hx-get":      "/awareness",
+					"hx-target":   "#content",
+					"hx-trigger":  "input changed delay:300ms",
+					"hx-push-url": "true",
+					"hx-include":  "[name='search'],[name='focus']",
+				},
+			})
+			<select name="focus" class="flex h-10 rounded-md border border-input bg-background px-3 py-2 text-sm"
+				hx-get="/awareness"
+				hx-target="#content"
+				hx-trigger="change"
+				hx-push-url="true"
+				hx-include="[name='search'],[name='focus']">
+				<option value="">All Focus Types</option>
+				<option value="pii" selected?={ focus == "pii" }>PII</option>
+				<option value="topic" selected?={ focus == "topic" }>Topic</option>
+				<option value="sentiment" selected?={ focus == "sentiment" }>Sentiment</option>
+				<option value="intent" selected?={ focus == "intent" }>Intent</option>
+				<option value="language" selected?={ focus == "language" }>Language</option>
+				<option value="custom" selected?={ focus == "custom" }>Custom</option>
+			</select>
+		</div>
+		if len(items) == 0 {
+			@components.EmptyState("eye", "No awareness rules found", "Create your first awareness rule to define content detection")
+		} else {
+			@table.Table() {
+				@table.Header() {
+					@table.Row() {
+						@table.Head() { Name }
+						@table.Head() { Focus }
+						@table.Head() { Detectors }
+						@table.Head() { Action }
+						@table.Head() { Enabled }
+						@table.Head() { Actions }
+					}
+				}
+				@table.Body() {
+					for _, aw := range items {
+						@table.Row() {
+							@table.Cell() {
+								<a class="font-medium hover:underline cursor-pointer"
+									hx-get={ "/awareness/detail?name=" + aw.Name }
+									hx-target="#content">
+									{ aw.Name }
+								</a>
+							}
+							@table.Cell() {
+								@components.FocusBadge(string(aw.Focus))
+							}
+							@table.Cell() {
+								{ strconv.Itoa(len(aw.Detectors)) }
+							}
+							@table.Cell() {
+								@components.ActionBadge(aw.Action)
+							}
+							@table.Cell() {
+								@components.EnabledBadge(aw.Enabled)
+							}
+							@table.Cell() {
+								<div class="flex gap-1">
+									@button.Button(button.Props{
+										Variant: button.VariantOutline,
+										Size:    button.SizeSm,
+										Attributes: templ.Attributes{
+											"hx-get":    "/awareness/detail?name=" + aw.Name,
+											"hx-target": "#content",
+										},
+									}) {
+										View
+									}
+									@button.Button(button.Props{
+										Variant: button.VariantOutline,
+										Size:    button.SizeSm,
+										Attributes: templ.Attributes{
+											"hx-get":    "/awareness/edit?name=" + aw.Name,
+											"hx-target": "#content",
+										},
+									}) {
+										Edit
+									}
+									@button.Button(button.Props{
+										Variant: button.VariantDestructive,
+										Size:    button.SizeSm,
+										Attributes: templ.Attributes{
+											"onclick": fmt.Sprintf("tuiOpenDialog('delete-awareness-%s')", aw.Name),
+										},
+									}) {
+										Delete
+									}
+									@components.ConfirmDialog(components.ConfirmDialogProps{
+										ID:           "delete-awareness-" + aw.Name,
+										Title:        "Delete Awareness",
+										Description:  "Are you sure you want to delete awareness \"" + aw.Name + "\"? This action cannot be undone.",
+										ConfirmLabel: "Delete",
+										HxEndpoint:   "/shield/awareness/" + aw.Name,
+										HxMethod:     "delete",
+									})
+								</div>
+							}
+						}
+					}
+				}
+			}
+			{{ baseURL := "/awareness?focus=" + focus }}
+			@Pagination(pg, baseURL)
+		}
+		@components.DialogHelpers()
+	</div>
+}

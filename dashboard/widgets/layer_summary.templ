@@ -1,0 +1,18 @@
+package widgets
+
+import (
+	"strconv"
+	"github.com/xraph/shield/dashboard/components"
+)
+
+templ LayerSummaryWidget(instincts, awareness, boundaries, values, judgments, reflexes, profiles int64) {
+	<div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+		@components.StatCard("zap", "Instincts", strconv.FormatInt(instincts, 10), "Layer 1")
+		@components.StatCard("eye", "Awareness", strconv.FormatInt(awareness, 10), "Layer 2")
+		@components.StatCard("shield-off", "Boundaries", strconv.FormatInt(boundaries, 10), "Layer 3")
+		@components.StatCard("heart", "Values", strconv.FormatInt(values, 10), "Layer 4")
+		@components.StatCard("scale", "Judgments", strconv.FormatInt(judgments, 10), "Layer 5")
+		@components.StatCard("activity", "Reflexes", strconv.FormatInt(reflexes, 10), "Layer 6")
+		@components.StatCard("shield-check", "Profiles", strconv.FormatInt(profiles, 10), "Composed")
+	</div>
+}

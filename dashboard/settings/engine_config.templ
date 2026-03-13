@@ -1,0 +1,95 @@
+package settings
+
+import (
+	"github.com/xraph/shield/engine"
+	"github.com/xraph/forgeui/components/card"
+)
+
+templ EngineConfigPanel(eng *engine.Engine) {
+	<div class="space-y-6">
+		@card.Card() {
+			@card.Header() {
+				@card.Title() { Shield Engine Configuration }
+				@card.Description() { Safety engine settings and defaults. }
+			}
+			@card.Content() {
+				<div x-data={ engineConfigFormData() }>
+					<div id="shield-settings-feedback" class="hidden text-sm mb-4 p-2 rounded"></div>
+					<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+						<div class="space-y-2">
+							<label class="text-sm font-medium">Default Profile</label>
+							<input type="text" x-model="form.default_profile" placeholder="e.g. standard"
+								class="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"/>
+						</div>
+						<div class="space-y-2">
+							<label class="text-sm font-medium">Scan Concurrency</label>
+							<input type="number" x-model.number="form.scan_concurrency" min="1" max="100"
+								class="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"/>
+						</div>
+						<div class="space-y-2">
+							<label class="text-sm font-medium">Short-Circuit</label>
+							<div class="flex items-center gap-2 h-10">
+								<input type="checkbox" x-model="form.short_circuit" class="h-4 w-4 rounded border-input"/>
+								<span class="text-sm text-muted-foreground">Stop evaluation when first layer blocks</span>
+							</div>
+						</div>
+						<div class="space-y-2">
+							<label class="text-sm font-medium">Shutdown Timeout (seconds)</label>
+							<input type="number" x-model.number="form.shutdown_timeout" min="1" max="300"
+								class="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"/>
+						</div>
+					</div>
+					<div class="mt-4 flex items-center gap-3">
+						<button @click="saveSettings()"
+							:disabled="saving"
+							class="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50">
+							<span x-show="!saving">Save Changes</span>
+							<span x-show="saving">Saving...</span>
+						</button>
+						<span x-show="saved" x-transition class="text-sm text-green-600">Settings saved</span>
+					</div>
+				</div>
+			}
+		}
+		{ children... }
+	</div>
+}
+
+func engineConfigFormData() string {
+	return `{
+		form: {
+			default_profile: '',
+			scan_concurrency: 4,
+			short_circuit: true,
+			shutdown_timeout: 30
+		},
+		saving: false,
+		saved: false,
+		async saveSettings() {
+			this.saving = true;
+			this.saved = false;
+			try {
+				const resp = await fetch('/shield/config', {
+					method: 'PUT',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify(this.form)
+				});
+				if (resp.ok) {
+					this.saved = true;
+					setTimeout(() => { this.saved = false; }, 3000);
+				} else {
+					const el = document.getElementById('shield-settings-feedback');
+					el.textContent = 'Failed to save settings';
+					el.className = 'text-sm mb-4 p-2 rounded bg-destructive/10 text-destructive';
+					setTimeout(() => { el.className = 'hidden text-sm mb-4 p-2 rounded'; }, 3000);
+				}
+			} catch (e) {
+				const el = document.getElementById('shield-settings-feedback');
+				el.textContent = 'Network error';
+				el.className = 'text-sm mb-4 p-2 rounded bg-destructive/10 text-destructive';
+				setTimeout(() => { el.className = 'hidden text-sm mb-4 p-2 rounded'; }, 3000);
+			}
+			this.saving = false;
+		}
+	}`
+}

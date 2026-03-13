@@ -16,8 +16,9 @@ package engine
 
 import (
 	"context"
-	log "github.com/xraph/go-utils/log"
 	"time"
+
+	log "github.com/xraph/go-utils/log"
 
 	"github.com/xraph/shield"
 	"github.com/xraph/shield/id"
@@ -142,6 +143,9 @@ func (e *Engine) Health(ctx context.Context) error {
 	}
 	return nil
 }
+
+// Store returns the composite store (may be nil if not configured).
+func (e *Engine) Store() store.Store { return e.store }
 
 // Stop gracefully shuts down the engine.
 func (e *Engine) Stop(ctx context.Context) error {

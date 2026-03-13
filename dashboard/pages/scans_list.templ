@@ -1,0 +1,132 @@
+package pages
+
+import (
+	"fmt"
+	"strconv"
+
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/input"
+	"github.com/xraph/forgeui/components/table"
+	"github.com/xraph/shield/dashboard/components"
+	"github.com/xraph/shield/dashboard/shared"
+	"github.com/xraph/shield/scan"
+)
+
+templ ScansListPage(items []*scan.Result, direction string, decision string, pg shared.PaginationMeta) {
+	<div class="space-y-6">
+		@components.PageHeader("Scans", fmt.Sprintf("%d", pg.Total), "Safety scan results for all processed content") {
+		}
+		<div class="flex gap-4">
+			@input.Input(input.Props{
+				Type:        "search",
+				Placeholder: "Search scans...",
+				Class:       "max-w-sm",
+				Attributes: templ.Attributes{
+					"name":        "search",
+					"hx-get":      "/scans",
+					"hx-target":   "#content",
+					"hx-trigger":  "input changed delay:300ms",
+					"hx-push-url": "true",
+					"hx-include":  "[name='search'],[name='direction'],[name='decision']",
+				},
+			})
+			<select name="direction" class="flex h-10 rounded-md border border-input bg-background px-3 py-2 text-sm"
+				hx-get="/scans"
+				hx-target="#content"
+				hx-trigger="change"
+				hx-push-url="true"
+				hx-include="[name='search'],[name='direction'],[name='decision']">
+				<option value="">All Directions</option>
+				<option value="input" selected?={ direction == "input" }>Input</option>
+				<option value="output" selected?={ direction == "output" }>Output</option>
+			</select>
+			<select name="decision" class="flex h-10 rounded-md border border-input bg-background px-3 py-2 text-sm"
+				hx-get="/scans"
+				hx-target="#content"
+				hx-trigger="change"
+				hx-push-url="true"
+				hx-include="[name='search'],[name='direction'],[name='decision']">
+				<option value="">All Decisions</option>
+				<option value="allow" selected?={ decision == "allow" }>Allow</option>
+				<option value="block" selected?={ decision == "block" }>Block</option>
+				<option value="flag" selected?={ decision == "flag" }>Flag</option>
+				<option value="redact" selected?={ decision == "redact" }>Redact</option>
+			</select>
+		</div>
+		if len(items) == 0 {
+			@components.EmptyState("scan", "No scans found", "Scan results will appear here once content is processed.")
+		} else {
+			@table.Table() {
+				@table.Header() {
+					@table.Row() {
+						@table.Head() { ID }
+						@table.Head() { Direction }
+						@table.Head() { Decision }
+						@table.Head() { Findings }
+						@table.Head() { PII Count }
+						@table.Head() { Duration }
+						@table.Head() { Created }
+						@table.Head() { Actions }
+					}
+				}
+				@table.Body() {
+					for _, s := range items {
+						@table.Row() {
+							@table.Cell() {
+								{{ scanID := s.ID.String() }}
+								if len(scanID) > 8 {
+									{{ truncated := scanID[:8] + "..." }}
+									<a class="font-mono text-xs hover:underline cursor-pointer" title={ scanID }
+										hx-get={ "/scans/detail?id=" + scanID }
+										hx-target="#content">
+										{ truncated }
+									</a>
+								} else {
+									<a class="font-mono text-xs hover:underline cursor-pointer"
+										hx-get={ "/scans/detail?id=" + scanID }
+										hx-target="#content">
+										{ scanID }
+									</a>
+								}
+							}
+							@table.Cell() {
+								@components.DirectionBadge(string(s.Direction))
+							}
+							@table.Cell() {
+								@components.DecisionBadge(string(s.Decision))
+							}
+							@table.Cell() {
+								{ strconv.Itoa(len(s.Findings)) }
+							}
+							@table.Cell() {
+								{ strconv.Itoa(s.PIICount) }
+							}
+							@table.Cell() {
+								{{ dur := s.Duration.String() }}
+								<span class="text-xs text-muted-foreground">{ dur }</span>
+							}
+							@table.Cell() {
+								{{ created := s.CreatedAt.Format("Jan 02 15:04") }}
+								<span class="text-xs text-muted-foreground">{ created }</span>
+							}
+							@table.Cell() {
+								@button.Button(button.Props{
+									Variant: button.VariantOutline,
+									Size:    button.SizeSm,
+									Attributes: templ.Attributes{
+										"hx-get":    "/scans/detail?id=" + s.ID.String(),
+										"hx-target": "#content",
+									},
+								}) {
+									View
+								}
+							}
+						}
+					}
+				}
+			}
+			{{ baseURL := "/scans?direction=" + direction + "&decision=" + decision }}
+			@Pagination(pg, baseURL)
+		}
+	</div>
+}

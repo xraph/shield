@@ -1,0 +1,303 @@
+package pages
+
+import (
+	"encoding/json"
+	"fmt"
+
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/card"
+	"github.com/xraph/forgeui/components/input"
+	"github.com/xraph/forgeui/components/textarea"
+	"github.com/xraph/forgeui/icons"
+	"github.com/xraph/shield/dashboard/components"
+	"github.com/xraph/shield/policy"
+)
+
+func policyFormAlpineData(pol *policy.Policy) string {
+	if pol == nil {
+		return `{
+			formData: {
+				name: '',
+				description: '',
+				scope_key: '',
+				scope_level: 'app',
+				enabled: true,
+				rules: []
+			},
+			errors: null,
+			submitting: false,
+			addRule() {
+				this.formData.rules.push({ check_type: '', condition: '', action: 'block', error_message: '', priority: 0 });
+			},
+			removeRule(i) {
+				this.formData.rules.splice(i, 1);
+			},
+			async submitForm() {
+				this.submitting = true;
+				this.errors = null;
+				try {
+					const data = {...this.formData};
+					data.rules = data.rules.filter(r => r.check_type !== '');
+					const resp = await fetch('/shield/policies', {
+						method: 'POST',
+						headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify(data)
+					});
+					if (!resp.ok) {
+						const text = await resp.text();
+						this.errors = text || 'Failed to create policy';
+						return;
+					}
+					htmx.ajax('GET', '/policies', { target: '#content' });
+				} catch (e) {
+					this.errors = e.message;
+				} finally {
+					this.submitting = false;
+				}
+			}
+		}`
+	}
+
+	rulesJSON := buildPolicyRulesJSON(pol.Rules)
+
+	return fmt.Sprintf(`{
+		formData: {
+			name: %q,
+			description: %q,
+			scope_key: %q,
+			scope_level: %q,
+			enabled: %t,
+			rules: %s
+		},
+		errors: null,
+		submitting: false,
+		addRule() {
+			this.formData.rules.push({ check_type: '', condition: '', action: 'block', error_message: '', priority: 0 });
+		},
+		removeRule(i) {
+			this.formData.rules.splice(i, 1);
+		},
+		async submitForm() {
+			this.submitting = true;
+			this.errors = null;
+			try {
+				const data = {...this.formData};
+				data.rules = data.rules.filter(r => r.check_type !== '');
+				const resp = await fetch('/shield/policies/' + encodeURIComponent(%q), {
+					method: 'PUT',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify(data)
+				});
+				if (!resp.ok) {
+					const text = await resp.text();
+					this.errors = text || 'Failed to update policy';
+					return;
+				}
+				htmx.ajax('GET', '/policies/detail?name=' + encodeURIComponent(%q), { target: '#content' });
+			} catch (e) {
+				this.errors = e.message;
+			} finally {
+				this.submitting = false;
+			}
+		}
+	}`, pol.Name, pol.Description, pol.ScopeKey, string(pol.ScopeLevel),
+		pol.Enabled, rulesJSON, pol.Name, pol.Name)
+}
+
+func buildPolicyRulesJSON(rules []policy.Rule) string {
+	if len(rules) == 0 {
+		return "[]"
+	}
+	b, err := json.Marshal(rules)
+	if err != nil {
+		return "[]"
+	}
+	return string(b)
+}
+
+templ PolicyFormPage(pol *policy.Policy) {
+	{{ isEdit := pol != nil }}
+	{{ title := "Create Policy" }}
+	if isEdit {
+		{{ title = "Edit Policy: " + pol.Name }}
+	}
+	<div class="space-y-6" x-data={ policyFormAlpineData(pol) }>
+		@components.PageHeader(title, "", "") {
+			@button.Button(button.Props{
+				Variant: button.VariantOutline,
+				Attributes: templ.Attributes{
+					"hx-get":    "/policies",
+					"hx-target": "#content",
+				},
+			}) {
+				Cancel
+			}
+		}
+		<template x-if="errors">
+			<div class="bg-destructive/15 text-destructive px-4 py-3 rounded-md text-sm" x-text="errors"></div>
+		</template>
+		<!-- Basic Information -->
+		@card.Card() {
+			@card.Header() {
+				@card.Title() {
+					Basic Information
+				}
+			}
+			@card.Content() {
+				<div class="space-y-4">
+					<div class="space-y-2">
+						<label class="text-sm font-medium">Name</label>
+						if isEdit {
+							@input.Input(input.Props{
+								Attributes: templ.Attributes{
+									"x-model":  "formData.name",
+									"disabled": "true",
+								},
+							})
+						} else {
+							@input.Input(input.Props{
+								Placeholder: "e.g., strict-content-policy",
+								Attributes: templ.Attributes{
+									"x-model": "formData.name",
+								},
+							})
+						}
+					</div>
+					<div class="space-y-2">
+						<label class="text-sm font-medium">Description</label>
+						@textarea.Textarea(textarea.Props{
+							Placeholder: "Describe the policy purpose...",
+							Attributes: templ.Attributes{
+								"x-model": "formData.description",
+								"rows":    "3",
+							},
+						})
+					</div>
+					<div class="grid grid-cols-2 gap-4">
+						<div class="space-y-2">
+							<label class="text-sm font-medium">Scope Key</label>
+							@input.Input(input.Props{
+								Placeholder: "e.g., my-app",
+								Attributes: templ.Attributes{
+									"x-model": "formData.scope_key",
+								},
+							})
+						</div>
+						<div class="space-y-2">
+							<label class="text-sm font-medium">Scope Level</label>
+							<select class="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+								x-model="formData.scope_level">
+								<option value="app">App</option>
+								<option value="org">Org</option>
+							</select>
+						</div>
+					</div>
+					<div class="flex items-center gap-2">
+						<input type="checkbox" class="h-4 w-4 rounded border-input" x-model="formData.enabled"/>
+						<label class="text-sm font-medium">Enabled</label>
+					</div>
+				</div>
+			}
+		}
+		<!-- Rules -->
+		@card.Card() {
+			@card.Header() {
+				<div class="flex items-center justify-between w-full">
+					<div>
+						@card.Title() { Rules }
+						@card.Description() { Define enforcement rules for this policy. }
+					</div>
+					@button.Button(button.Props{
+						Variant: button.VariantOutline,
+						Size:    button.SizeSm,
+						Attributes: templ.Attributes{
+							"type":   "button",
+							"@click": "addRule()",
+						},
+					}) {
+						@icons.Plus(icons.WithSize(14))
+						<span class="ml-1">Add Rule</span>
+					}
+				</div>
+			}
+			@card.Content() {
+				<div class="space-y-4">
+					<template x-for="(rule, idx) in formData.rules" :key="idx">
+						<div class="border rounded-md p-4 space-y-3">
+							<div class="flex items-center justify-between">
+								<span class="text-sm font-medium" x-text="'Rule #' + (idx + 1)"></span>
+								<button type="button" class="text-sm text-destructive hover:underline"
+									@click="removeRule(idx)">
+									Remove
+								</button>
+							</div>
+							<div class="grid grid-cols-2 gap-3">
+								<div class="space-y-2">
+									<label class="text-xs text-muted-foreground">Check Type</label>
+									<input type="text" class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"
+										placeholder="e.g., instinct, awareness, values"
+										x-model="rule.check_type"/>
+								</div>
+								<div class="space-y-2">
+									<label class="text-xs text-muted-foreground">Condition</label>
+									<input type="text" class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"
+										placeholder="e.g., score > 0.8"
+										x-model="rule.condition"/>
+								</div>
+							</div>
+							<div class="grid grid-cols-3 gap-3">
+								<div class="space-y-2">
+									<label class="text-xs text-muted-foreground">Action</label>
+									<select class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"
+										x-model="rule.action">
+										<option value="block">Block</option>
+										<option value="flag">Flag</option>
+										<option value="log">Log</option>
+										<option value="warn">Warn</option>
+									</select>
+								</div>
+								<div class="space-y-2">
+									<label class="text-xs text-muted-foreground">Error Message</label>
+									<input type="text" class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"
+										placeholder="Custom error message"
+										x-model="rule.error_message"/>
+								</div>
+								<div class="space-y-2">
+									<label class="text-xs text-muted-foreground">Priority</label>
+									<input type="number" class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"
+										x-model.number="rule.priority"/>
+								</div>
+							</div>
+						</div>
+					</template>
+					<p x-show="formData.rules.length === 0" class="text-sm text-muted-foreground text-center py-2">No rules defined. Add rules to enforce safety checks.</p>
+				</div>
+			}
+		}
+		<!-- Submit -->
+		<div class="flex justify-end gap-2">
+			@button.Button(button.Props{
+				Variant: button.VariantOutline,
+				Attributes: templ.Attributes{
+					"hx-get":    "/policies",
+					"hx-target": "#content",
+				},
+			}) {
+				Cancel
+			}
+			@button.Button(button.Props{
+				Attributes: templ.Attributes{
+					"type":      "button",
+					"@click":    "submitForm()",
+					":disabled": "submitting",
+				},
+			}) {
+				if isEdit {
+					Save Changes
+				} else {
+					Create Policy
+				}
+			}
+		</div>
+	</div>
+}

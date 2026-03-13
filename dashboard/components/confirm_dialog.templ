@@ -1,0 +1,67 @@
+package components
+
+import (
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/dialog"
+)
+
+type ConfirmDialogProps struct {
+	ID           string
+	Title        string
+	Description  string
+	ConfirmLabel string
+	HxEndpoint   string
+	HxMethod     string
+}
+
+templ ConfirmDialog(props ConfirmDialogProps) {
+	{{ confirmLabel := props.ConfirmLabel }}
+	if confirmLabel == "" {
+		{{ confirmLabel = "Confirm" }}
+	}
+	@dialog.Dialog(dialog.Props{ID: props.ID}) {
+		@dialog.Content() {
+			@dialog.Header() {
+				@dialog.Title() {
+					{ props.Title }
+				}
+				@dialog.Description() {
+					{ props.Description }
+				}
+			}
+			<div id={ props.ID + "-errors" } class="text-sm text-destructive"></div>
+			@dialog.Footer() {
+				@dialog.Close() {
+					@button.Button(button.Props{Variant: button.VariantOutline}) {
+						Cancel
+					}
+				}
+				if props.HxMethod == "delete" {
+					@button.Button(button.Props{
+						Variant: button.VariantDestructive,
+						Attributes: templ.Attributes{
+							"hx-delete":            props.HxEndpoint,
+							"hx-target":            "#" + props.ID + "-errors",
+							"hx-swap":              "innerHTML",
+							"hx-on::after-request": "if(event.detail.successful) { document.getElementById('" + props.ID + "')?.close(); htmx.ajax('GET', window.location.pathname + window.location.search, {target:'#content'}); }",
+						},
+					}) {
+						{ confirmLabel }
+					}
+				} else {
+					@button.Button(button.Props{
+						Variant: button.VariantDestructive,
+						Attributes: templ.Attributes{
+							"hx-post":              props.HxEndpoint,
+							"hx-target":            "#" + props.ID + "-errors",
+							"hx-swap":              "innerHTML",
+							"hx-on::after-request": "if(event.detail.successful) { document.getElementById('" + props.ID + "')?.close(); htmx.ajax('GET', window.location.pathname + window.location.search, {target:'#content'}); }",
+						},
+					}) {
+						{ confirmLabel }
+					}
+				}
+			}
+		}
+	}
+}

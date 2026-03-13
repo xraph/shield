@@ -1,0 +1,222 @@
+package pages
+
+import (
+	"fmt"
+	"strconv"
+
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/card"
+	"github.com/xraph/forgeui/components/table"
+	"github.com/xraph/shield/dashboard/components"
+	"github.com/xraph/shield/reflex"
+)
+
+templ ReflexDetailPage(rflx *reflex.Reflex, usageCount int) {
+	<div class="space-y-6">
+		@components.PageHeader(rflx.Name, "", "Reflex configuration") {
+			@button.Button(button.Props{
+				Variant: button.VariantOutline,
+				Attributes: templ.Attributes{
+					"hx-get":    "/reflexes",
+					"hx-target": "#content",
+				},
+			}) {
+				Back
+			}
+			@button.Button(button.Props{
+				Variant: button.VariantOutline,
+				Attributes: templ.Attributes{
+					"hx-get":    "/reflexes/edit?name=" + rflx.Name,
+					"hx-target": "#content",
+				},
+			}) {
+				Edit
+			}
+			@button.Button(button.Props{
+				Variant: button.VariantDestructive,
+				Attributes: templ.Attributes{
+					"onclick": fmt.Sprintf("tuiOpenDialog('delete-reflex-%s')", rflx.Name),
+				},
+			}) {
+				Delete
+			}
+		}
+		<div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+			@card.Card() {
+				@card.Header() {
+					@card.Title() {
+						Configuration
+					}
+				}
+				@card.Content() {
+					<div class="space-y-4">
+						<div class="flex justify-between items-center">
+							<span class="text-sm font-medium text-muted-foreground">ID</span>
+							<span class="text-sm font-mono">{ rflx.ID.String() }</span>
+						</div>
+						<div class="flex justify-between items-center">
+							<span class="text-sm font-medium text-muted-foreground">Priority</span>
+							<span class="text-sm">{ strconv.Itoa(rflx.Priority) }</span>
+						</div>
+						<div class="flex justify-between items-center">
+							<span class="text-sm font-medium text-muted-foreground">Enabled</span>
+							@components.EnabledBadge(rflx.Enabled)
+						</div>
+						if rflx.Description != "" {
+							<div class="pt-2 border-t">
+								<span class="text-sm font-medium text-muted-foreground">Description</span>
+								<p class="text-sm mt-1">{ rflx.Description }</p>
+							</div>
+						}
+						<div class="flex justify-between items-center">
+							<span class="text-sm font-medium text-muted-foreground">Usage</span>
+							<span class="text-sm">{ strconv.Itoa(usageCount) } profiles/agents</span>
+						</div>
+						<div class="flex justify-between items-center">
+							<span class="text-sm font-medium text-muted-foreground">Created</span>
+							<span class="text-sm">{ rflx.CreatedAt.Format("2006-01-02 15:04:05") }</span>
+						</div>
+						<div class="flex justify-between items-center">
+							<span class="text-sm font-medium text-muted-foreground">Updated</span>
+							<span class="text-sm">{ rflx.UpdatedAt.Format("2006-01-02 15:04:05") }</span>
+						</div>
+					</div>
+				}
+			}
+			@card.Card() {
+				@card.Header() {
+					@card.Title() {
+						Triggers
+					}
+					@card.Description() {
+						{ fmt.Sprintf("%d triggers configured", len(rflx.Triggers)) }
+					}
+				}
+				@card.Content() {
+					if len(rflx.Triggers) == 0 {
+						<p class="text-sm text-muted-foreground">No triggers configured.</p>
+					} else {
+						@table.Table() {
+							@table.Header() {
+								@table.Row() {
+									@table.Head() { Type }
+									@table.Head() { Pattern }
+									@table.Head() { Threshold }
+									@table.Head() { Window }
+								}
+							}
+							@table.Body() {
+								for _, t := range rflx.Triggers {
+									@table.Row() {
+										@table.Cell() {
+											@components.ActionBadge(string(t.Type))
+										}
+										@table.Cell() {
+											if t.Pattern != "" {
+												<code class="text-xs bg-muted px-1 py-0.5 rounded">{ t.Pattern }</code>
+											} else {
+												<span class="text-muted-foreground">-</span>
+											}
+										}
+										@table.Cell() {
+											if t.Threshold > 0 {
+												{ fmt.Sprintf("%.2f", t.Threshold) }
+											} else {
+												<span class="text-muted-foreground">-</span>
+											}
+										}
+										@table.Cell() {
+											if t.Window != "" {
+												{ t.Window }
+											} else {
+												<span class="text-muted-foreground">-</span>
+											}
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		</div>
+		@card.Card() {
+			@card.Header() {
+				@card.Title() {
+					Actions
+				}
+				@card.Description() {
+					{ fmt.Sprintf("%d actions configured", len(rflx.Actions)) }
+				}
+			}
+			@card.Content() {
+				if len(rflx.Actions) == 0 {
+					<p class="text-sm text-muted-foreground">No actions configured.</p>
+				} else {
+					@table.Table() {
+						@table.Header() {
+							@table.Row() {
+								@table.Head() { Type }
+								@table.Head() { Target }
+								@table.Head() { Value }
+								@table.Head() { Fallback }
+							}
+						}
+						@table.Body() {
+							for _, a := range rflx.Actions {
+								@table.Row() {
+									@table.Cell() {
+										@components.ActionBadge(string(a.Type))
+									}
+									@table.Cell() {
+										if a.Target != "" {
+											{ a.Target }
+										} else {
+											<span class="text-muted-foreground">-</span>
+										}
+									}
+									@table.Cell() {
+										{{ actionVal := fmt.Sprintf("%v", a.Value) }}
+										if actionVal != "" && actionVal != "<nil>" {
+											<code class="text-xs bg-muted px-1 py-0.5 rounded">{ actionVal }</code>
+										} else {
+											<span class="text-muted-foreground">-</span>
+										}
+									}
+									@table.Cell() {
+										if a.Fallback != "" {
+											<span class="text-sm">{ a.Fallback }</span>
+										} else {
+											<span class="text-muted-foreground">-</span>
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		if len(rflx.Metadata) > 0 {
+			@card.Card() {
+				@card.Header() {
+					@card.Title() {
+						Metadata
+					}
+				}
+				@card.Content() {
+					@components.JsonViewer(rflx.Metadata)
+				}
+			}
+		}
+		@components.ConfirmDialog(components.ConfirmDialogProps{
+			ID:           "delete-reflex-" + rflx.Name,
+			Title:        "Delete Reflex",
+			Description:  "Are you sure you want to delete reflex \"" + rflx.Name + "\"? This action cannot be undone.",
+			ConfirmLabel: "Delete",
+			HxEndpoint:   "/shield/reflexes/" + rflx.Name,
+			HxMethod:     "delete",
+		})
+		@components.DialogHelpers()
+	</div>
+}

@@ -1,0 +1,87 @@
+package pages
+
+import (
+	"strconv"
+
+	"github.com/xraph/shield/pii"
+	"github.com/xraph/shield/dashboard/components"
+	"github.com/xraph/forgeui/components/card"
+	"github.com/xraph/forgeui/components/table"
+)
+
+templ PIIVaultPage(stats *pii.Stats) {
+	<div class="space-y-6">
+		@components.PageHeader("PII Vault", "", "Personally identifiable information detection and tokenization")
+		<div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+			@components.StatCard("lock", "Total Tokens", strconv.FormatInt(stats.TotalTokens, 10), "PII tokens stored")
+			@components.StatCard("scan", "PII Types", strconv.Itoa(len(stats.ByType)), "Distinct types detected")
+			@components.StatCard("user-shield", "Tenants", strconv.Itoa(len(stats.ByTenant)), "Tenants with PII data")
+		</div>
+		<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+			@card.Card() {
+				@card.Header() {
+					@card.Title() { By PII Type }
+					@card.Description() { Token counts per PII type }
+				}
+				@card.Content() {
+					if len(stats.ByType) == 0 {
+						@components.EmptyState("lock", "No PII data", "PII tokens will appear here after scans detect personal information")
+					} else {
+						@table.Table() {
+							@table.Header() {
+								@table.Row() {
+									@table.Head() { PII Type }
+									@table.Head() { Count }
+								}
+							}
+							@table.Body() {
+								for piiType, count := range stats.ByType {
+									@table.Row() {
+										@table.Cell() {
+											<span class="font-medium">{ piiType }</span>
+										}
+										@table.Cell() {
+											{ strconv.FormatInt(count, 10) }
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+			@card.Card() {
+				@card.Header() {
+					@card.Title() { By Tenant }
+					@card.Description() { Token counts per tenant }
+				}
+				@card.Content() {
+					if len(stats.ByTenant) == 0 {
+						@components.EmptyState("user-shield", "No tenant data", "Tenant PII token counts will appear here")
+					} else {
+						@table.Table() {
+							@table.Header() {
+								@table.Row() {
+									@table.Head() { Tenant ID }
+									@table.Head() { Count }
+								}
+							}
+							@table.Body() {
+								for tenantID, count := range stats.ByTenant {
+									@table.Row() {
+										@table.Cell() {
+											<code class="text-xs bg-muted px-1.5 py-0.5 rounded">{ tenantID }</code>
+										}
+										@table.Cell() {
+											{ strconv.FormatInt(count, 10) }
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		</div>
+	</div>
+}

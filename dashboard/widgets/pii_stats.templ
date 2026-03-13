@@ -1,0 +1,31 @@
+package widgets
+
+import (
+	"strconv"
+	"github.com/xraph/shield/pii"
+	"github.com/xraph/forgeui/components/card"
+)
+
+templ PIIStatsWidget(stats *pii.Stats) {
+	@card.Card() {
+		@card.Content(card.ContentProps{Class: "p-6"}) {
+			<div class="space-y-4">
+				<div class="flex items-center justify-between">
+					<span class="text-sm text-muted-foreground">Total PII Tokens</span>
+					<span class="text-2xl font-bold">{ strconv.FormatInt(stats.TotalTokens, 10) }</span>
+				</div>
+				if len(stats.ByType) > 0 {
+					<div class="space-y-2">
+						<span class="text-xs text-muted-foreground font-medium">By Type</span>
+						for piiType, count := range stats.ByType {
+							<div class="flex items-center justify-between text-sm">
+								<span>{ piiType }</span>
+								<span class="font-medium">{ strconv.FormatInt(count, 10) }</span>
+							</div>
+						}
+					</div>
+				}
+			</div>
+		}
+	}
+}

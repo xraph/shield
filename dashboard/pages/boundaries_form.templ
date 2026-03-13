@@ -1,0 +1,326 @@
+package pages
+
+import (
+	"encoding/json"
+	"fmt"
+
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/card"
+	"github.com/xraph/forgeui/components/input"
+	"github.com/xraph/forgeui/components/textarea"
+	"github.com/xraph/shield/boundary"
+	"github.com/xraph/shield/dashboard/components"
+)
+
+func boundaryFormAlpineData(bnd *boundary.Boundary) string {
+	if bnd == nil {
+		return `{
+			formData: {
+				name: '',
+				description: '',
+				response: '',
+				enabled: true,
+				limits: []
+			},
+			errors: null,
+			submitting: false,
+			addLimit() {
+				this.formData.limits.push({ scope: 'topic', deny: '', allow: '', use_allow: false });
+			},
+			removeLimit(i) {
+				this.formData.limits.splice(i, 1);
+			},
+			buildPayload() {
+				const data = { ...this.formData };
+				data.limits = data.limits.map(l => ({
+					scope: l.scope,
+					deny: l.deny ? l.deny.split(',').map(d => d.trim()).filter(d => d) : [],
+					allow: l.allow ? l.allow.split(',').map(a => a.trim()).filter(a => a) : [],
+					use_allow: l.use_allow
+				}));
+				return data;
+			},
+			async submitForm() {
+				this.submitting = true;
+				this.errors = null;
+				try {
+					const resp = await fetch('/shield/boundaries', {
+						method: 'POST',
+						headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify(this.buildPayload())
+					});
+					if (!resp.ok) {
+						const text = await resp.text();
+						this.errors = text || 'Failed to create boundary';
+						return;
+					}
+					htmx.ajax('GET', '/boundaries', { target: '#content' });
+				} catch (e) {
+					this.errors = e.message;
+				} finally {
+					this.submitting = false;
+				}
+			}
+		}`
+	}
+
+	limits := buildLimitsJSON(bnd.Limits)
+	return fmt.Sprintf(`{
+		formData: {
+			name: %q,
+			description: %q,
+			response: %q,
+			enabled: %t,
+			limits: %s
+		},
+		errors: null,
+		submitting: false,
+		addLimit() {
+			this.formData.limits.push({ scope: 'topic', deny: '', allow: '', use_allow: false });
+		},
+		removeLimit(i) {
+			this.formData.limits.splice(i, 1);
+		},
+		buildPayload() {
+			const data = { ...this.formData };
+			data.limits = data.limits.map(l => ({
+				scope: l.scope,
+				deny: l.deny ? l.deny.split(',').map(d => d.trim()).filter(d => d) : [],
+				allow: l.allow ? l.allow.split(',').map(a => a.trim()).filter(a => a) : [],
+				use_allow: l.use_allow
+			}));
+			return data;
+		},
+		async submitForm() {
+			this.submitting = true;
+			this.errors = null;
+			try {
+				const resp = await fetch('/shield/boundaries/' + encodeURIComponent(%q), {
+					method: 'PUT',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify(this.buildPayload())
+				});
+				if (!resp.ok) {
+					const text = await resp.text();
+					this.errors = text || 'Failed to update boundary';
+					return;
+				}
+				htmx.ajax('GET', '/boundaries/detail?name=' + encodeURIComponent(%q), { target: '#content' });
+			} catch (e) {
+				this.errors = e.message;
+			} finally {
+				this.submitting = false;
+			}
+		}
+	}`, bnd.Name, bnd.Description, bnd.Response, bnd.Enabled,
+		limits, bnd.Name, bnd.Name)
+}
+
+// buildLimitsJSON converts limits to JSON with deny/allow as comma-separated strings for form editing.
+func buildLimitsJSON(limits []boundary.Limit) string {
+	if len(limits) == 0 {
+		return "[]"
+	}
+	type formLimit struct {
+		Scope    string `json:"scope"`
+		Deny     string `json:"deny"`
+		Allow    string `json:"allow"`
+		UseAllow bool   `json:"use_allow"`
+	}
+	items := make([]formLimit, len(limits))
+	for i, l := range limits {
+		deny := ""
+		for j, d := range l.Deny {
+			if j > 0 {
+				deny += ", "
+			}
+			deny += d
+		}
+		allow := ""
+		for j, a := range l.Allow {
+			if j > 0 {
+				allow += ", "
+			}
+			allow += a
+		}
+		items[i] = formLimit{
+			Scope:    string(l.Scope),
+			Deny:     deny,
+			Allow:    allow,
+			UseAllow: l.UseAllow,
+		}
+	}
+	b, err := json.Marshal(items)
+	if err != nil {
+		return "[]"
+	}
+	return string(b)
+}
+
+templ BoundaryFormPage(bnd *boundary.Boundary) {
+	{{ isEdit := bnd != nil }}
+	{{ title := "Create Boundary" }}
+	if isEdit {
+		{{ title = "Edit Boundary: " + bnd.Name }}
+	}
+	<div class="space-y-6" x-data={ boundaryFormAlpineData(bnd) }>
+		@components.PageHeader(title, "", "") {
+			@button.Button(button.Props{
+				Variant: button.VariantOutline,
+				Attributes: templ.Attributes{
+					"hx-get":    "/boundaries",
+					"hx-target": "#content",
+				},
+			}) {
+				Cancel
+			}
+		}
+		<template x-if="errors">
+			<div class="bg-destructive/15 text-destructive px-4 py-3 rounded-md text-sm" x-text="errors"></div>
+		</template>
+		@card.Card() {
+			@card.Header() {
+				@card.Title() {
+					Basic Information
+				}
+			}
+			@card.Content() {
+				<div class="space-y-4">
+					<div class="space-y-2">
+						<label class="text-sm font-medium">Name</label>
+						if isEdit {
+							@input.Input(input.Props{
+								Attributes: templ.Attributes{
+									"x-model":  "formData.name",
+									"disabled": "true",
+								},
+							})
+						} else {
+							@input.Input(input.Props{
+								Placeholder: "e.g., topic-restrictions",
+								Attributes: templ.Attributes{
+									"x-model": "formData.name",
+								},
+							})
+						}
+					</div>
+					<div class="space-y-2">
+						<label class="text-sm font-medium">Description</label>
+						@textarea.Textarea(textarea.Props{
+							Placeholder: "Describe what this boundary enforces...",
+							Attributes: templ.Attributes{
+								"x-model": "formData.description",
+								"rows":    "3",
+							},
+						})
+					</div>
+					<div class="space-y-2">
+						<label class="text-sm font-medium">Response</label>
+						@textarea.Textarea(textarea.Props{
+							Placeholder: "Custom response when this boundary is hit...",
+							Attributes: templ.Attributes{
+								"x-model": "formData.response",
+								"rows":    "3",
+							},
+						})
+						<p class="text-xs text-muted-foreground">The message shown to the user when this boundary is triggered.</p>
+					</div>
+					<div class="flex items-center gap-2">
+						<input type="checkbox" class="h-4 w-4 rounded border-input" x-model="formData.enabled"/>
+						<label class="text-sm font-medium">Enabled</label>
+					</div>
+				</div>
+			}
+		}
+		@card.Card() {
+			@card.Header() {
+				@card.Title() {
+					Limits
+				}
+				@card.Description() {
+					Define the constraints for this boundary.
+				}
+			}
+			@card.Content() {
+				<div class="space-y-4">
+					<template x-for="(limit, idx) in formData.limits" :key="idx">
+						<div class="border rounded-md p-4 space-y-3">
+							<div class="flex items-center justify-between">
+								<span class="text-sm font-medium" x-text="'Limit #' + (idx + 1)"></span>
+								<button type="button" class="text-sm text-destructive hover:underline"
+									@click="removeLimit(idx)">
+									Remove
+								</button>
+							</div>
+							<div class="space-y-2">
+								<label class="text-sm font-medium">Scope</label>
+								<select class="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+									x-model="limit.scope">
+									<option value="topic">Topic</option>
+									<option value="action">Action</option>
+									<option value="data">Data</option>
+									<option value="output">Output</option>
+									<option value="custom">Custom</option>
+								</select>
+							</div>
+							<div class="space-y-2">
+								<label class="text-sm font-medium">Deny List</label>
+								<textarea class="flex min-h-[60px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+									placeholder="Comma-separated denied items"
+									rows="2"
+									x-model="limit.deny"></textarea>
+								<p class="text-xs text-muted-foreground">Separate items with commas.</p>
+							</div>
+							<div class="space-y-2">
+								<label class="text-sm font-medium">Allow List</label>
+								<textarea class="flex min-h-[60px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+									placeholder="Comma-separated allowed items"
+									rows="2"
+									x-model="limit.allow"></textarea>
+								<p class="text-xs text-muted-foreground">Separate items with commas.</p>
+							</div>
+							<div class="flex items-center gap-2">
+								<input type="checkbox" class="h-4 w-4 rounded border-input" x-model="limit.use_allow"/>
+								<label class="text-sm font-medium">Use Allowlist Mode</label>
+								<span class="text-xs text-muted-foreground">(When enabled, only allow-listed items are permitted)</span>
+							</div>
+						</div>
+					</template>
+					@button.Button(button.Props{
+						Variant: button.VariantOutline,
+						Attributes: templ.Attributes{
+							"type":   "button",
+							"@click": "addLimit()",
+						},
+					}) {
+						Add Limit
+					}
+				</div>
+			}
+		}
+		<div class="flex justify-end gap-2">
+			@button.Button(button.Props{
+				Variant: button.VariantOutline,
+				Attributes: templ.Attributes{
+					"hx-get":    "/boundaries",
+					"hx-target": "#content",
+				},
+			}) {
+				Cancel
+			}
+			@button.Button(button.Props{
+				Attributes: templ.Attributes{
+					"type":       "button",
+					"@click":     "submitForm()",
+					":disabled":  "submitting",
+				},
+			}) {
+				if isEdit {
+					Save Changes
+				} else {
+					Create Boundary
+				}
+			}
+		</div>
+	</div>
+}

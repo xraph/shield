@@ -1,0 +1,136 @@
+package pages
+
+import (
+	"fmt"
+	"strconv"
+
+	"github.com/xraph/forgeui/components/button"
+	"github.com/xraph/forgeui/components/input"
+	"github.com/xraph/forgeui/components/table"
+	"github.com/xraph/shield/dashboard/components"
+	"github.com/xraph/shield/dashboard/shared"
+	"github.com/xraph/shield/profile"
+)
+
+templ ProfilesListPage(items []*profile.SafetyProfile, pg shared.PaginationMeta) {
+	<div class="space-y-6">
+		@components.PageHeader("Profiles", fmt.Sprintf("%d", pg.Total), "Composed safety identities for agents and applications") {
+			@button.Button(button.Props{
+				Attributes: templ.Attributes{
+					"hx-get":    "/profiles/create",
+					"hx-target": "#content",
+				},
+			}) {
+				New Profile
+			}
+		}
+		<div class="flex gap-4">
+			@input.Input(input.Props{
+				Type:        "search",
+				Placeholder: "Search profiles...",
+				Class:       "max-w-sm",
+				Attributes: templ.Attributes{
+					"name":        "search",
+					"hx-get":      "/profiles",
+					"hx-target":   "#content",
+					"hx-trigger":  "input changed delay:300ms",
+					"hx-push-url": "true",
+					"hx-include":  "[name='search']",
+				},
+			})
+		</div>
+		if len(items) == 0 {
+			@components.EmptyState("shield-check", "No profiles found", "Create your first safety profile to compose safety layers")
+		} else {
+			@table.Table() {
+				@table.Header() {
+					@table.Row() {
+						@table.Head() { Name }
+						@table.Head() { Instincts }
+						@table.Head() { Awareness }
+						@table.Head() { Boundaries }
+						@table.Head() { Values }
+						@table.Head() { Judgments }
+						@table.Head() { Reflexes }
+						@table.Head() { Actions }
+					}
+				}
+				@table.Body() {
+					for _, prof := range items {
+						@table.Row() {
+							@table.Cell() {
+								<a class="font-medium hover:underline cursor-pointer"
+									hx-get={ "/profiles/detail?name=" + prof.Name }
+									hx-target="#content">
+									{ prof.Name }
+								</a>
+							}
+							@table.Cell() {
+								{ strconv.Itoa(len(prof.Instincts)) }
+							}
+							@table.Cell() {
+								{ strconv.Itoa(len(prof.Awareness)) }
+							}
+							@table.Cell() {
+								{ strconv.Itoa(len(prof.Boundaries)) }
+							}
+							@table.Cell() {
+								{ strconv.Itoa(len(prof.Values)) }
+							}
+							@table.Cell() {
+								{ strconv.Itoa(len(prof.Judgments)) }
+							}
+							@table.Cell() {
+								{ strconv.Itoa(len(prof.Reflexes)) }
+							}
+							@table.Cell() {
+								<div class="flex gap-1">
+									@button.Button(button.Props{
+										Variant: button.VariantOutline,
+										Size:    button.SizeSm,
+										Attributes: templ.Attributes{
+											"hx-get":    "/profiles/detail?name=" + prof.Name,
+											"hx-target": "#content",
+										},
+									}) {
+										View
+									}
+									@button.Button(button.Props{
+										Variant: button.VariantOutline,
+										Size:    button.SizeSm,
+										Attributes: templ.Attributes{
+											"hx-get":    "/profiles/edit?name=" + prof.Name,
+											"hx-target": "#content",
+										},
+									}) {
+										Edit
+									}
+									@button.Button(button.Props{
+										Variant: button.VariantDestructive,
+										Size:    button.SizeSm,
+										Attributes: templ.Attributes{
+											"onclick": fmt.Sprintf("tuiOpenDialog('delete-profile-%s')", prof.Name),
+										},
+									}) {
+										Delete
+									}
+									@components.ConfirmDialog(components.ConfirmDialogProps{
+										ID:           "delete-profile-" + prof.Name,
+										Title:        "Delete Profile",
+										Description:  "Are you sure you want to delete profile \"" + prof.Name + "\"? This action cannot be undone.",
+										ConfirmLabel: "Delete",
+										HxEndpoint:   "/shield/profiles/" + prof.Name,
+										HxMethod:     "delete",
+									})
+								</div>
+							}
+						}
+					}
+				}
+			}
+			{{ baseURL := "/profiles?" }}
+			@Pagination(pg, baseURL)
+		}
+		@components.DialogHelpers()
+	</div>
+}

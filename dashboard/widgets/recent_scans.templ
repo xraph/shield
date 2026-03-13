@@ -1,0 +1,45 @@
+package widgets
+
+import (
+	"strconv"
+	"github.com/xraph/shield/scan"
+	"github.com/xraph/shield/dashboard/components"
+	"github.com/xraph/forgeui/components/table"
+)
+
+templ RecentScansWidget(scans []*scan.Result) {
+	if len(scans) == 0 {
+		@components.EmptyState("scan", "No scans yet", "Scan results will appear here")
+	} else {
+		@table.Table() {
+			@table.Header() {
+				@table.Row() {
+					@table.Head() { Direction }
+					@table.Head() { Decision }
+					@table.Head() { Findings }
+					@table.Head() { Created }
+				}
+			}
+			@table.Body() {
+				for _, s := range scans {
+					@table.Row() {
+						@table.Cell() {
+							@components.DirectionBadge(string(s.Direction))
+						}
+						@table.Cell() {
+							@components.DecisionBadge(string(s.Decision))
+						}
+						@table.Cell() {
+							{{ findingCount := strconv.Itoa(len(s.Findings)) }}
+							{ findingCount }
+						}
+						@table.Cell() {
+							{{ created := s.CreatedAt.Format("Jan 02 15:04") }}
+							<span class="text-xs text-muted-foreground">{ created }</span>
+						}
+					}
+				}
+			}
+		}
+	}
+}
