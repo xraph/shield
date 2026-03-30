@@ -4,8 +4,8 @@ go 1.25.7
 
 require (
 	github.com/a-h/templ v0.3.1001
-	github.com/xraph/forge v1.4.1
-	github.com/xraph/forgeui v1.4.0
+	github.com/xraph/forge v1.4.2
+	github.com/xraph/forgeui v1.4.1
 	github.com/xraph/go-utils v1.1.0
 	github.com/xraph/grove v1.4.1
 	github.com/xraph/grove/drivers/mongodriver v1.4.1
