@@ -3,17 +3,17 @@ module github.com/xraph/shield
 go 1.26.0
 
 require (
-	github.com/a-h/templ v0.3.1001
+	github.com/a-h/templ v0.3.1020
 	github.com/xraph/forge v1.10.0
 	github.com/xraph/forgeui v1.4.1
-	github.com/xraph/go-utils v1.2.2
-	github.com/xraph/grove v1.6.3
-	github.com/xraph/grove/drivers/mongodriver v1.6.3
-	github.com/xraph/grove/drivers/pgdriver v1.6.3
-	github.com/xraph/grove/drivers/sqlitedriver v1.6.3
+	github.com/xraph/go-utils v1.3.0
+	github.com/xraph/grove v1.7.0
+	github.com/xraph/grove/drivers/mongodriver v1.7.0
+	github.com/xraph/grove/drivers/pgdriver v1.7.0
+	github.com/xraph/grove/drivers/sqlitedriver v1.7.0
 	github.com/xraph/vessel v1.0.4
 	go.jetify.com/typeid/v2 v2.0.0-alpha.3
-	go.mongodb.org/mongo-driver/v2 v2.5.0
+	go.mongodb.org/mongo-driver/v2 v2.9.1
 )
 
 require (
@@ -73,7 +73,7 @@ require (
 	github.com/jackc/pgx/v5 v5.10.0 // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
-	github.com/klauspost/compress v1.19.1 // indirect
+	github.com/klauspost/compress v1.19.2 // indirect
 	github.com/leodido/go-urn v1.5.0 // indirect
 	github.com/mattn/go-colorable v0.1.15 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
