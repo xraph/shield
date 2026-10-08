@@ -1,7 +1,9 @@
 package extension
 
 import (
+	"github.com/xraph/shield/admin"
 	"github.com/xraph/shield/engine"
+	shieldcontract "github.com/xraph/shield/extension/contract"
 	"github.com/xraph/shield/plugin"
 	"github.com/xraph/shield/store"
 )
@@ -65,3 +67,12 @@ func WithGroveDatabase(name string) Option {
 		e.useGrove = true
 	}
 }
+
+// WithDashboardActorResolver installs a host authorization adapter. It must
+// authenticate the principal and authorize every returned scope and permission.
+func WithDashboardActorResolver(resolve shieldcontract.ActorResolver) Option {
+	return func(e *Extension) { e.actorResolver = resolve }
+}
+
+// WithDashboardAudit installs the audit sink required by PII retention commands.
+func WithDashboardAudit(audit admin.Audit) Option { return func(e *Extension) { e.audit = audit } }

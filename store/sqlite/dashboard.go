@@ -153,7 +153,8 @@ func dashboardWire(model any) (json.RawMessage, error) {
 }
 func dashboardPredicate(scope store.Scope, kind string) (string, []any) {
 	if kind == "policies" || kind == "compliance" {
-		return "scope_key = ? AND scope_level = ?", []any{scope.AppID, "app"}
+		key, level := scope.PolicyScope()
+		return "scope_key = ? AND scope_level = ?", []any{key, level}
 	}
 	return "app_id = ? AND tenant_id = ?", []any{scope.AppID, scope.TenantID}
 }
@@ -173,6 +174,9 @@ func (s *Store) DashboardList(ctx context.Context, scope store.Scope, kind strin
 	if f.Enabled != nil && !store.Editable(kind) {
 		return store.Page{}, fmt.Errorf("invalid enabled filter")
 	}
+	if f.ReferenceKind != "" && (kind != "profiles" || !store.ValidReferenceKind(f.ReferenceKind)) {
+		return store.Page{}, fmt.Errorf("invalid reference filter")
+	}
 	model, err := dashboardModel(kind, nil)
 	if err != nil {
 		return store.Page{}, err
@@ -188,6 +192,16 @@ func (s *Store) DashboardList(ctx context.Context, scope store.Scope, kind strin
 	}
 	if f.Field != "" {
 		q = q.Where(f.Field+" = ?", f.Value)
+	}
+	if f.Search != "" {
+		q = q.Where("LOWER(name) LIKE LOWER(?)", "%"+f.Search+"%")
+	}
+	if f.ReferenceKind != "" {
+		expr := "ref.value"
+		if field := store.ReferenceField(f.ReferenceKind); field != "" {
+			expr = "json_extract(ref.value, '$." + field + "')"
+		}
+		q = q.Where("EXISTS (SELECT 1 FROM json_each(shield_profiles."+f.ReferenceKind+") AS ref WHERE "+expr+" = ?)", f.ReferenceName)
 	}
 	total, err := q.Count(ctx)
 	if err != nil {
@@ -251,8 +265,9 @@ func dashboardWrite(scope store.Scope, kind, key string, raw json.RawMessage, cr
 	fields["app_id"] = scope.AppID
 	fields["tenant_id"] = scope.TenantID
 	if kind == "policies" {
-		fields["scope_key"] = scope.AppID
-		fields["scope_level"] = "app"
+		key, level := scope.PolicyScope()
+		fields["scope_key"] = key
+		fields["scope_level"] = level
 	}
 	fields["created_at"] = created
 	fields["updated_at"] = time.Now().UTC()

@@ -19,6 +19,7 @@ import (
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
 	"reflect"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -156,7 +157,8 @@ func dashboardWire(model any) (json.RawMessage, error) {
 }
 func dashboardPredicate(scope store.Scope, kind string) bson.M {
 	if kind == "policies" || kind == "compliance" {
-		return bson.M{"scope_key": scope.AppID, "scope_level": "app"}
+		key, level := scope.PolicyScope()
+		return bson.M{"scope_key": key, "scope_level": level}
 	}
 	return bson.M{"app_id": scope.AppID, "tenant_id": scope.TenantID}
 }
@@ -182,6 +184,9 @@ func (s *Store) DashboardList(ctx context.Context, scope store.Scope, kind strin
 	if f.Enabled != nil && !store.Editable(kind) {
 		return store.Page{}, fmt.Errorf("invalid enabled filter")
 	}
+	if f.ReferenceKind != "" && (kind != "profiles" || !store.ValidReferenceKind(f.ReferenceKind)) {
+		return store.Page{}, fmt.Errorf("invalid reference filter")
+	}
 	model, err := dashboardModel(kind, nil)
 	if err != nil {
 		return store.Page{}, err
@@ -196,6 +201,16 @@ func (s *Store) DashboardList(ctx context.Context, scope store.Scope, kind strin
 	}
 	if f.Field != "" {
 		pred[f.Field] = f.Value
+	}
+	if f.Search != "" {
+		pred["name"] = bson.M{"$regex": regexp.QuoteMeta(f.Search), "$options": "i"}
+	}
+	if f.ReferenceKind != "" {
+		key := f.ReferenceKind
+		if field := store.ReferenceField(key); field != "" {
+			key += "." + field
+		}
+		pred[key] = f.ReferenceName
 	}
 	coll := s.mdb.Collection(dashboardCollection(kind))
 	total, err := coll.CountDocuments(ctx, pred)
@@ -266,8 +281,9 @@ func dashboardWrite(scope store.Scope, kind, key string, raw json.RawMessage, cr
 	fields["app_id"] = scope.AppID
 	fields["tenant_id"] = scope.TenantID
 	if kind == "policies" {
-		fields["scope_key"] = scope.AppID
-		fields["scope_level"] = "app"
+		key, level := scope.PolicyScope()
+		fields["scope_key"] = key
+		fields["scope_level"] = level
 	}
 	fields["created_at"] = created
 	fields["updated_at"] = time.Now().UTC()

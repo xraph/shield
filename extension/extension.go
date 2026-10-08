@@ -17,8 +17,12 @@ import (
 	"github.com/xraph/grove"
 	"github.com/xraph/vessel"
 
+	dashcontract "github.com/xraph/forge/extensions/dashboard/contract"
+	"github.com/xraph/forge/extensions/dashboard/contract/dispatcher"
 	"github.com/xraph/shield"
+	"github.com/xraph/shield/admin"
 	"github.com/xraph/shield/engine"
+	shieldcontract "github.com/xraph/shield/extension/contract"
 	"github.com/xraph/shield/store"
 	mongostore "github.com/xraph/shield/store/mongo"
 	pgstore "github.com/xraph/shield/store/postgres"
@@ -41,10 +45,13 @@ var _ forge.Extension = (*Extension)(nil)
 type Extension struct {
 	*forge.BaseExtension
 
-	config     Config
-	eng        *engine.Engine
-	engineOpts []engine.Option
-	useGrove   bool
+	config        Config
+	eng           *engine.Engine
+	engineOpts    []engine.Option
+	useGrove      bool
+	admin         *admin.Service
+	actorResolver shieldcontract.ActorResolver
+	audit         admin.Audit
 }
 
 // New creates a new Shield Forge extension with the given options.
@@ -106,6 +113,9 @@ func (e *Extension) Register(fapp forge.App) error {
 		return err
 	}
 	e.eng = eng
+	if scoped, ok := eng.Store().(store.DashboardStore); ok {
+		e.admin = admin.New(scoped, eng, e.audit)
+	}
 
 	return vessel.Provide(fapp.Container(), func() (*engine.Engine, error) {
 		return e.eng, nil
@@ -297,4 +307,12 @@ func (e *Extension) buildStoreFromGroveDB(db *grove.DB) (store.Store, error) {
 	default:
 		return nil, fmt.Errorf("shield: unsupported grove driver %q", driverName)
 	}
+}
+
+// RegisterContractContributor implements the Forge discovery interface.
+func (e *Extension) RegisterContractContributor(d *dispatcher.Dispatcher, reg dashcontract.Registry, wreg dashcontract.WardenRegistry) error {
+	if e.config.DisableRoutes {
+		return nil
+	}
+	return shieldcontract.Register(d, reg, wreg, shieldcontract.Deps{Admin: e.admin, Resolve: e.actorResolver})
 }

@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"github.com/xraph/forge"
+	dashcontract "github.com/xraph/forge/extensions/dashboard/contract"
+	"github.com/xraph/forge/extensions/dashboard/contract/dispatcher"
 	"github.com/xraph/shield/engine"
 	"github.com/xraph/shield/store"
 	"testing"
@@ -11,6 +13,7 @@ import (
 
 type lifecycleStore struct {
 	store.Store
+	store.DashboardStore
 	migrations int
 	failure    error
 	closed     bool
@@ -66,5 +69,21 @@ func TestRegisterPassesEffectiveConfig(t *testing.T) {
 	cfg := e.Engine().Config()
 	if cfg.DefaultProfile != "strict" || cfg.ScanConcurrency != 3 || cfg.EnableShortCircuit {
 		t.Fatalf("effective config lost: %+v", cfg)
+	}
+}
+
+func TestContractContributorRegistration(t *testing.T) {
+	s := &lifecycleStore{}
+	e := New(WithStore(s))
+	app := forge.New(forge.WithEnableConfigAutoDiscovery(false))
+	if err := e.Register(app); err != nil {
+		t.Fatal(err)
+	}
+	reg := dashcontract.NewRegistry()
+	if err := e.RegisterContractContributor(dispatcher.New(nil), reg, dashcontract.NewWardenRegistry()); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := reg.Contributor("shield"); !ok {
+		t.Fatal("Shield contributor missing")
 	}
 }

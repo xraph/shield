@@ -16,11 +16,16 @@ var ErrCollection = errors.New("shield: unsupported dashboard collection")
 var ErrConflict = errors.New("shield: resource conflict")
 
 type Scope struct {
-	TenantID string `json:"tenant_id"`
-	AppID    string `json:"app_id"`
+	TenantID    string `json:"tenant_id"`
+	AppID       string `json:"app_id"`
+	PolicyKey   string `json:"policy_key,omitempty"`
+	PolicyLevel string `json:"policy_level,omitempty"`
 }
 
 func (s Scope) Validate() error {
+	if (s.PolicyKey != "" || s.PolicyLevel != "") && (strings.TrimSpace(s.PolicyKey) == "" || (s.PolicyLevel != "app" && s.PolicyLevel != "org") || (s.PolicyLevel == "app" && s.PolicyKey != s.AppID)) {
+		return ErrScope
+	}
 	if strings.TrimSpace(s.TenantID) == "" || strings.TrimSpace(s.AppID) == "" {
 		return ErrScope
 	}
@@ -28,12 +33,15 @@ func (s Scope) Validate() error {
 }
 
 type Filter struct {
-	Limit   int    `json:"limit"`
-	Offset  int    `json:"offset"`
-	Enabled *bool  `json:"enabled,omitempty"`
-	Name    string `json:"name,omitempty"`
-	Field   string `json:"field,omitempty"`
-	Value   string `json:"value,omitempty"`
+	Limit         int    `json:"limit"`
+	Offset        int    `json:"offset"`
+	Enabled       *bool  `json:"enabled,omitempty"`
+	Name          string `json:"name,omitempty"`
+	Field         string `json:"field,omitempty"`
+	Value         string `json:"value,omitempty"`
+	Search        string `json:"search,omitempty"`
+	ReferenceKind string `json:"reference_kind,omitempty"`
+	ReferenceName string `json:"reference_name,omitempty"`
 }
 
 func (f Filter) Validate() error {
@@ -149,4 +157,19 @@ func ValidateRetention(scope Scope, cutoff time.Time, keys []string) error {
 		return errors.New("shield: invalid bounded retention selection")
 	}
 	return nil
+}
+
+func ValidReferenceKind(kind string) bool {
+	return kind == "instincts" || kind == "awareness" || kind == "boundaries" || kind == "values" || kind == "judgments" || kind == "reflexes"
+}
+func ReferenceField(kind string) string {
+	return map[string]string{"instincts": "instinct_name", "awareness": "awareness_name", "judgments": "judgment_name"}[kind]
+}
+
+// PolicyScope is supplied by a host authorization adapter, never request params.
+func (s Scope) PolicyScope() (string, string) {
+	if s.PolicyKey != "" && (s.PolicyLevel == "app" || s.PolicyLevel == "org") {
+		return s.PolicyKey, s.PolicyLevel
+	}
+	return s.AppID, "app"
 }
