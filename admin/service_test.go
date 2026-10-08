@@ -123,3 +123,28 @@ func TestRetentionAuditPreviewAndRetry(t *testing.T) {
 		t.Fatal("audit failure hidden")
 	}
 }
+
+func TestStaleEditorRevisionIsRejected(t *testing.T) {
+	s, a := serviceForTest(t)
+	ctx := context.Background()
+	raw, err := s.Create(ctx, a, "boundaries", json.RawMessage(`{"name":"guard","enabled":true}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var initial map[string]any
+	_ = json.Unmarshal(raw, &initial)
+	key := initial["id"].(string)
+	revision := initial["updated_at"].(string)
+	if _, err = s.Update(ctx, a, "boundaries", key, json.RawMessage(`{"enabled":false}`)); err != nil {
+		t.Fatal(err)
+	}
+	_, err = s.Update(ctx, a, "boundaries", key, json.RawMessage(`{"description":"older tab"}`), revision)
+	var conflict *Error
+	if !errors.As(err, &conflict) || conflict.Code != "CONFLICT" {
+		t.Fatalf("stale edit: %v", err)
+	}
+	current, _ := s.Get(ctx, a, "boundaries", key)
+	if !strings.Contains(string(current), `"enabled":false`) {
+		t.Fatal(string(current))
+	}
+}

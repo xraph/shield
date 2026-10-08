@@ -290,7 +290,7 @@ func dashboardWrite(scope store.Scope, kind, key string, raw json.RawMessage, cr
 		fields["scope_level"] = level
 	}
 	fields["created_at"] = created
-	fields["updated_at"] = time.Now().UTC()
+	fields["updated_at"] = store.NextRevision(fields["updated_at"])
 	if fields["metadata"] == nil {
 		fields["metadata"] = map[string]any{}
 	}
@@ -327,6 +327,10 @@ func (s *Store) DashboardUpdate(ctx context.Context, scope store.Scope, kind, ke
 	if err = json.Unmarshal(raw, &after); err != nil {
 		return nil, err
 	}
+	revision, err := store.UpdateRevision(before, after)
+	if err != nil {
+		return nil, err
+	}
 	if name, ok := after["name"]; ok && name != before["name"] {
 		return nil, store.ErrConflict
 	}
@@ -343,6 +347,7 @@ func (s *Store) DashboardUpdate(ctx context.Context, scope store.Scope, kind, ke
 	}
 	pred := dashboardPredicate(scope, kind)
 	pred["_id"] = key
+	pred["updated_at"] = revision
 	set := bson.M{}
 	v := reflect.ValueOf(model).Elem()
 	typ := v.Type()
@@ -363,7 +368,7 @@ func (s *Store) DashboardUpdate(ctx context.Context, scope store.Scope, kind, ke
 		return nil, err
 	}
 	if n != 1 {
-		return nil, store.ErrNotFound
+		return nil, store.ErrConflict
 	}
 	return dashboardWire(model)
 }

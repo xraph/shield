@@ -80,12 +80,26 @@ func TestAuthenticatedHTTPReadsCommandsAndReplay(t *testing.T) {
 	var created dash.Response
 	_ = json.Unmarshal(first.Body.Bytes(), &created)
 	var row struct {
-		ID string `json:"id"`
+		ID        string `json:"id"`
+		UpdatedAt string `json:"updated_at"`
 	}
 	_ = json.Unmarshal(created.Data, &row)
 	if len(created.Meta.Invalidates) == 0 {
 		t.Fatal("missing invalidations")
 	}
+	fresh := send("instincts.detail", dash.KindQuery, `{"id":"`+row.ID+`"}`, "", "", user)
+	_ = json.Unmarshal(fresh.Body.Bytes(), &created)
+	_ = json.Unmarshal(created.Data, &row)
+	changed := send("instincts.setEnabled", dash.KindCommand, `{"id":"`+row.ID+`","enabled":false}`, "disable", csrf, user)
+	if changed.Code != 200 {
+		t.Fatal(changed.Body.String())
+	}
+	stalePayload, _ := json.Marshal(map[string]any{"id": row.ID, "expected_updated_at": row.UpdatedAt, "row": map[string]any{"description": "stale edit"}})
+	stale := send("instincts.update", dash.KindCommand, string(stalePayload), "stale-edit", csrf, user)
+	if !strings.Contains(stale.Body.String(), "CONFLICT") {
+		t.Fatal("stale HTTP save accepted", stale.Body.String())
+	}
+
 	foreign := &auth.UserInfo{Subject: "other", Claims: map[string]any{"tenant_id": "b", "app_id": "b", "shield_read": true, "shield_manage": true}}
 	w = send("instincts.detail", dash.KindQuery, `{"id":"`+row.ID+`"}`, "", "", foreign)
 	if !strings.Contains(w.Body.String(), "NOT_FOUND") {

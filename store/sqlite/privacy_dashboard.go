@@ -87,3 +87,25 @@ func (s *Store) DashboardDeleteTokens(ctx context.Context, scope store.Scope, cu
 	}
 	return res.RowsAffected()
 }
+
+func (s *Store) DashboardTokenStats(ctx context.Context, scope store.Scope) (store.TokenStats, error) {
+	if err := scope.Validate(); err != nil {
+		return store.TokenStats{}, err
+	}
+	var rows []struct {
+		grove.BaseModel `grove:"table:shield_pii_tokens"`
+		Type            string `grove:"pii_type"`
+		Total           int64  `grove:"total"`
+	}
+	err := s.sdb.NewSelect(&rows).ColumnExpr("pii_type").ColumnExpr("COUNT(*) AS total").Where("tenant_id = ?", scope.TenantID).GroupExpr("pii_type").Scan(ctx)
+	if err != nil {
+		return store.TokenStats{}, err
+	}
+	stats := store.TokenStats{ByType: map[string]int64{}}
+	for _, row := range rows {
+		stats.ByType[row.Type] = row.Total
+		stats.Total += row.Total
+	}
+	stats.DistinctTypes = len(stats.ByType)
+	return stats, nil
+}

@@ -3,6 +3,7 @@ package storetest
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"github.com/xraph/shield/id"
 	"github.com/xraph/shield/pii"
 	"github.com/xraph/shield/store"
@@ -80,6 +81,31 @@ func testDashboardScopeAndNestedRoundTrip(t *testing.T, factory func(*testing.T)
 	}
 	if _, err := s.DashboardList(ctx, store.Scope{}, "instincts", store.Filter{}); err == nil {
 		t.Fatal("empty scope broadened")
+	}
+}
+
+func testUpdateRevision(t *testing.T, factory func(*testing.T) Backend) {
+	s := factory(t)
+	ctx := context.Background()
+	scope := store.Scope{TenantID: "revision", AppID: "revision"}
+	made, err := s.DashboardCreate(ctx, scope, "boundaries", json.RawMessage(`{"name":"revision","enabled":true}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var row map[string]any
+	_ = json.Unmarshal(made, &row)
+	key := row["id"].(string)
+	before, err := s.DashboardGet(ctx, scope, "boundaries", key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = json.Unmarshal(before, &row)
+	patch, _ := json.Marshal(map[string]any{"enabled": false, "_expected_updated_at": row["updated_at"]})
+	if _, err = s.DashboardUpdate(ctx, scope, "boundaries", key, patch); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.DashboardUpdate(ctx, scope, "boundaries", key, patch); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("stale store revision accepted: %v", err)
 	}
 }
 
@@ -217,15 +243,47 @@ func testPrivacyMetadataAndBoundedRetention(t *testing.T, factory func(*testing.
 	}
 }
 
+func testPrivacyTypeTotals(t *testing.T, factory func(*testing.T) Backend) {
+	s := factory(t)
+	ctx := context.Background()
+	a := store.Scope{TenantID: "summary-a", AppID: "a"}
+	for _, tenant := range []string{"summary-a", "summary-b"} {
+		tokens := []*pii.Token{}
+		for i := 0; i < 31; i++ {
+			kind := "email"
+			if i >= 28 {
+				kind = "phone"
+			}
+			tokens = append(tokens, &pii.Token{ID: id.NewPIITokenID(), ScanID: id.NewScanID(), TenantID: tenant, PIIType: kind, Placeholder: "[REDACTED]", EncryptedValue: []byte("private")})
+		}
+		if err := s.StorePIITokens(ctx, tokens); err != nil {
+			t.Fatal(err)
+		}
+	}
+	stats, err := s.DashboardTokenStats(ctx, a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Total != 31 || stats.DistinctTypes != 2 || stats.ByType["email"] != 28 || stats.ByType["phone"] != 3 {
+		t.Fatalf("scoped totals across pages: %+v", stats)
+	}
+	if _, err = s.DashboardTokenStats(ctx, store.Scope{}); err == nil {
+		t.Fatal("empty scope aggregate")
+	}
+}
+
 type Backend interface {
 	store.Store
 	store.DashboardStore
 	store.AssignmentStore
 	store.PrivacyStore
+	store.PrivacyStatsStore
 }
 
 func Run(t *testing.T, factory func(*testing.T) Backend) {
+	t.Run("update-revision", func(t *testing.T) { testUpdateRevision(t, factory) })
 	t.Run("scope-and-round-trip", func(t *testing.T) { testDashboardScopeAndNestedRoundTrip(t, factory) })
 	t.Run("paging-and-assignment", func(t *testing.T) { testDashboardPagingClearAndAssignment(t, factory) })
+	t.Run("privacy-type-totals", func(t *testing.T) { testPrivacyTypeTotals(t, factory) })
 	t.Run("privacy-and-retention", func(t *testing.T) { testPrivacyMetadataAndBoundedRetention(t, factory) })
 }

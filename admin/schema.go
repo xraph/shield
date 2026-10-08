@@ -281,6 +281,7 @@ func InputSchema(kind string, update bool) map[string]any {
 	}
 	input := map[string]any{"type": "object", "properties": map[string]any{"row": row}, "required": []string{"row"}, "additionalProperties": false}
 	if update {
+		input["properties"].(map[string]any)["expected_updated_at"] = map[string]any{"type": "string", "maxLength": 64}
 		input["properties"].(map[string]any)["id"] = map[string]any{"type": "string"}
 		input["required"] = []string{"id", "row"}
 	}

@@ -175,3 +175,36 @@ func (s Scope) PolicyScope() (string, string) {
 	}
 	return s.AppID, "app"
 }
+
+// TokenStats includes the entire authorized tenant, independent of pagination.
+type TokenStats struct {
+	Total         int64            `json:"total"`
+	ByType        map[string]int64 `json:"by_type"`
+	DistinctTypes int              `json:"distinct_types"`
+}
+type PrivacyStatsStore interface {
+	DashboardTokenStats(context.Context, Scope) (TokenStats, error)
+}
+
+// UpdateRevision removes the internal precondition and returns the persisted revision.
+func UpdateRevision(before, patch map[string]any) (time.Time, error) {
+	revision, _ := before["updated_at"].(string)
+	if expected, ok := patch["_expected_updated_at"]; ok {
+		delete(patch, "_expected_updated_at")
+		if expected != revision {
+			return time.Time{}, ErrConflict
+		}
+	}
+	return time.Parse(time.RFC3339Nano, revision)
+}
+
+// NextRevision remains distinct after MongoDB's millisecond timestamp encoding.
+func NextRevision(previous any) time.Time {
+	next := time.Now().UTC()
+	if raw, ok := previous.(string); ok {
+		if old, err := time.Parse(time.RFC3339Nano, raw); err == nil && next.Before(old.Add(time.Millisecond)) {
+			next = old.Add(time.Millisecond)
+		}
+	}
+	return next
+}

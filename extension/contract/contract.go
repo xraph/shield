@@ -99,12 +99,13 @@ func mapError(err error) error {
 }
 
 type request struct {
-	ID         string          `json:"id"`
-	Name       string          `json:"name"`
-	Collection string          `json:"collection"`
-	Row        json.RawMessage `json:"row"`
-	Enabled    *bool           `json:"enabled"`
-	PreviewID  string          `json:"preview_id"`
+	ExpectedUpdatedAt string          `json:"expected_updated_at"`
+	ID                string          `json:"id"`
+	Name              string          `json:"name"`
+	Collection        string          `json:"collection"`
+	Row               json.RawMessage `json:"row"`
+	Enabled           *bool           `json:"enabled"`
+	PreviewID         string          `json:"preview_id"`
 	store.Filter
 }
 
@@ -170,7 +171,9 @@ func handler(deps Deps, intent string) dispatcher.Handler {
 		case "policies.assign", "policies.unassign":
 			err = s.Assign(ctx, a, in.ID, intent == "policies.assign")
 			data = map[string]bool{"assigned": intent == "policies.assign"}
-		case "pii.stats", "pii.byScan":
+		case "pii.stats":
+			data, err = s.TokenStats(ctx, a, in.Filter)
+		case "pii.byScan":
 			data, err = s.Tokens(ctx, a, in.ID, in.Filter)
 		case "pii.retentionPreview":
 			data, err = s.RetentionPreview(ctx, a)
@@ -192,7 +195,7 @@ func handler(deps Deps, intent string) dispatcher.Handler {
 			case "create":
 				data, err = s.Create(ctx, a, kind, in.Row)
 			case "update":
-				data, err = s.Update(ctx, a, kind, in.ID, in.Row)
+				data, err = s.Update(ctx, a, kind, in.ID, in.Row, in.ExpectedUpdatedAt)
 			case "setEnabled":
 				if in.Enabled == nil {
 					err = &dash.Error{Code: dash.CodeBadRequest, Message: "enabled is required"}

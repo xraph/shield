@@ -154,7 +154,7 @@ func (s *Service) Create(ctx context.Context, a Actor, kind string, raw json.Raw
 	b, _ := json.Marshal(row)
 	return s.db.DashboardCreate(ctx, a.Scope, kind, b)
 }
-func (s *Service) Update(ctx context.Context, a Actor, kind, key string, raw json.RawMessage) (json.RawMessage, error) {
+func (s *Service) Update(ctx context.Context, a Actor, kind, key string, raw json.RawMessage, expectedRevision ...string) (json.RawMessage, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := a.Check(true); err != nil {
@@ -165,6 +165,9 @@ func (s *Service) Update(ctx context.Context, a Actor, kind, key string, raw jso
 		return nil, err
 	}
 	before, _ := decode(old)
+	if len(expectedRevision) > 0 && expectedRevision[0] != "" && expectedRevision[0] != before["updated_at"] {
+		return nil, fail("CONFLICT", "This configuration changed after you opened it. Reload before saving.")
+	}
 	patch, err := decode(raw)
 	if err != nil {
 		return nil, err
@@ -187,6 +190,9 @@ func (s *Service) Update(ctx context.Context, a Actor, kind, key string, raw jso
 	}
 	if err = s.validateReferences(ctx, a, kind, merged); err != nil {
 		return nil, err
+	}
+	if len(expectedRevision) > 0 && expectedRevision[0] != "" {
+		patch["_expected_updated_at"] = expectedRevision[0]
 	}
 	b, _ := json.Marshal(patch)
 	return s.db.DashboardUpdate(ctx, a.Scope, kind, key, b)
@@ -303,6 +309,29 @@ func (s *Service) Tokens(ctx context.Context, a Actor, scanID string, f store.Fi
 		return store.Page{}, fail("UNAVAILABLE", "PII metadata is unavailable")
 	}
 	return db.DashboardTokens(ctx, a.Scope, scanID, nil, f)
+}
+
+type PrivacyPage struct {
+	store.Page
+	ByType        map[string]int64 `json:"by_type"`
+	DistinctTypes int              `json:"distinct_types"`
+}
+
+func (s *Service) TokenStats(ctx context.Context, a Actor, f store.Filter) (PrivacyPage, error) {
+	page, err := s.Tokens(ctx, a, "", f)
+	if err != nil {
+		return PrivacyPage{}, err
+	}
+	db, ok := s.db.(store.PrivacyStatsStore)
+	if !ok {
+		return PrivacyPage{}, fail("UNAVAILABLE", "PII summary is unavailable")
+	}
+	stats, err := db.DashboardTokenStats(ctx, a.Scope)
+	if err != nil {
+		return PrivacyPage{}, err
+	}
+	page.Total = stats.Total
+	return PrivacyPage{Page: page, ByType: stats.ByType, DistinctTypes: stats.DistinctTypes}, nil
 }
 
 type Preview struct {

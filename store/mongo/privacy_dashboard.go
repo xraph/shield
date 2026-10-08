@@ -85,3 +85,29 @@ func (s *Store) DashboardDeleteTokens(ctx context.Context, scope store.Scope, cu
 	}
 	return res.DeletedCount, nil
 }
+
+func (s *Store) DashboardTokenStats(ctx context.Context, scope store.Scope) (store.TokenStats, error) {
+	if err := scope.Validate(); err != nil {
+		return store.TokenStats{}, err
+	}
+	pipeline := bson.A{bson.M{"$match": bson.M{"tenant_id": scope.TenantID}}, bson.M{"$group": bson.M{"_id": "$pii_type", "total": bson.M{"$sum": 1}}}}
+	cur, err := s.mdb.Collection("shield_pii_tokens").Aggregate(ctx, pipeline)
+	if err != nil {
+		return store.TokenStats{}, err
+	}
+	defer cur.Close(ctx)
+	var rows []struct {
+		Type  string `bson:"_id"`
+		Total int64  `bson:"total"`
+	}
+	if err = cur.All(ctx, &rows); err != nil {
+		return store.TokenStats{}, err
+	}
+	stats := store.TokenStats{ByType: map[string]int64{}}
+	for _, row := range rows {
+		stats.ByType[row.Type] = row.Total
+		stats.Total += row.Total
+	}
+	stats.DistinctTypes = len(stats.ByType)
+	return stats, nil
+}
