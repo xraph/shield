@@ -3,12 +3,14 @@ package postgres
 import (
 	"context"
 	"fmt"
-	"github.com/xraph/grove"
-	"github.com/xraph/grove/drivers/pgdriver"
-	"github.com/xraph/shield/store/storetest"
 	"os"
 	"testing"
 	"time"
+
+	"github.com/xraph/grove"
+	"github.com/xraph/grove/drivers/pgdriver"
+
+	"github.com/xraph/shield/store/storetest"
 )
 
 func TestDashboardConformance(t *testing.T) {

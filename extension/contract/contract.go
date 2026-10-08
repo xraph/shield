@@ -8,13 +8,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
+	"time"
+
 	dash "github.com/xraph/forge/extensions/dashboard/contract"
 	"github.com/xraph/forge/extensions/dashboard/contract/dispatcher"
 	"github.com/xraph/forge/extensions/dashboard/contract/loader"
+
 	"github.com/xraph/shield/admin"
 	"github.com/xraph/shield/store"
-	"strings"
-	"time"
 )
 
 //go:embed manifest.yaml
@@ -56,15 +58,15 @@ func Register(d *dispatcher.Dispatcher, reg dash.Registry, wreg dash.WardenRegis
 			m.Intents[i].Schema.Input = admin.InputSchema(parts[0], parts[1] == "update")
 		}
 	}
-	if err = loader.Validate(m, wreg); err != nil {
-		return err
+	if operationErr := loader.Validate(m, wreg); operationErr != nil {
+		return operationErr
 	}
-	if err = reg.Register(m); err != nil {
-		return err
+	if operationErr := reg.Register(m); operationErr != nil {
+		return operationErr
 	}
 	for _, intent := range m.Intents {
-		if err = d.Register(ContributorName, intent.Name, 1, handler(deps, intent.Name)); err != nil {
-			return fmt.Errorf("register %s: %w", intent.Name, err)
+		if operationErr := d.Register(ContributorName, intent.Name, 1, handler(deps, intent.Name)); operationErr != nil {
+			return fmt.Errorf("register %s: %w", intent.Name, operationErr)
 		}
 	}
 	return nil
@@ -118,7 +120,10 @@ func handler(deps Deps, intent string) dispatcher.Handler {
 		in := request{}
 		raw := payload
 		if len(raw) == 0 || string(raw) == "null" {
-			raw, _ = json.Marshal(params)
+			raw, err = json.Marshal(params)
+			if err != nil {
+				return nil, &dash.Error{Code: dash.CodeBadRequest, Message: "Invalid Shield request"}
+			}
 		}
 		if len(raw) > 0 {
 			dec := json.NewDecoder(bytes.NewReader(raw))
@@ -200,7 +205,10 @@ func handler(deps Deps, intent string) dispatcher.Handler {
 				if in.Enabled == nil {
 					err = &dash.Error{Code: dash.CodeBadRequest, Message: "enabled is required"}
 				} else {
-					b, _ := json.Marshal(map[string]bool{"enabled": *in.Enabled})
+					b, marshalErr := json.Marshal(map[string]bool{"enabled": *in.Enabled})
+					if marshalErr != nil {
+						return nil, mapError(marshalErr)
+					}
 					data, err = s.Update(ctx, a, kind, in.ID, b)
 				}
 			case "delete":

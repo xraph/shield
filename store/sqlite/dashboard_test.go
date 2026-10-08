@@ -2,10 +2,12 @@ package sqlite
 
 import (
 	"context"
+	"testing"
+
 	"github.com/xraph/grove"
 	"github.com/xraph/grove/drivers/sqlitedriver"
+
 	"github.com/xraph/shield/store/storetest"
-	"testing"
 )
 
 func dashboardStore(t *testing.T) *Store {

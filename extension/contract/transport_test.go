@@ -5,6 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
 	"github.com/xraph/forge/extensions/dashboard"
 	auth "github.com/xraph/forge/extensions/dashboard/auth"
 	dash "github.com/xraph/forge/extensions/dashboard/contract"
@@ -14,13 +19,10 @@ import (
 	"github.com/xraph/forge/extensions/dashboard/security"
 	"github.com/xraph/grove"
 	"github.com/xraph/grove/drivers/sqlitedriver"
+
 	"github.com/xraph/shield/admin"
 	"github.com/xraph/shield/engine"
 	"github.com/xraph/shield/store/sqlite"
-	"net/http"
-	"net/http/httptest"
-	"strings"
-	"testing"
 )
 
 func TestAuthenticatedHTTPReadsCommandsAndReplay(t *testing.T) {
@@ -50,7 +52,7 @@ func TestAuthenticatedHTTPReadsCommandsAndReplay(t *testing.T) {
 	send := func(intent string, kind dash.Kind, payload string, key, token string, u *auth.UserInfo) *httptest.ResponseRecorder {
 		t.Helper()
 		body, _ := json.Marshal(dash.Request{Envelope: "v1", Kind: kind, Contributor: "shield", Intent: intent, IntentVersion: 1, Payload: json.RawMessage(payload), IdempotencyKey: key, CSRF: token})
-		r := httptest.NewRequest(http.MethodPost, "/api/dashboard/v1", bytes.NewReader(body))
+		r := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/dashboard/v1", bytes.NewReader(body))
 		if u != nil {
 			r = r.WithContext(auth.WithUser(r.Context(), u))
 		}

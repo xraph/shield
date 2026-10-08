@@ -3,12 +3,14 @@ package extension
 import (
 	"context"
 	"errors"
+	"testing"
+
 	"github.com/xraph/forge"
 	dashcontract "github.com/xraph/forge/extensions/dashboard/contract"
 	"github.com/xraph/forge/extensions/dashboard/contract/dispatcher"
+
 	"github.com/xraph/shield/engine"
 	"github.com/xraph/shield/store"
-	"testing"
 )
 
 type lifecycleStore struct {

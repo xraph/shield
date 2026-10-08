@@ -3,12 +3,14 @@ package mongo
 import (
 	"context"
 	"encoding/json"
+	"time"
+
 	"github.com/xraph/grove"
-	"github.com/xraph/shield/id"
-	"github.com/xraph/shield/store"
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
-	"time"
+
+	"github.com/xraph/shield/id"
+	"github.com/xraph/shield/store"
 )
 
 type dashboardTokenModel struct {
@@ -100,8 +102,8 @@ func (s *Store) DashboardTokenStats(ctx context.Context, scope store.Scope) (sto
 		Type  string `bson:"_id"`
 		Total int64  `bson:"total"`
 	}
-	if err = cur.All(ctx, &rows); err != nil {
-		return store.TokenStats{}, err
+	if operationErr := cur.All(ctx, &rows); operationErr != nil {
+		return store.TokenStats{}, operationErr
 	}
 	stats := store.TokenStats{ByType: map[string]int64{}}
 	for _, row := range rows {

@@ -3,9 +3,10 @@ package engine
 import (
 	"context"
 	"errors"
+	"testing"
+
 	"github.com/xraph/shield/scan"
 	"github.com/xraph/shield/store"
-	"testing"
 )
 
 type failedStore struct{ store.Store }

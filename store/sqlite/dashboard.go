@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
+	"time"
+
 	"github.com/xraph/shield/awareness"
 	"github.com/xraph/shield/boundary"
 	"github.com/xraph/shield/compliance"
@@ -16,8 +19,6 @@ import (
 	"github.com/xraph/shield/scan"
 	"github.com/xraph/shield/store"
 	"github.com/xraph/shield/values"
-	"reflect"
-	"time"
 )
 
 var _ store.DashboardStore = (*Store)(nil)
@@ -142,8 +143,8 @@ func dashboardWire(model any) (json.RawMessage, error) {
 		return nil, err
 	}
 	var fields map[string]any
-	if err = json.Unmarshal(raw, &fields); err != nil {
-		return nil, err
+	if operationErr := json.Unmarshal(raw, &fields); operationErr != nil {
+		return nil, operationErr
 	}
 	if duration, ok := fields["duration"].(float64); ok {
 		fields["duration_ms"] = duration / float64(time.Millisecond)
@@ -151,7 +152,7 @@ func dashboardWire(model any) (json.RawMessage, error) {
 	}
 	return json.Marshal(fields)
 }
-func dashboardPredicate(scope store.Scope, kind string) (string, []any) {
+func dashboardPredicate(scope store.Scope, kind string) (predicate string, args []any) {
 	if kind == "policies" || kind == "compliance" {
 		key, level := scope.PolicyScope()
 		return "scope_key = ? AND scope_level = ?", []any{key, level}
@@ -214,8 +215,8 @@ func (s *Store) DashboardList(ctx context.Context, scope store.Scope, kind strin
 	if kind == "scans" {
 		order = "created_at DESC, id DESC"
 	}
-	if err = q.OrderExpr(order).Limit(f.Limit).Offset(f.Offset).Scan(ctx); err != nil {
-		return store.Page{}, err
+	if operationErr := q.OrderExpr(order).Limit(f.Limit).Offset(f.Offset).Scan(ctx); operationErr != nil {
+		return store.Page{}, operationErr
 	}
 	page := store.Page{RefreshedAt: time.Now().UTC(), Items: []json.RawMessage{}, Total: total, Limit: f.Limit, Offset: f.Offset}
 	v := reflect.ValueOf(models).Elem()
@@ -304,11 +305,11 @@ func (s *Store) DashboardUpdate(ctx context.Context, scope store.Scope, kind, ke
 		return nil, err
 	}
 	var before, after map[string]any
-	if err = json.Unmarshal(old, &before); err != nil {
-		return nil, err
+	if operationErr := json.Unmarshal(old, &before); operationErr != nil {
+		return nil, operationErr
 	}
-	if err = json.Unmarshal(raw, &after); err != nil {
-		return nil, err
+	if operationErr := json.Unmarshal(raw, &after); operationErr != nil {
+		return nil, operationErr
 	}
 	revision, err := store.UpdateRevision(before, after)
 	if err != nil {

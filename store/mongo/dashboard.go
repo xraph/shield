@@ -4,6 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
+	"regexp"
+	"strings"
+	"time"
+
+	"go.mongodb.org/mongo-driver/v2/bson"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
+
 	"github.com/xraph/shield/awareness"
 	"github.com/xraph/shield/boundary"
 	"github.com/xraph/shield/compliance"
@@ -16,12 +24,6 @@ import (
 	"github.com/xraph/shield/scan"
 	"github.com/xraph/shield/store"
 	"github.com/xraph/shield/values"
-	"go.mongodb.org/mongo-driver/v2/bson"
-	"go.mongodb.org/mongo-driver/v2/mongo/options"
-	"reflect"
-	"regexp"
-	"strings"
-	"time"
 )
 
 var _ store.DashboardStore = (*Store)(nil)
@@ -146,8 +148,8 @@ func dashboardWire(model any) (json.RawMessage, error) {
 		return nil, err
 	}
 	var fields map[string]any
-	if err = json.Unmarshal(raw, &fields); err != nil {
-		return nil, err
+	if operationErr := json.Unmarshal(raw, &fields); operationErr != nil {
+		return nil, operationErr
 	}
 	if duration, ok := fields["duration"].(float64); ok {
 		fields["duration_ms"] = duration / float64(time.Millisecond)
@@ -230,8 +232,8 @@ func (s *Store) DashboardList(ctx context.Context, scope store.Scope, kind strin
 		return store.Page{}, err
 	}
 	defer cur.Close(ctx)
-	if err = cur.All(ctx, models); err != nil {
-		return store.Page{}, err
+	if operationErr := cur.All(ctx, models); operationErr != nil {
+		return store.Page{}, operationErr
 	}
 	page := store.Page{RefreshedAt: time.Now().UTC(), Items: []json.RawMessage{}, Total: total, Limit: f.Limit, Offset: f.Offset}
 	v := reflect.ValueOf(models).Elem()
@@ -321,11 +323,11 @@ func (s *Store) DashboardUpdate(ctx context.Context, scope store.Scope, kind, ke
 		return nil, err
 	}
 	var before, after map[string]any
-	if err = json.Unmarshal(old, &before); err != nil {
-		return nil, err
+	if operationErr := json.Unmarshal(old, &before); operationErr != nil {
+		return nil, operationErr
 	}
-	if err = json.Unmarshal(raw, &after); err != nil {
-		return nil, err
+	if operationErr := json.Unmarshal(raw, &after); operationErr != nil {
+		return nil, operationErr
 	}
 	revision, err := store.UpdateRevision(before, after)
 	if err != nil {
@@ -364,9 +366,6 @@ func (s *Store) DashboardUpdate(ctx context.Context, scope store.Scope, kind, ke
 		return nil, err
 	}
 	n := res.MatchedCount
-	if err != nil {
-		return nil, err
-	}
 	if n != 1 {
 		return nil, store.ErrConflict
 	}
@@ -391,9 +390,6 @@ func (s *Store) DashboardDelete(ctx context.Context, scope store.Scope, kind, ke
 		return err
 	}
 	n := res.DeletedCount
-	if err != nil {
-		return err
-	}
 	if n != 1 {
 		return store.ErrNotFound
 	}

@@ -2,10 +2,12 @@ package contract
 
 import (
 	"context"
+	"strings"
+
 	dash "github.com/xraph/forge/extensions/dashboard/contract"
+
 	"github.com/xraph/shield/admin"
 	"github.com/xraph/shield/store"
-	"strings"
 )
 
 type ActorResolver func(context.Context, dash.Principal) (admin.Actor, error)
@@ -39,12 +41,12 @@ func ResolveActor(_ context.Context, p dash.Principal) (admin.Actor, error) {
 	if err != nil {
 		return admin.Actor{}, err
 	}
-	read, _ := p.Claims["shield_read"].(bool)
-	manage, _ := p.Claims["shield_manage"].(bool)
-	sensitive, _ := p.Claims["shield_privacy_manage"].(bool)
+	read := p.Claims["shield_read"] == true
+	manage := p.Claims["shield_manage"] == true
+	sensitive := p.Claims["shield_privacy_manage"] == true
 	a := admin.Actor{Subject: p.User.Subject, Scope: store.Scope{TenantID: tenant, AppID: app}, Read: read, Manage: manage, Sensitive: sensitive}
-	if err = a.Check(false); err != nil {
-		return admin.Actor{}, mapError(err)
+	if operationErr := a.Check(false); operationErr != nil {
+		return admin.Actor{}, mapError(operationErr)
 	}
 	return a, nil
 }

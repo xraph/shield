@@ -4,16 +4,18 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
+	"testing"
+	"time"
+
 	"github.com/xraph/grove"
 	"github.com/xraph/grove/drivers/sqlitedriver"
+
 	"github.com/xraph/shield/engine"
 	"github.com/xraph/shield/id"
 	"github.com/xraph/shield/pii"
 	"github.com/xraph/shield/store"
 	"github.com/xraph/shield/store/sqlite"
-	"strings"
-	"testing"
-	"time"
 )
 
 func serviceForTest(t *testing.T) (*Service, Actor) {

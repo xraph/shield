@@ -4,12 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/xraph/shield/id"
-	"github.com/xraph/shield/pii"
-	"github.com/xraph/shield/store"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/xraph/shield/id"
+	"github.com/xraph/shield/pii"
+	"github.com/xraph/shield/store"
 )
 
 func testDashboardScopeAndNestedRoundTrip(t *testing.T, factory func(*testing.T) Backend) {
@@ -34,21 +35,21 @@ func testDashboardScopeAndNestedRoundTrip(t *testing.T, factory func(*testing.T)
 				t.Fatal(err)
 			}
 			var item map[string]any
-			_ = json.Unmarshal(r, &item)
-			id := item["id"].(string)
+			assertDashboardJSON(t, r, &item)
+			key := dashboardID(t, item)
 			if item["enabled"] != false {
 				t.Fatal("false lost")
 			}
-			if _, err := s.DashboardGet(ctx, b, kind, id); err == nil {
+			if _, err = s.DashboardGet(ctx, b, kind, key); err == nil {
 				t.Fatal("foreign ID readable")
 			}
-			if _, err := s.DashboardUpdate(ctx, b, kind, id, r); err == nil {
+			if _, err = s.DashboardUpdate(ctx, b, kind, key, r); err == nil {
 				t.Fatal("foreign ID writable")
 			}
-			if err := s.DashboardDelete(ctx, b, kind, id); err == nil {
+			if err = s.DashboardDelete(ctx, b, kind, key); err == nil {
 				t.Fatal("foreign ID deletable")
 			}
-			if _, err := s.DashboardCreate(ctx, b, kind, json.RawMessage(raw)); err != nil {
+			if _, err = s.DashboardCreate(ctx, b, kind, json.RawMessage(raw)); err != nil {
 				t.Fatal(err)
 			}
 			page, err := s.DashboardList(ctx, a, kind, store.Filter{Limit: 1})
@@ -58,14 +59,14 @@ func testDashboardScopeAndNestedRoundTrip(t *testing.T, factory func(*testing.T)
 			if page.Total != 1 || len(page.Items) != 1 {
 				t.Fatalf("bad paging: %+v", page)
 			}
-			got, err := s.DashboardGet(ctx, a, kind, id)
+			got, err := s.DashboardGet(ctx, a, kind, key)
 			if err != nil {
 				t.Fatal(err)
 			}
 			var back map[string]any
-			_ = json.Unmarshal(got, &back)
+			assertDashboardJSON(t, got, &back)
 			var expected map[string]any
-			_ = json.Unmarshal([]byte(raw), &expected)
+			assertDashboardJSON(t, []byte(raw), &expected)
 			assertFields(t, expected, back)
 		})
 	}
@@ -93,14 +94,17 @@ func testUpdateRevision(t *testing.T, factory func(*testing.T) Backend) {
 		t.Fatal(err)
 	}
 	var row map[string]any
-	_ = json.Unmarshal(made, &row)
-	key := row["id"].(string)
+	assertDashboardJSON(t, made, &row)
+	key := dashboardID(t, row)
 	before, err := s.DashboardGet(ctx, scope, "boundaries", key)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_ = json.Unmarshal(before, &row)
-	patch, _ := json.Marshal(map[string]any{"enabled": false, "_expected_updated_at": row["updated_at"]})
+	assertDashboardJSON(t, before, &row)
+	patch, err := json.Marshal(map[string]any{"enabled": false, "_expected_updated_at": row["updated_at"]})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err = s.DashboardUpdate(ctx, scope, "boundaries", key, patch); err != nil {
 		t.Fatal(err)
 	}
@@ -152,15 +156,15 @@ func testDashboardPagingClearAndAssignment(t *testing.T, factory func(*testing.T
 		t.Fatal(page)
 	}
 	var first map[string]any
-	_ = json.Unmarshal(page.Items[0], &first)
-	key := first["id"].(string)
+	assertDashboardJSON(t, page.Items[0], &first)
+	key := dashboardID(t, first)
 	got, err := s.DashboardUpdate(ctx, scope, "instincts", key, json.RawMessage(`{"enabled":false,"strategies":[]}`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	var cleared map[string]any
-	_ = json.Unmarshal(got, &cleared)
-	if cleared["enabled"] != false || len(cleared["strategies"].([]any)) != 0 || cleared["name"] != "one" {
+	assertDashboardJSON(t, got, &cleared)
+	if cleared["enabled"] != false || !emptyDashboardArray(cleared["strategies"]) || cleared["name"] != "one" {
 		t.Fatal(cleared)
 	}
 	next, err := s.DashboardList(ctx, scope, "instincts", store.Filter{Limit: 1, Offset: 1})
@@ -175,10 +179,10 @@ func testDashboardPagingClearAndAssignment(t *testing.T, factory func(*testing.T
 		t.Fatal(err)
 	}
 	var p map[string]any
-	_ = json.Unmarshal(pol, &p)
-	pid := p["id"].(string)
+	assertDashboardJSON(t, pol, &p)
+	pid := dashboardID(t, p)
 	for i := 0; i < 2; i++ {
-		if err := s.DashboardAssign(ctx, scope, pid, true); err != nil {
+		if err = s.DashboardAssign(ctx, scope, pid, true); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -186,10 +190,10 @@ func testDashboardPagingClearAndAssignment(t *testing.T, factory func(*testing.T
 	if err != nil || !assigned {
 		t.Fatal(assigned, err)
 	}
-	if err := s.DashboardAssign(ctx, store.Scope{TenantID: "b", AppID: "b"}, pid, true); err == nil {
+	if err = s.DashboardAssign(ctx, store.Scope{TenantID: "b", AppID: "b"}, pid, true); err == nil {
 		t.Fatal("foreign policy assigned")
 	}
-	if err := s.DashboardAssign(ctx, scope, pid, false); err != nil {
+	if err = s.DashboardAssign(ctx, scope, pid, false); err != nil {
 		t.Fatal(err)
 	}
 	assigned, err = s.DashboardAssigned(ctx, scope, pid)
@@ -222,9 +226,9 @@ func testPrivacyMetadataAndBoundedRetention(t *testing.T, factory func(*testing.
 		t.Fatal("secret exposed")
 	}
 	var token map[string]any
-	_ = json.Unmarshal(page.Items[0], &token)
-	key := token["id"].(string)
-	if _, err := s.DashboardDeleteTokens(ctx, b, cutoff, []string{key}); err != nil {
+	assertDashboardJSON(t, page.Items[0], &token)
+	key := dashboardID(t, token)
+	if _, err = s.DashboardDeleteTokens(ctx, b, cutoff, []string{key}); err != nil {
 		t.Fatal(err)
 	}
 	page, err = s.DashboardTokens(ctx, a, "", &cutoff, store.Filter{Limit: 100})
@@ -286,4 +290,23 @@ func Run(t *testing.T, factory func(*testing.T) Backend) {
 	t.Run("paging-and-assignment", func(t *testing.T) { testDashboardPagingClearAndAssignment(t, factory) })
 	t.Run("privacy-type-totals", func(t *testing.T) { testPrivacyTypeTotals(t, factory) })
 	t.Run("privacy-and-retention", func(t *testing.T) { testPrivacyMetadataAndBoundedRetention(t, factory) })
+}
+
+func assertDashboardJSON(t *testing.T, raw []byte, target any) {
+	t.Helper()
+	if err := json.Unmarshal(raw, target); err != nil {
+		t.Fatal(err)
+	}
+}
+func dashboardID(t *testing.T, row map[string]any) string {
+	t.Helper()
+	value, ok := row["id"].(string)
+	if !ok {
+		t.Fatalf("expected string ID: %v", row["id"])
+	}
+	return value
+}
+func emptyDashboardArray(value any) bool {
+	items, ok := value.([]any)
+	return ok && len(items) == 0
 }

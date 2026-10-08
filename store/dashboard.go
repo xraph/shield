@@ -169,7 +169,7 @@ func ReferenceField(kind string) string {
 }
 
 // PolicyScope is supplied by a host authorization adapter, never request params.
-func (s Scope) PolicyScope() (string, string) {
+func (s Scope) PolicyScope() (key, level string) {
 	if s.PolicyKey != "" && (s.PolicyLevel == "app" || s.PolicyLevel == "org") {
 		return s.PolicyKey, s.PolicyLevel
 	}
@@ -188,7 +188,10 @@ type PrivacyStatsStore interface {
 
 // UpdateRevision removes the internal precondition and returns the persisted revision.
 func UpdateRevision(before, patch map[string]any) (time.Time, error) {
-	revision, _ := before["updated_at"].(string)
+	revision, ok := before["updated_at"].(string)
+	if !ok {
+		return time.Time{}, ErrConflict
+	}
 	if expected, ok := patch["_expected_updated_at"]; ok {
 		delete(patch, "_expected_updated_at")
 		if expected != revision {

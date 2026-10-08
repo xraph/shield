@@ -5,12 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/xraph/shield/engine"
-	"github.com/xraph/shield/id"
-	"github.com/xraph/shield/store"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/xraph/shield/engine"
+	"github.com/xraph/shield/id"
+	"github.com/xraph/shield/store"
 )
 
 type Error struct {
@@ -139,8 +140,8 @@ func (s *Service) Create(ctx context.Context, a Actor, kind string, raw json.Raw
 	if err != nil {
 		return nil, err
 	}
-	if err = validate(kind, row, nil); err != nil {
-		return nil, err
+	if operationErr := validate(kind, row, nil); operationErr != nil {
+		return nil, operationErr
 	}
 	if _, ok := row["enabled"]; !ok {
 		row["enabled"] = true
@@ -148,10 +149,13 @@ func (s *Service) Create(ctx context.Context, a Actor, kind string, raw json.Raw
 	if row["metadata"] == nil {
 		row["metadata"] = map[string]any{}
 	}
-	if err = s.validateReferences(ctx, a, kind, row); err != nil {
+	if operationErr := s.validateReferences(ctx, a, kind, row); operationErr != nil {
+		return nil, operationErr
+	}
+	b, err := json.Marshal(row)
+	if err != nil {
 		return nil, err
 	}
-	b, _ := json.Marshal(row)
 	return s.db.DashboardCreate(ctx, a.Scope, kind, b)
 }
 func (s *Service) Update(ctx context.Context, a Actor, kind, key string, raw json.RawMessage, expectedRevision ...string) (json.RawMessage, error) {
@@ -164,7 +168,10 @@ func (s *Service) Update(ctx context.Context, a Actor, kind, key string, raw jso
 	if err != nil {
 		return nil, err
 	}
-	before, _ := decode(old)
+	before, err := decode(old)
+	if err != nil {
+		return nil, err
+	}
 	if len(expectedRevision) > 0 && expectedRevision[0] != "" && expectedRevision[0] != before["updated_at"] {
 		return nil, fail("CONFLICT", "This configuration changed after you opened it. Reload before saving.")
 	}
@@ -185,16 +192,19 @@ func (s *Service) Update(ctx context.Context, a Actor, kind, key string, raw jso
 	for k, v := range patch {
 		merged[k] = v
 	}
-	if err = validate(kind, merged, before); err != nil {
-		return nil, err
+	if operationErr := validate(kind, merged, before); operationErr != nil {
+		return nil, operationErr
 	}
-	if err = s.validateReferences(ctx, a, kind, merged); err != nil {
-		return nil, err
+	if operationErr := s.validateReferences(ctx, a, kind, merged); operationErr != nil {
+		return nil, operationErr
 	}
 	if len(expectedRevision) > 0 && expectedRevision[0] != "" {
 		patch["_expected_updated_at"] = expectedRevision[0]
 	}
-	b, _ := json.Marshal(patch)
+	b, err := json.Marshal(patch)
+	if err != nil {
+		return nil, err
+	}
 	return s.db.DashboardUpdate(ctx, a.Scope, kind, key, b)
 }
 func (s *Service) Delete(ctx context.Context, a Actor, kind, key string) error {
@@ -208,7 +218,9 @@ func (s *Service) Delete(ctx context.Context, a Actor, kind, key string) error {
 		return err
 	}
 	var fields map[string]any
-	_ = json.Unmarshal(row, &fields)
+	if decodeErr := json.Unmarshal(row, &fields); decodeErr != nil {
+		return decodeErr
+	}
 	if kind != "profiles" && kind != "policies" {
 		refs, err := s.References(ctx, a, kind, fmt.Sprint(fields["name"]))
 		if err != nil {
@@ -236,22 +248,26 @@ func (s *Service) References(ctx context.Context, a Actor, kind, name string) ([
 		var row struct {
 			ID string `json:"id"`
 		}
-		if err = json.Unmarshal(raw, &row); err != nil {
-			return nil, err
+		if operationErr := json.Unmarshal(raw, &row); operationErr != nil {
+			return nil, operationErr
 		}
 		refs = append(refs, row.ID)
 	}
 	return refs, nil
 }
 func referenceNames(kind string, value any) []string {
-	items, _ := value.([]any)
+	items, ok := value.([]any)
+	if !ok {
+		return nil
+	}
 	out := []string{}
 	for _, item := range items {
-		if str, ok := item.(string); ok {
-			out = append(out, str)
-		} else if m, ok := item.(map[string]any); ok {
+		switch v := item.(type) {
+		case string:
+			out = append(out, v)
+		case map[string]any:
 			field := map[string]string{"instincts": "instinct_name", "awareness": "awareness_name", "judgments": "judgment_name"}[kind]
-			if name, ok := m[field].(string); ok {
+			if name, ok := v[field].(string); ok {
 				out = append(out, name)
 			}
 		}
@@ -371,8 +387,8 @@ func (s *Service) RetentionPreview(ctx context.Context, a Actor) (Preview, error
 		var token struct {
 			ID string `json:"id"`
 		}
-		if err = json.Unmarshal(raw, &token); err != nil {
-			return Preview{}, err
+		if operationErr := json.Unmarshal(raw, &token); operationErr != nil {
+			return Preview{}, operationErr
 		}
 		p.TokenIDs = append(p.TokenIDs, token.ID)
 	}

@@ -2,9 +2,10 @@ package contract
 
 import (
 	"context"
+	"testing"
+
 	auth "github.com/xraph/forge/extensions/dashboard/auth"
 	dash "github.com/xraph/forge/extensions/dashboard/contract"
-	"testing"
 )
 
 func TestScopeRefusesMalformedClaims(t *testing.T) {

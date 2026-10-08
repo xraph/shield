@@ -53,7 +53,6 @@ func list(key string, children ...Field) Field {
 	return f
 }
 
-var actions = []string{"block", "flag", "warn", "alert", "redact", "vault", "log", "rewrite", "escalate", "throttle"}
 var sensitivity = []string{"paranoid", "cautious", "balanced", "relaxed", "permissive"}
 var domains = []string{"grounding", "relevance", "consistency", "compliance", "custom"}
 var focus = []string{"pii", "topic", "sentiment", "intent", "language", "custom"}
@@ -75,13 +74,13 @@ func validate(kind string, row, before map[string]any) error {
 	}
 	if before == nil {
 		for _, key := range []string{"id", "app_id", "tenant_id", "scope_key", "scope_level", "created_at", "updated_at"} {
-			if _, ok := row[key]; ok {
+			if _, exists := row[key]; exists {
 				return fail("BAD_REQUEST", key+" is assigned by the server")
 			}
 		}
 	}
 	name, ok := row["name"].(string)
-	if !ok || len(name) == 0 || len(name) > 128 || strings.TrimSpace(name) != name {
+	if !ok || name == "" || len(name) > 128 || strings.TrimSpace(name) != name {
 		return fieldError("name", "Use a name from 1 to 128 characters without surrounding spaces")
 	}
 	allowed := map[string]bool{"name": true, "description": true, "enabled": true, "metadata": true, "id": before != nil, "app_id": before != nil, "tenant_id": before != nil, "scope_key": before != nil, "scope_level": before != nil, "created_at": before != nil, "updated_at": before != nil}
@@ -93,7 +92,8 @@ func validate(kind string, row, before map[string]any) error {
 			return fieldError(key, "Unsupported field")
 		}
 	}
-	common := []Field{field("description", "textarea"), field("enabled", "boolean"), field("metadata", "json")}
+	common := make([]Field, 0, 3+len(fields))
+	common = append(common, field("description", "textarea"), field("enabled", "boolean"), field("metadata", "json"))
 	return validateFields(append(common, fields...), row, before, "")
 }
 func fieldError(key, msg string) error {
@@ -119,12 +119,12 @@ func validateFields(fields []Field, row, before map[string]any, path string) err
 			if !ok {
 				return fieldError(key, "Expected text")
 			}
-			max := 512
+			maxLength := 512
 			if f.Type == "textarea" {
-				max = 4096
+				maxLength = 4096
 			}
-			if len(str) > max {
-				return fieldError(key, fmt.Sprintf("Maximum %d characters", max))
+			if len(str) > maxLength {
+				return fieldError(key, fmt.Sprintf("Maximum %d characters", maxLength))
 			}
 			if f.Required && str == "" {
 				return fieldError(key, "Choose a value")
@@ -186,11 +186,15 @@ func validateFields(fields []Field, row, before map[string]any, path string) err
 					if oldItems, ok := old.([]any); ok {
 						// Preserve an unchanged stored enum when the structured row stays in place or moves.
 						if i < len(oldItems) {
-							oldItem, _ = oldItems[i].(map[string]any)
+							if prior, isObject := oldItems[i].(map[string]any); isObject {
+								oldItem = prior
+							}
 						}
 						for _, candidate := range oldItems {
 							if reflect.DeepEqual(item, candidate) {
-								oldItem, _ = candidate.(map[string]any)
+								if prior, isObject := candidate.(map[string]any); isObject {
+									oldItem = prior
+								}
 								break
 							}
 						}
@@ -279,10 +283,11 @@ func InputSchema(kind string, update bool) map[string]any {
 		}
 		row["required"] = required
 	}
-	input := map[string]any{"type": "object", "properties": map[string]any{"row": row}, "required": []string{"row"}, "additionalProperties": false}
+	inputProperties := map[string]any{"row": row}
+	input := map[string]any{"type": "object", "properties": inputProperties, "required": []string{"row"}, "additionalProperties": false}
 	if update {
-		input["properties"].(map[string]any)["expected_updated_at"] = map[string]any{"type": "string", "maxLength": 64}
-		input["properties"].(map[string]any)["id"] = map[string]any{"type": "string"}
+		inputProperties["expected_updated_at"] = map[string]any{"type": "string", "maxLength": 64}
+		inputProperties["id"] = map[string]any{"type": "string"}
 		input["required"] = []string{"id", "row"}
 	}
 	return input

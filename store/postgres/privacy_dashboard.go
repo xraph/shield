@@ -3,10 +3,12 @@ package postgres
 import (
 	"context"
 	"encoding/json"
+	"time"
+
 	"github.com/xraph/grove"
+
 	"github.com/xraph/shield/id"
 	"github.com/xraph/shield/store"
-	"time"
 )
 
 type dashboardTokenModel struct {

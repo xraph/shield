@@ -19,6 +19,7 @@ import (
 
 	dashcontract "github.com/xraph/forge/extensions/dashboard/contract"
 	"github.com/xraph/forge/extensions/dashboard/contract/dispatcher"
+
 	"github.com/xraph/shield"
 	"github.com/xraph/shield/admin"
 	"github.com/xraph/shield/engine"
