@@ -212,6 +212,9 @@ func (s *Store) DashboardList(ctx context.Context, scope store.Scope, kind strin
 		}
 		pred[key] = f.ReferenceName
 	}
+	if f.Direction != "" {
+		pred["direction"] = f.Direction
+	}
 	coll := s.mdb.Collection(dashboardCollection(kind))
 	total, err := coll.CountDocuments(ctx, pred)
 	if err != nil {
@@ -229,7 +232,7 @@ func (s *Store) DashboardList(ctx context.Context, scope store.Scope, kind strin
 	if err = cur.All(ctx, models); err != nil {
 		return store.Page{}, err
 	}
-	page := store.Page{Items: []json.RawMessage{}, Total: total, Limit: f.Limit, Offset: f.Offset}
+	page := store.Page{RefreshedAt: time.Now().UTC(), Items: []json.RawMessage{}, Total: total, Limit: f.Limit, Offset: f.Offset}
 	v := reflect.ValueOf(models).Elem()
 	for i := 0; i < v.Len(); i++ {
 		raw, err := dashboardWire(v.Index(i).Addr().Interface())

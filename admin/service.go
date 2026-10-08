@@ -73,6 +73,17 @@ func (s *Service) List(ctx context.Context, a Actor, kind string, f store.Filter
 	if err := f.Validate(); err != nil {
 		return store.Page{}, fail("BAD_REQUEST", err.Error())
 	}
+	if len(f.Search) > 128 || (f.Search != "" && !store.Editable(kind)) {
+		return store.Page{}, fail("BAD_REQUEST", "Invalid search")
+	}
+	if f.Direction != "" {
+		if kind != "scans" {
+			return store.Page{}, fail("BAD_REQUEST", "Direction is only valid for scans")
+		}
+		if err := validateFilter(kind, "direction", f.Direction); err != nil {
+			return store.Page{}, err
+		}
+	}
 	if f.Field != "" {
 		if !store.FilterColumn(kind, f.Field) {
 			return store.Page{}, fail("BAD_REQUEST", "Unsupported filter")

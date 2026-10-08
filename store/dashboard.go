@@ -42,6 +42,7 @@ type Filter struct {
 	Search        string `json:"search,omitempty"`
 	ReferenceKind string `json:"reference_kind,omitempty"`
 	ReferenceName string `json:"reference_name,omitempty"`
+	Direction     string `json:"direction,omitempty"`
 }
 
 func (f Filter) Validate() error {
@@ -52,11 +53,12 @@ func (f Filter) Validate() error {
 }
 
 type Page struct {
-	Items   []json.RawMessage `json:"items"`
-	Total   int64             `json:"total"`
-	Limit   int               `json:"limit"`
-	Offset  int               `json:"offset"`
-	HasMore bool              `json:"has_more"`
+	Items       []json.RawMessage `json:"items"`
+	Total       int64             `json:"total"`
+	Limit       int               `json:"limit"`
+	Offset      int               `json:"offset"`
+	HasMore     bool              `json:"has_more"`
+	RefreshedAt time.Time         `json:"refreshed_at"`
 }
 
 // DashboardStore is an additional, strict interface. Legacy engine methods retain

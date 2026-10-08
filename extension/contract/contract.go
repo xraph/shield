@@ -14,6 +14,7 @@ import (
 	"github.com/xraph/shield/admin"
 	"github.com/xraph/shield/store"
 	"strings"
+	"time"
 )
 
 //go:embed manifest.yaml
@@ -133,7 +134,7 @@ func handler(deps Deps, intent string) dispatcher.Handler {
 			sections := []map[string]any{}
 			for _, kind := range []string{"instincts", "awareness", "boundaries", "values", "judgments", "reflexes", "profiles", "policies", "scans", "compliance"} {
 				page, e := s.List(ctx, a, kind, store.Filter{Limit: 1})
-				section := map[string]any{"collection": kind, "available": e == nil, "evaluation_available": false}
+				section := map[string]any{"collection": kind, "available": e == nil, "evaluation_available": false, "refreshed_at": time.Now().UTC()}
 				if e == nil {
 					section["total"] = page.Total
 				} else {
@@ -141,7 +142,7 @@ func handler(deps Deps, intent string) dispatcher.Handler {
 				}
 				sections = append(sections, section)
 			}
-			data = map[string]any{"sections": sections, "evaluation_available": false}
+			data = map[string]any{"sections": sections, "evaluation_available": false, "refreshed_at": time.Now().UTC()}
 			err = a.Check(false)
 		case "scans.stats":
 			counts := map[string]int64{}

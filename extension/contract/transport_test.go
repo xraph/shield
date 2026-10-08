@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"github.com/xraph/forge/extensions/dashboard"
 	auth "github.com/xraph/forge/extensions/dashboard/auth"
 	dash "github.com/xraph/forge/extensions/dashboard/contract"
@@ -103,5 +104,14 @@ func TestAuthenticatedHTTPReadsCommandsAndReplay(t *testing.T) {
 	w = send("instincts.delete", dash.KindCommand, `{"id":"`+row.ID+`"}`, "denied", csrf, &readonly)
 	if w.Code == 200 {
 		t.Fatal("read-only mutation")
+	}
+}
+
+func TestScanDirectionRequest(t *testing.T) {
+	h := handler(Deps{Resolve: func(context.Context, dash.Principal) (admin.Actor, error) { return admin.Actor{}, nil }}, "scans.list")
+	_, err := h(context.Background(), json.RawMessage(`{"direction":"input"}`), nil, dash.Principal{})
+	var ce *dash.Error
+	if errors.As(err, &ce) && ce.Code == dash.CodeBadRequest {
+		t.Fatal("valid direction rejected during request decoding")
 	}
 }

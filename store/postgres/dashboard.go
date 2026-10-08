@@ -204,6 +204,9 @@ func (s *Store) DashboardList(ctx context.Context, scope store.Scope, kind strin
 		needle, _ := json.Marshal([]any{value})
 		q = q.Where(f.ReferenceKind+" @> ?::jsonb", string(needle))
 	}
+	if f.Direction != "" {
+		q = q.Where("direction = ?", f.Direction)
+	}
 	total, err := q.Count(ctx)
 	if err != nil {
 		return store.Page{}, err
@@ -215,7 +218,7 @@ func (s *Store) DashboardList(ctx context.Context, scope store.Scope, kind strin
 	if err = q.OrderExpr(order).Limit(f.Limit).Offset(f.Offset).Scan(ctx); err != nil {
 		return store.Page{}, err
 	}
-	page := store.Page{Items: []json.RawMessage{}, Total: total, Limit: f.Limit, Offset: f.Offset}
+	page := store.Page{RefreshedAt: time.Now().UTC(), Items: []json.RawMessage{}, Total: total, Limit: f.Limit, Offset: f.Offset}
 	v := reflect.ValueOf(models).Elem()
 	for i := 0; i < v.Len(); i++ {
 		raw, err := dashboardWire(v.Index(i).Addr().Interface())

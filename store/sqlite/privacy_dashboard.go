@@ -51,7 +51,7 @@ func (s *Store) DashboardTokens(ctx context.Context, scope store.Scope, scanID s
 	if err != nil {
 		return store.Page{}, err
 	}
-	page := store.Page{Items: []json.RawMessage{}, Total: total, Limit: f.Limit, Offset: f.Offset}
+	page := store.Page{RefreshedAt: time.Now().UTC(), Items: []json.RawMessage{}, Total: total, Limit: f.Limit, Offset: f.Offset}
 	for _, row := range rows {
 		raw, err := json.Marshal(row)
 		if err != nil {

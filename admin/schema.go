@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"regexp"
@@ -159,7 +160,20 @@ func validateFields(fields []Field, row, before map[string]any, path string) err
 							return fieldError(p+k, "Unsupported field")
 						}
 					}
-					if err := validateFields(f.Fields, m, nil, p); err != nil {
+					var oldItem map[string]any
+					if oldItems, ok := old.([]any); ok {
+						// Preserve an unchanged stored enum when the structured row stays in place or moves.
+						if i < len(oldItems) {
+							oldItem, _ = oldItems[i].(map[string]any)
+						}
+						for _, candidate := range oldItems {
+							if reflect.DeepEqual(item, candidate) {
+								oldItem, _ = candidate.(map[string]any)
+								break
+							}
+						}
+					}
+					if err := validateFields(f.Fields, m, oldItem, p); err != nil {
 						return err
 					}
 				} else {
@@ -174,7 +188,14 @@ func validateFields(fields []Field, row, before map[string]any, path string) err
 					}
 				}
 			}
-		case "json":
+		case "json", "json_value":
+			encoded, err := json.Marshal(v)
+			if err != nil || len(encoded) > 16384 {
+				return fieldError(key, "Maximum 16 KiB of JSON")
+			}
+			if f.Type == "json_value" {
+				continue
+			}
 			if v != nil {
 				if _, ok := v.(map[string]any); !ok {
 					return fieldError(key, "Expected a JSON object")
