@@ -9,6 +9,7 @@ import (
 
 	"github.com/xraph/grove"
 	"github.com/xraph/grove/drivers/sqlitedriver"
+	_ "github.com/xraph/grove/drivers/sqlitedriver/sqlitemigrate"
 	"github.com/xraph/grove/migrate"
 
 	"github.com/xraph/shield"
