@@ -16,6 +16,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	log "github.com/xraph/go-utils/log"
@@ -141,7 +142,7 @@ func (e *Engine) Health(ctx context.Context) error {
 	if e.store != nil {
 		return e.store.Ping(ctx)
 	}
-	return nil
+	return errors.New("shield: persistence is not configured")
 }
 
 // Store returns the composite store (may be nil if not configured).

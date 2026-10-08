@@ -17,6 +17,7 @@ import (
 	"github.com/xraph/grove"
 	"github.com/xraph/vessel"
 
+	"github.com/xraph/shield"
 	"github.com/xraph/shield/engine"
 	"github.com/xraph/shield/store"
 	mongostore "github.com/xraph/shield/store/mongo"
@@ -50,6 +51,7 @@ type Extension struct {
 func New(opts ...Option) *Extension {
 	e := &Extension{
 		BaseExtension: forge.NewBaseExtension(ExtensionName, ExtensionVersion, ExtensionDescription),
+		config:        DefaultConfig(),
 	}
 	for _, opt := range opts {
 		opt(e)
@@ -95,7 +97,11 @@ func (e *Extension) Register(fapp forge.App) error {
 		)
 	}
 
-	eng, err := engine.New(e.engineOpts...)
+	opts := append([]engine.Option{engine.WithConfig(shield.Config{
+		DefaultProfile: e.config.DefaultProfile, ShutdownTimeout: e.config.ShutdownTimeout,
+		ScanConcurrency: e.config.ScanConcurrency, EnableShortCircuit: e.config.EnableShortCircuit,
+	})}, e.engineOpts...)
+	eng, err := engine.New(opts...)
 	if err != nil {
 		return err
 	}
@@ -107,7 +113,15 @@ func (e *Extension) Register(fapp forge.App) error {
 }
 
 // Start implements [forge.Extension].
-func (e *Extension) Start(_ context.Context) error {
+func (e *Extension) Start(ctx context.Context) error {
+	if e.eng == nil {
+		return errors.New("shield: engine is not registered")
+	}
+	if !e.config.DisableMigrate && e.eng.Store() != nil {
+		if err := e.eng.Store().Migrate(ctx); err != nil {
+			return fmt.Errorf("shield: migrate: %w", err)
+		}
+	}
 	e.MarkStarted()
 	return nil
 }
@@ -125,8 +139,11 @@ func (e *Extension) Stop(ctx context.Context) error {
 }
 
 // Health implements [forge.Extension].
-func (e *Extension) Health(_ context.Context) error {
-	return nil
+func (e *Extension) Health(ctx context.Context) error {
+	if e.eng == nil {
+		return errors.New("shield: engine is not registered")
+	}
+	return e.eng.Health(ctx)
 }
 
 // --- Config Loading (mirrors grove extension pattern) ---
