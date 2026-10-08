@@ -115,8 +115,42 @@ Source baseline: `9dbcac4`. The legacy contributor was already disconnected from
 - `shield-layer-summary`
 - `shield-config`
 
-The legacy Plugin, PageContributor, ScanDetailContributor and ProfileDetailContributor interfaces require an external consumer audit before removal. Settings Save and scan execution are unavailable. Duplicate API Docs links move to host chrome. Stored scan decisions describe history, not evaluated protection.
+The legacy Plugin, PageContributor, ScanDetailContributor and ProfileDetailContributor interfaces were audited across sibling Go repositories before retirement. Settings Save and scan execution are unavailable. Duplicate API Docs links move to host chrome. Stored scan decisions describe history, not evaluated protection.
 
 ## Git and dependencies
 
 Work stays on main. The existing Forge/Grove upgrade in go.mod is required for current contracts; checksum reconciliation is included deliberately. No other local Shield branch or worktree existed at the audit.
+
+## React administration and retirement (2026-10-08)
+
+The React plugin is `@forge-go/dashboard-plugin-shield` in forge-dashboard.
+It covers 39 routes: eight configuration collections with list/create/detail/edit,
+overview, scans/detail, compliance/detail, PII metadata/retention and settings.
+The contract contributor exposes 67 intents under `shield`, with authenticated
+scope, separate read/manage/sensitive permissions, validated writes and command
+invalidation. All six evaluation layers remain unavailable.
+
+SQLite, PostgreSQL and MongoDB pass shared conformance for scoped CRUD,
+structured values, explicit false/zero/empty arrays, stable paging, policy
+assignments, every primitive reference filter and bounded retention. PostgreSQL
+was tested with a disposable PostgreSQL 17 container; MongoDB used unique test
+databases that were dropped. The full Go suite and build pass after retirement.
+
+The real file-backed SQLite demo passes 93 HTTP acceptance requests across all
+eight editable collections. Browser review covers disabled creation, a zero
+strategy weight, cleared strategies, scoped profile choices, profile creation,
+policy assign/unassign, retention preview/cancel and a 390px responsive layout.
+Deletion and audited retention execution are verified by isolated backend and
+HTTP transport tests. The browser did not confirm permanent PII deletion.
+
+The sibling Go source audit found no external imports or implementations of the
+legacy contributor interfaces. The 95 tracked files in `dashboard/` are retired;
+the inventory above remains the parity record. Overview widgets are represented
+by compact summary counts and stored scans. New contributions use React slots
+`shield.overview.widgets`, `shield.scan.detail`, `shield.profile.detail` and
+`shield.settings`. There is no implicit adapter for third-party templ plugins.
+
+The administration migration does not qualify the unfinished evaluation engine,
+report generation or writable runtime settings. Those capabilities remain
+visible as unavailable. Name and app/name uniqueness are preserved; changing
+cross-tenant naming rules requires a separate data migration.

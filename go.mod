@@ -3,9 +3,7 @@ module github.com/xraph/shield
 go 1.26.0
 
 require (
-	github.com/a-h/templ v0.3.1001
 	github.com/xraph/forge v1.12.3
-	github.com/xraph/forgeui v1.4.1
 	github.com/xraph/go-utils v1.3.0
 	github.com/xraph/grove v1.7.1
 	github.com/xraph/grove/drivers/mongodriver v1.7.1
@@ -18,7 +16,6 @@ require (
 
 require (
 	github.com/BurntSushi/toml v1.6.0 // indirect
-	github.com/Oudwins/tailwind-merge-go v0.2.1 // indirect
 	github.com/armon/go-metrics v0.4.1 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
@@ -109,8 +106,6 @@ require (
 	go.opentelemetry.io/otel/trace v1.45.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.11.0 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
-	go.uber.org/multierr v1.11.0 // indirect
-	go.uber.org/zap v1.28.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.4 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/crypto v0.55.0 // indirect
@@ -139,7 +134,6 @@ require (
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 	modernc.org/sqlite v1.46.1 // indirect
-	nhooyr.io/websocket v1.8.17 // indirect
 	sigs.k8s.io/json v0.0.0-20250730193827-2d320260d730 // indirect
 	sigs.k8s.io/randfill v1.0.0 // indirect
 	sigs.k8s.io/structured-merge-diff/v6 v6.4.2 // indirect
