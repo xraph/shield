@@ -9,16 +9,38 @@ import (
 )
 
 type Field struct {
-	Key      string   `json:"key"`
-	Label    string   `json:"label"`
-	Type     string   `json:"type"`
-	Options  []string `json:"options,omitempty"`
-	Fields   []Field  `json:"fields,omitempty"`
-	Required bool     `json:"required,omitempty"`
+	Key          string   `json:"key"`
+	Label        string   `json:"label"`
+	Type         string   `json:"type"`
+	Options      []string `json:"options,omitempty"`
+	Fields       []Field  `json:"fields,omitempty"`
+	Required     bool     `json:"required,omitempty"`
+	MaxLength    int      `json:"max_length,omitempty"`
+	MaxItems     int      `json:"max_items,omitempty"`
+	JSONBytesMax int      `json:"json_bytes_max,omitempty"`
+	Minimum      *float64 `json:"minimum,omitempty"`
+	Maximum      *float64 `json:"maximum,omitempty"`
 }
 
 func field(key, kind string, options ...string) Field {
-	return Field{Key: key, Label: strings.ReplaceAll(key, "_", " "), Type: kind, Options: options}
+	f := Field{Key: key, Label: strings.ReplaceAll(key, "_", " "), Type: kind, Options: options}
+	switch kind {
+	case "text", "reference", "select":
+		f.MaxLength = 512
+	case "textarea":
+		f.MaxLength = 4096
+	case "array", "references", "tags":
+		f.MaxItems = 64
+	case "json", "json_value":
+		f.JSONBytesMax = 16384
+	case "number", "integer":
+		lo, hi := 0.0, 1.0
+		if kind == "integer" {
+			hi = 1000000
+		}
+		f.Minimum, f.Maximum = &lo, &hi
+	}
+	return f
 }
 func required(key string, options ...string) Field {
 	f := field(key, "select", options...)
@@ -239,4 +261,74 @@ func validateFilter(kind, field, value string) error {
 		}
 	}
 	return fail("BAD_REQUEST", "Invalid filter value")
+}
+
+// InputSchema publishes the same limits used by the editor and service.
+func InputSchema(kind string, update bool) map[string]any {
+	properties := map[string]any{"name": map[string]any{"type": "string", "minLength": 1, "maxLength": 128}, "description": map[string]any{"type": "string", "maxLength": 4096}, "enabled": map[string]any{"type": "boolean"}, "metadata": map[string]any{"type": "object", "x-maxBytes": 16384}}
+	for _, f := range Schemas[kind] {
+		properties[f.Key] = fieldSchema(f)
+	}
+	row := map[string]any{"type": "object", "properties": properties, "additionalProperties": false, "x-maxBytes": 131072}
+	if !update {
+		required := []string{"name"}
+		for _, f := range Schemas[kind] {
+			if f.Required {
+				required = append(required, f.Key)
+			}
+		}
+		row["required"] = required
+	}
+	input := map[string]any{"type": "object", "properties": map[string]any{"row": row}, "required": []string{"row"}, "additionalProperties": false}
+	if update {
+		input["properties"].(map[string]any)["id"] = map[string]any{"type": "string"}
+		input["required"] = []string{"id", "row"}
+	}
+	return input
+}
+func fieldSchema(f Field) map[string]any {
+	s := map[string]any{}
+	switch f.Type {
+	case "number", "integer":
+		s["type"] = f.Type
+		s["minimum"] = f.Minimum
+		s["maximum"] = f.Maximum
+	case "boolean":
+		s["type"] = "boolean"
+	case "json":
+		s["type"] = "object"
+	case "json_value": // Any JSON value, bounded by encoded size.
+	case "array", "references", "tags":
+		s["type"] = "array"
+		s["maxItems"] = f.MaxItems
+		if f.Type == "array" {
+			p := map[string]any{}
+			required := []string{}
+			for _, c := range f.Fields {
+				p[c.Key] = fieldSchema(c)
+				if c.Required {
+					required = append(required, c.Key)
+				}
+			}
+			item := map[string]any{"type": "object", "properties": p, "additionalProperties": false}
+			if len(required) > 0 {
+				item["required"] = required
+			}
+			s["items"] = item
+		} else {
+			s["items"] = map[string]any{"type": "string", "maxLength": 1024}
+		}
+	default:
+		s["type"] = "string"
+	}
+	if f.MaxLength > 0 {
+		s["maxLength"] = f.MaxLength
+	}
+	if f.JSONBytesMax > 0 {
+		s["x-maxBytes"] = f.JSONBytesMax
+	}
+	if len(f.Options) > 0 {
+		s["enum"] = f.Options
+	}
+	return s
 }

@@ -50,6 +50,12 @@ func Register(d *dispatcher.Dispatcher, reg dash.Registry, wreg dash.WardenRegis
 	if err != nil {
 		return err
 	}
+	for i := range m.Intents {
+		parts := strings.Split(m.Intents[i].Name, ".")
+		if len(parts) == 2 && (parts[1] == "create" || parts[1] == "update") {
+			m.Intents[i].Schema.Input = admin.InputSchema(parts[0], parts[1] == "update")
+		}
+	}
 	if err = loader.Validate(m, wreg); err != nil {
 		return err
 	}
@@ -125,7 +131,7 @@ func handler(deps Deps, intent string) dispatcher.Handler {
 		switch intent {
 		case "capabilities":
 			if err = a.Check(false); err == nil {
-				data = map[string]any{"engine": s.Engine().Capabilities(), "scope": a.Scope, "can_manage": a.Manage, "can_manage_privacy": a.Manage && a.Sensitive && s.PrivacyAvailable(), "schemas": admin.Schemas, "limits": map[string]int{"page_default": 25, "page_max": 100, "entries_max": 64, "name_max": 128, "description_max": 4096, "body_bytes_max": 131072}}
+				data = map[string]any{"engine": s.Engine().Capabilities(), "scope": a.Scope, "can_manage": a.Manage, "can_manage_privacy": a.Manage && a.Sensitive && s.PrivacyAvailable(), "schemas": admin.Schemas, "limits": map[string]int{"page_default": 25, "page_max": 100, "entries_max": 64, "name_max": 128, "description_max": 4096, "body_bytes_max": 131072, "json_bytes_max": 16384}}
 			}
 		case "config.detail":
 			data = s.Engine().Config()
