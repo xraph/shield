@@ -208,7 +208,8 @@ func (s *Store) DashboardList(ctx context.Context, scope store.Scope, kind strin
 	if f.ReferenceKind != "" {
 		key := f.ReferenceKind
 		if field := store.ReferenceField(key); field != "" {
-			key += "." + field
+			// Assignment structs predate BSON tags and use the driver's lowercase field names.
+			key += "." + strings.ReplaceAll(field, "_", "")
 		}
 		pred[key] = f.ReferenceName
 	}

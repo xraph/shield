@@ -202,7 +202,7 @@ func (s *Store) DashboardList(ctx context.Context, scope store.Scope, kind strin
 			value = map[string]string{field: f.ReferenceName}
 		}
 		needle, _ := json.Marshal([]any{value})
-		q = q.Where(f.ReferenceKind+" @> ?::jsonb", string(needle))
+		q = q.Where("\""+f.ReferenceKind+"\" @> ?::jsonb", string(needle))
 	}
 	if f.Direction != "" {
 		q = q.Where("direction = ?", f.Direction)

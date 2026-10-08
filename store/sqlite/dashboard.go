@@ -201,7 +201,7 @@ func (s *Store) DashboardList(ctx context.Context, scope store.Scope, kind strin
 		if field := store.ReferenceField(f.ReferenceKind); field != "" {
 			expr = "json_extract(ref.value, '$." + field + "')"
 		}
-		q = q.Where("EXISTS (SELECT 1 FROM json_each(shield_profiles."+f.ReferenceKind+") AS ref WHERE "+expr+" = ?)", f.ReferenceName)
+		q = q.Where("EXISTS (SELECT 1 FROM json_each(shield_profiles.\""+f.ReferenceKind+"\") AS ref WHERE "+expr+" = ?)", f.ReferenceName)
 	}
 	if f.Direction != "" {
 		q = q.Where("direction = ?", f.Direction)

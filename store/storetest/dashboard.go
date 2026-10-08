@@ -68,6 +68,16 @@ func testDashboardScopeAndNestedRoundTrip(t *testing.T, factory func(*testing.T)
 			assertFields(t, expected, back)
 		})
 	}
+	for _, kind := range []string{"instincts", "awareness", "boundaries", "values", "judgments", "reflexes"} {
+		page, err := s.DashboardList(ctx, a, "profiles", store.Filter{Limit: 25, ReferenceKind: kind, ReferenceName: "same"})
+		if err != nil || page.Total != 1 {
+			t.Fatalf("%s reference filter: %+v %v", kind, page, err)
+		}
+		page, err = s.DashboardList(ctx, a, "profiles", store.Filter{Limit: 25, ReferenceKind: kind, ReferenceName: "missing"})
+		if err != nil || page.Total != 0 {
+			t.Fatalf("%s missing reference: %+v %v", kind, page, err)
+		}
+	}
 	if _, err := s.DashboardList(ctx, store.Scope{}, "instincts", store.Filter{}); err == nil {
 		t.Fatal("empty scope broadened")
 	}
