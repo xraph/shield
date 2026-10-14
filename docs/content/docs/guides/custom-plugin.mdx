@@ -5,6 +5,8 @@ description: Build plugins that react to Shield lifecycle events with metrics, a
 
 Shield uses an opt-in plugin system. Implement the `plugin.Plugin` base interface and any combination of 15 lifecycle hook interfaces to receive only the events you care about.
 
+Only three hooks fire today: `OnScanStarted`, `OnScanCompleted` and `OnShutdown`. The evaluation layers aren't implemented, so nothing triggers an instinct, detects PII, evaluates a policy, resolves a profile or fails a scan, and no scan is ever blocked. The other twelve interfaces are defined so your plugin is ready when those events exist.
+
 ## The base interface
 
 Every plugin must implement `Name`:
@@ -49,16 +51,20 @@ func (p *MyPlugin) OnInstinctTriggered(
 
 ## Available hooks
 
+The "Fires today" column is what the engine emits now.
+
 ### Scan lifecycle
 
-| Interface | Method | Called when |
-|-----------|--------|------------|
-| `plugin.ScanStarted` | `OnScanStarted(ctx, scanID, direction, text)` | A scan begins |
-| `plugin.ScanCompleted` | `OnScanCompleted(ctx, scanID, decision, findingCount, elapsed)` | A scan finishes |
-| `plugin.ScanBlocked` | `OnScanBlocked(ctx, scanID, reason)` | Content is blocked |
-| `plugin.ScanFailed` | `OnScanFailed(ctx, scanID, err)` | A scan fails with error |
+| Interface | Method | Called when | Fires today |
+|-----------|--------|------------|-----|
+| `plugin.ScanStarted` | `OnScanStarted(ctx, scanID, direction, text)` | A scan begins | yes |
+| `plugin.ScanCompleted` | `OnScanCompleted(ctx, scanID, decision, findingCount, elapsed)` | A scan finishes | yes |
+| `plugin.ScanBlocked` | `OnScanBlocked(ctx, scanID, reason)` | Content is blocked | no |
+| `plugin.ScanFailed` | `OnScanFailed(ctx, scanID, err)` | A scan fails with error | no |
 
 ### Safety primitive lifecycle
+
+None of these fire yet.
 
 | Interface | Method | Called when |
 |-----------|--------|------------|
@@ -71,6 +77,8 @@ func (p *MyPlugin) OnInstinctTriggered(
 
 ### Data lifecycle
 
+None of these fire yet.
+
 | Interface | Method | Called when |
 |-----------|--------|------------|
 | `plugin.PIIDetected` | `OnPIIDetected(ctx, scanID, piiType, count)` | PII found |
@@ -82,7 +90,7 @@ func (p *MyPlugin) OnInstinctTriggered(
 
 | Interface | Method | Called when |
 |-----------|--------|------------|
-| `plugin.Shutdown` | `OnShutdown(ctx)` | Engine is shutting down |
+| `plugin.Shutdown` | `OnShutdown(ctx)` | `engine.Stop` is called (the Forge extension calls it on `Stop`) |
 
 ## Registering plugins
 
@@ -95,11 +103,11 @@ eng, err := engine.New(
 )
 ```
 
-Or via the Forge extension:
+Or through the Forge extension:
 
 ```go
-ext := extension.New(
-    extension.WithPlugin(&MyPlugin{}),
+ext := shieldext.New(
+    shieldext.WithPlugin(&MyPlugin{}),
 )
 ```
 
@@ -109,10 +117,9 @@ Use compile-time interface checks to ensure your plugin implements the hooks you
 
 ```go
 var (
-    _ plugin.Plugin         = (*MyPlugin)(nil)
-    _ plugin.ScanCompleted  = (*MyPlugin)(nil)
-    _ plugin.ScanBlocked    = (*MyPlugin)(nil)
-    _ plugin.PIIDetected    = (*MyPlugin)(nil)
+    _ plugin.Plugin            = (*MyPlugin)(nil)
+    _ plugin.ScanCompleted     = (*MyPlugin)(nil)
+    _ plugin.InstinctTriggered = (*MyPlugin)(nil)
 )
 ```
 
@@ -120,20 +127,13 @@ If you forget to implement a method, the compiler will tell you.
 
 ## Error handling
 
-Hook errors are logged as warnings but never propagated to the scan. This prevents a broken plugin from disrupting safety evaluation:
+Hook errors never reach the scan or `Stop`. The registry passes each error to its logger as a warning and moves on to the next plugin. The engine builds that registry with a no-op logger, and `engine.WithLogger` doesn't change it, so today a hook error is dropped silently. Log inside your hook if you need to see failures.
 
-```go
-// Inside the registry — your plugin errors are logged, never panic
-r.logger.Warn("plugin: hook error",
-    "hook", "ScanCompleted",
-    "plugin", entry.name,
-    "error", err,
-)
-```
-
-Return errors from your hooks to signal failures. The registry handles them gracefully.
+A panic in a hook isn't recovered. It propagates out of `ScanInput`, `ScanOutput` or `Stop`.
 
 ## Example: Slack alerting plugin
+
+This plugin listens for blocked scans and high-scoring instincts. Neither event fires yet, so it stays quiet until the evaluation layers land.
 
 ```go
 type SlackAlertPlugin struct {
@@ -169,31 +169,33 @@ func (p *SlackAlertPlugin) OnInstinctTriggered(
 
 ## Built-in plugins
 
-Shield ships two built-in plugins:
+Shield ships two built-in plugins.
 
 ### `observability.MetricsExtension`
 
-Counts all 14 lifecycle events via `gu.MetricFactory` counters. Implements every hook.
+Holds 14 `gu.Counter` values from a go-utils `metrics.MetricFactory`, one per hook except shutdown, named like `shield.scan.started`. Today only `ScanStartedCount` and `ScanCompletedCount` move.
 
 ```go
 import "github.com/xraph/shield/observability"
 
 metrics := observability.NewMetricsExtension()
-// or with a custom factory:
-metrics := observability.NewMetricsExtensionWithFactory(fapp.Metrics())
+// or with your own factory, such as a Forge app's metrics:
+metrics = observability.NewMetricsExtensionWithFactory(app.Metrics())
 ```
 
 ### `audithook.Extension`
 
-Bridges lifecycle events to an audit trail backend via a local `Recorder` interface. Supports selective action filtering.
+Bridges lifecycle events to an audit trail backend through a local `Recorder` interface, so the package doesn't import Chronicle. It implements every hook except shutdown, and `WithActions` limits which actions it records. The import path is `audit_hook`; the package name is `audithook`.
 
 ```go
-import "github.com/xraph/shield/audit_hook"
+import audithook "github.com/xraph/shield/audit_hook"
 
-audit := audit_hook.New(myRecorder,
-    audit_hook.WithActions(
-        audit_hook.ActionScanBlocked,
-        audit_hook.ActionPIIDetected,
+audit := audithook.New(myRecorder,
+    audithook.WithActions(
+        audithook.ActionScanBlocked,
+        audithook.ActionPIIDetected,
     ),
 )
 ```
+
+`audithook.WithLogger` takes a go-utils `log.Logger`, used when the recorder returns an error.

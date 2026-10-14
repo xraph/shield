@@ -128,7 +128,7 @@ Safety rules for an AI product change often and differ per customer. One tenant 
 | You need | Shield gives you |
 | --- | --- |
 | Named, reusable safety rules | Instincts, awareness detectors, boundaries, values, judgments and reflexes, each with its own store and CRUD |
-| Different rules per customer | Everything scoped by tenant and app on the context, and policies assigned at app or org level |
+| Different rules per customer | A tenant and app ID on every record, list filters by tenant and app, and policies assigned at app or org level |
 | A bundle you can attach to an agent | Safety profiles that compose the six primitives with per-assignment sensitivity and thresholds |
 | A record of every check | Scan results with direction, decision, findings, PII count, profile and policies used |
 | PII handling with retention | A PII token vault (placeholder, type, your encrypted value, expiry), per-tenant deletion and age-based purge |
@@ -207,7 +207,7 @@ The dashboard takes tenant and app from the signed-in user's `tenant_id` and `ap
 
 ## Lifecycle hooks
 
-Register a plugin with `engine.WithPlugin` (or `WithPlugin` on the extension). It can implement any of 15 hooks: scan started, completed, blocked and failed, one per layer (`OnInstinctTriggered`, `OnAwarenessDetected`, `OnBoundaryEnforced`, `OnValueViolated`, `OnJudgmentAssessed`, `OnReflexFired`), PII detected and redacted, policy evaluated, profile resolved, and shutdown. Today only the scan and shutdown hooks fire. `audit_hook.New(recorder)` writes them to an audit trail, and `observability.NewMetricsExtension()` counts them.
+Register a plugin with `engine.WithPlugin` (or `WithPlugin` on the extension). It can implement any of 15 hooks: scan started, completed, blocked and failed, one per layer (`OnInstinctTriggered`, `OnAwarenessDetected`, `OnBoundaryEnforced`, `OnValueViolated`, `OnJudgmentAssessed`, `OnReflexFired`), PII detected and redacted, policy evaluated, profile resolved, and shutdown. Today only the scan and shutdown hooks fire. `audithook.New(recorder)` (import path `github.com/xraph/shield/audit_hook`) writes them to an audit trail, and `observability.NewMetricsExtension()` counts them.
 
 ## Documentation
 
@@ -228,7 +228,7 @@ Not yet. You can configure injection and jailbreak instincts and attach them to 
 
 ### How do I store different AI safety rules per tenant?
 
-Put the tenant and app on the context with `shield.WithTenant` and `shield.WithApp`, and create rules and profiles with those IDs. Every subsystem store filters by them, and the dashboard reads them from the user's claims.
+Set `TenantID` and `AppID` on each rule and profile you create, and pass the same IDs in the `ListFilter` when you read them back. The subsystem stores filter by the IDs in the filter, not by the context, and an empty `TenantID` there lists every tenant's rows, so always set it. Gets by ID don't check the tenant either. `shield.WithTenant` and `shield.WithApp` on the context only stamp scan records today. The dashboard is stricter: it takes the scope from the signed-in user's claims and refuses an empty tenant or app.
 
 ### Can Shield keep PII out of my logs and prompts?
 

@@ -3,7 +3,7 @@ title: Go Packages
 description: Quick reference for all Shield Go packages and their public APIs.
 ---
 
-All Shield packages are importable from `github.com/xraph/shield`.
+All Shield packages are importable from `github.com/xraph/shield`. The six evaluation layers aren't implemented yet: the safety layer packages below hold configuration models and store interfaces, and the engine's scans always return `allow`.
 
 ## Core packages
 
@@ -17,26 +17,31 @@ Root package. Exports context helpers, error constants, configuration, and share
 | `WithApp(ctx, id)` | Inject app ID into context |
 | `TenantFromContext(ctx)` | Read tenant ID from context |
 | `AppFromContext(ctx)` | Read app ID from context |
-| `Config` | Engine configuration struct |
+| `Config` | Engine configuration struct (stored, not read yet) |
 | `DefaultConfig()` | Returns default Config values |
+| `Option`, `Options`, `WithProfile(...)` and friends | Top-level options that nothing consumes yet |
 | `Entity` | Base type with timestamps |
 | `Version` | Current library version |
-| `ErrNoStore`, `ErrInputBlocked`, `ErrOutputBlocked`, ... | Sentinel errors |
+| `ErrScanNotFound`, `ErrInstinctNotFound`, ... | Sentinel errors (several are defined but not returned yet, see [Errors](/docs/concepts/errors)) |
 
 ### `github.com/xraph/shield/engine`
 
-The core layered safety engine.
+The scan entry points. No evaluation layer runs yet.
 
 | Export | Description |
 |--------|-------------|
 | `New(...Option) (*Engine, error)` | Create an engine |
-| `Engine.ScanInput(ctx, *scan.Input)` | Scan user input content |
-| `Engine.ScanOutput(ctx, *scan.Input)` | Scan agent output content |
-| `Engine.Stop(ctx)` | Graceful shutdown |
+| `Engine.ScanInput(ctx, *scan.Input) (*scan.Result, error)` | Record an input scan; always `allow` today |
+| `Engine.ScanOutput(ctx, *scan.Input) (*scan.Result, error)` | Record an output scan; always `allow` today |
+| `Engine.Capabilities() Capabilities` | What's implemented: `Persistence`, `Evaluation` (false), `ReportGeneration` (false), `ConfigWrite` (false), and the unavailable `Layers` |
+| `Engine.Config() shield.Config` | The stored configuration |
+| `Engine.Store() store.Store` | The store, or `nil` |
+| `Engine.Health(ctx) error` | Pings the store; errors when there's none |
+| `Engine.Stop(ctx) error` | Emits `OnShutdown` to plugins |
 | `WithStore(s)` | Set composite store |
 | `WithPlugin(p)` | Register lifecycle plugin |
 | `WithConfig(cfg)` | Set engine configuration |
-| `WithLogger(l)` | Set structured logger |
+| `WithLogger(l)` | Set a go-utils `log.Logger` |
 
 ### `github.com/xraph/shield/scan`
 
@@ -49,13 +54,14 @@ Scan input/output types, findings, and results.
 | `Finding` | Individual detection from a safety layer |
 | `Direction` | Input or output direction |
 | `Decision` | Allow, block, flag, or redact |
-| `Stats` | Aggregated scan statistics |
+| `Stats`, `StatsFilter`, `ListFilter` | Statistics and list filters |
+| `Store` | Scan persistence interface |
 
 ## Safety layer packages
 
 ### `github.com/xraph/shield/instinct`
 
-Pre-conscious threat detection. Categories: injection, exfiltration, manipulation, jailbreak.
+Threat detector configuration. Categories: injection, exfiltration, manipulation, jailbreak.
 
 | Export | Description |
 |--------|-------------|
@@ -67,7 +73,7 @@ Pre-conscious threat detection. Categories: injection, exfiltration, manipulatio
 
 ### `github.com/xraph/shield/awareness`
 
-Perception layer — PII, topic, sentiment, intent, language detection.
+Perception layer configuration: PII, topic, sentiment, intent and language detectors.
 
 | Export | Description |
 |--------|-------------|
@@ -79,7 +85,7 @@ Perception layer — PII, topic, sentiment, intent, language detection.
 
 ### `github.com/xraph/shield/boundary`
 
-Hard safety limits — binary pass/block checks.
+Hard safety limits: deny and allow lists.
 
 | Export | Description |
 |--------|-------------|
@@ -90,7 +96,7 @@ Hard safety limits — binary pass/block checks.
 
 ### `github.com/xraph/shield/values`
 
-Ethical evaluation — toxicity, brand safety, honesty, respect, safety, privacy.
+Ethical rule configuration: toxicity, brand safety, honesty, respect, safety, privacy.
 
 | Export | Description |
 |--------|-------------|
@@ -101,7 +107,7 @@ Ethical evaluation — toxicity, brand safety, honesty, respect, safety, privacy
 
 ### `github.com/xraph/shield/judgment`
 
-Contextual risk assessment — grounding, relevance, consistency, compliance.
+Contextual assessment configuration: grounding, relevance, consistency, compliance.
 
 | Export | Description |
 |--------|-------------|
@@ -113,13 +119,13 @@ Contextual risk assessment — grounding, relevance, consistency, compliance.
 
 ### `github.com/xraph/shield/reflex`
 
-Condition-action response rules — policy rules, rate limiting, escalation.
+Condition-action rules: triggers and actions such as block, throttle and escalate.
 
 | Export | Description |
 |--------|-------------|
 | `Reflex` | Entity with triggers, actions, priority |
-| `TriggerType` | OnScore, OnFinding, OnPattern, OnContext, OnRate, Always |
-| `ActionType` | Block, Redact, Flag, Rewrite, Escalate, Log, Throttle |
+| `TriggerType` | `TriggerOnScore`, `TriggerOnFinding`, `TriggerOnPattern`, `TriggerOnContext`, `TriggerOnRate`, `TriggerAlways` |
+| `ActionType` | `ActionBlock`, `ActionRedact`, `ActionFlag`, `ActionRewrite`, `ActionEscalate`, `ActionLog`, `ActionThrottle` |
 | `Trigger` | Trigger definition with type, pattern, threshold |
 | `Action` | Action definition with type, target, value, fallback |
 | `Store` | CRUD persistence interface |
@@ -128,7 +134,7 @@ Condition-action response rules — policy rules, rate limiting, escalation.
 
 ### `github.com/xraph/shield/profile`
 
-SafetyProfile — composes all six safety layers into a reusable identity.
+`SafetyProfile` composes all six safety primitives into a reusable, named bundle.
 
 | Export | Description |
 |--------|-------------|
@@ -140,7 +146,7 @@ SafetyProfile — composes all six safety layers into a reusable identity.
 
 ### `github.com/xraph/shield/policy`
 
-Administrative governance — tenant-scoped safety rules.
+Administrative governance: ordered rules scoped to an app or org.
 
 | Export | Description |
 |--------|-------------|
@@ -151,29 +157,29 @@ Administrative governance — tenant-scoped safety rules.
 
 ### `github.com/xraph/shield/pii`
 
-PII vault — AES-256-GCM encrypted token storage.
+PII token storage. Shield stores the `EncryptedValue` bytes you give it and doesn't encrypt anything itself.
 
 | Export | Description |
 |--------|-------------|
-| `Token` | Encrypted PII token with expiry |
+| `Token` | PII placeholder, type, encrypted value and optional expiry |
 | `Stats` | Vault statistics by type and tenant |
 | `Store` | Store/Load/Delete/Purge tokens |
 
 ### `github.com/xraph/shield/compliance`
 
-Compliance reporting — EU AI Act, NIST AI RMF, SOC2.
+Compliance report records for the EU AI Act, NIST AI RMF and SOC 2. Shield stores reports; it doesn't generate them.
 
 | Export | Description |
 |--------|-------------|
-| `Report` | Generated compliance report |
-| `Framework` | EUAIAct, NIST, SOC2 |
+| `Report` | Compliance report record |
+| `Framework` | `FrameworkEUAIAct`, `FrameworkNIST`, `FrameworkSOC2` |
 | `Store` | Create/Get/List reports |
 
 ## Plugin packages
 
 ### `github.com/xraph/shield/plugin`
 
-All lifecycle hook interfaces: `ScanStarted`, `ScanCompleted`, `ScanBlocked`, `ScanFailed`, `InstinctTriggered`, `AwarenessDetected`, `JudgmentAssessed`, `ValueViolated`, `ReflexFired`, `BoundaryEnforced`, `PIIDetected`, `PIIRedacted`, `PolicyEvaluated`, `SafetyProfileResolved`, `Shutdown`.
+The `Plugin` base interface, `Registry`, `NewRegistry` and all lifecycle hook interfaces: `ScanStarted`, `ScanCompleted`, `ScanBlocked`, `ScanFailed`, `InstinctTriggered`, `AwarenessDetected`, `JudgmentAssessed`, `ValueViolated`, `ReflexFired`, `BoundaryEnforced`, `PIIDetected`, `PIIRedacted`, `PolicyEvaluated`, `SafetyProfileResolved`, `Shutdown`. Only `ScanStarted`, `ScanCompleted` and `Shutdown` are emitted today.
 
 ### `github.com/xraph/shield/observability`
 
@@ -184,35 +190,52 @@ func NewMetricsExtensionWithFactory(factory gu.MetricFactory) *MetricsExtension
 
 ### `github.com/xraph/shield/audit_hook`
 
+The package name is `audithook`.
+
 ```go
 func New(r Recorder, opts ...Option) *Extension
 func WithActions(actions ...string) Option
-func WithLogger(l *slog.Logger) Option
+func WithLogger(l log.Logger) Option // github.com/xraph/go-utils/log
+
+type Recorder interface {
+    Record(ctx context.Context, event *AuditEvent) error
+}
+type RecorderFunc func(ctx context.Context, event *AuditEvent) error
 ```
+
+It also exports the `Action*`, `Resource*`, `Category*`, `Severity*` and `Outcome*` constants.
 
 ## ID package
 
 ### `github.com/xraph/shield/id`
 
 ```go
-func NewScanID() ScanID
-func NewPolicyID() PolicyID
-func NewInstinctID() InstinctID
-func NewJudgmentID() JudgmentID
-func NewAwarenessID() AwarenessID
-func NewValueID() ValueID
-func NewReflexID() ReflexID
-func NewBoundaryID() BoundaryID
-func NewSafetyProfileID() SafetyProfileID
-// ... + Parse* functions for each type
-func ParseAny(s string) (AnyID, error)
+func New(prefix Prefix) ID
+func NewScanID() ID
+func NewPolicyID() ID
+func NewInstinctID() ID
+func NewJudgmentID() ID
+func NewAwarenessID() ID
+func NewValueID() ID
+func NewReflexID() ID
+func NewBoundaryID() ID
+func NewSafetyProfileID() ID
+// ... plus NewFindingID, NewPIITokenID, NewComplianceReportID, NewCheckID
+// ... and a Parse* function for each type
+func Parse(s string) (ID, error)
+func ParseWithPrefix(s string, expected Prefix) (ID, error)
+func ParseAny(s string) (ID, error)
 ```
 
-All IDs implement `String() string` and are based on TypeID (UUIDv7, K-sortable).
+`ScanID`, `PolicyID`, `InstinctID` and the other typed names are aliases of `ID`, so the compiler doesn't stop you mixing them up; the prefix does at parse time. All IDs implement `String() string` and are based on TypeID (UUIDv7, K-sortable). See [Identity](/docs/concepts/identity).
 
 ## Infrastructure packages
 
 | Package | Purpose |
 |---------|---------|
-| `store` | Composite store interface |
-| `extension` | Forge framework extension adapter |
+| `store` | Composite `Store` interface, plus the scoped `DashboardStore`, `AssignmentStore`, `PrivacyStore` and `PrivacyStatsStore` contracts and their errors (`ErrScope`, `ErrNotFound`, `ErrCollection`, `ErrConflict`) |
+| `store/postgres`, `store/sqlite`, `store/mongo` | Store backends: `New(db *grove.DB) *Store` and a `Migrations` group |
+| `store/storetest` | Shared conformance suite: `Run(t, factory)` |
+| `admin` | Validation and permission checks for dashboard operations (`Service`, `Actor`, `Audit`) |
+| `extension` | Forge extension: `New(...Option) *Extension`, `Config`, `DefaultConfig()` and the `With*` options |
+| `extension/contract` | The `shield` dashboard contributor: `Register`, `ResolveActor`, `ActorResolver` |

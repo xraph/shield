@@ -1,189 +1,93 @@
 ---
 title: HTTP API Reference
-description: REST API endpoints for Shield safety operations.
+description: Shield has no REST API of its own; its HTTP surface is the Forge dashboard contract.
 ---
 
-Shield's HTTP API is available when using the Forge extension. All endpoints return JSON. Authentication and tenant resolution depend on your Forge middleware configuration.
+Shield mounts no REST routes. There's no `/v1/scan` endpoint: to scan content you call `ScanInput` and `ScanOutput` on the engine from Go. The extension's `base_path` setting is read but nothing uses it.
 
-## Safety Scanning
+The one HTTP surface is the `shield` dashboard contributor, which the Shield Forge extension registers with Forge's dashboard extension. The dashboard serves it, so you need both extensions, a store that implements `store.DashboardStore` (all three built-in stores do) and `disable_routes` left at `false`.
 
-### `POST /v1/scan/input`
+## Transport
 
-Scan user input content for safety.
+Forge's dashboard extension owns the routes. Every contributor, Shield included, is reached through the same endpoint under the dashboard's base path:
 
-**Request**
+| Method | Path | Purpose |
+|--------|------|---------|
+| `POST` | `{base}/api/dashboard/v1` | Run a query or command |
+| `GET` | `{base}/api/dashboard/v1/capabilities` | List contributors and intents |
+
+A request names the contributor and the intent:
 
 ```json
 {
-  "text": "string (required)",
-  "context": { "key": "value" },
-  "metadata": { "key": "value" }
+  "envelope": "v1",
+  "kind": "query",
+  "contributor": "shield",
+  "intent": "instincts.list",
+  "intentVersion": 1,
+  "payload": { "limit": 25, "offset": 0 },
+  "context": {}
 }
 ```
 
-**Response** `200 OK`
+Commands use `"kind": "command"` and go through the dashboard's CSRF and idempotency handling. Forge's dashboard documentation covers the envelope, CSRF and error format.
 
-```json
-{
-  "id": "scan_01h455vbjdx6ycf56rnatbxqkh",
-  "direction": "input",
-  "decision": "allow",
-  "blocked": false,
-  "findings": [],
-  "redacted": "",
-  "pii_count": 0,
-  "profile_used": "default",
-  "tenant_id": "tenant-1",
-  "app_id": "myapp",
-  "duration": "12ms",
-  "created_at": "2024-01-15T10:30:00Z"
-}
-```
+## Scope and permissions
 
----
+Every intent goes through the `shield.scope` warden. The default resolver reads the signed-in user's claims and never takes scope from the request:
 
-### `POST /v1/scan/output`
+- `tenant_id` and `app_id` (non-empty strings) set the scope. If `shield_tenant_id` or `shield_app_id` is also present it must match.
+- `shield_read: true` is required for every intent.
+- `shield_manage: true` is required for commands.
+- `shield_privacy_manage: true`, plus an audit sink from `WithDashboardAudit`, is required for PII retention.
 
-Scan agent output content before sending to users.
+Swap the resolver with `extension.WithDashboardActorResolver` if your claims look different.
 
-**Request**
+## Queries
 
-```json
-{
-  "text": "string (required)",
-  "context": { "key": "value" },
-  "metadata": { "key": "value" }
-}
-```
+| Intent | Payload | Returns |
+|--------|---------|---------|
+| `capabilities` | none | Engine capabilities (including `evaluation: false`), your scope and permissions, form schemas and limits |
+| `overview`, `layers.summary` | none | Row counts per collection, with `evaluation_available: false` |
+| `config.detail` | none | The engine's `shield.Config` |
+| `scans.stats` | none | Scan counts for `allow`, `block`, `flag` and `redact` |
+| `<collection>.list` | `limit` (max 100, default 25), `offset`, `enabled`, `name`, `search`, `field`, `value`, `direction` | A page of rows in your scope |
+| `<collection>.detail` | `id` | One row |
+| `profiles.references` | `collection`, `name` | Profiles that reference that primitive |
+| `policies.assignments` | `id` | Whether the policy is assigned to your tenant |
+| `pii.stats` | `limit`, `offset` | PII token metadata and counts by type |
+| `pii.byScan` | `id` (a scan ID), `limit`, `offset` | PII token metadata for one scan |
 
-**Response** `200 OK` — same format as scan/input.
+`<collection>` is one of `instincts`, `awareness`, `boundaries`, `values`, `judgments`, `reflexes`, `profiles`, `policies`, `scans` and `compliance`. `field` and `value` filter on `category` (instincts), `focus` (awareness), `domain` (judgments), `decision` or `direction` (scans) and `framework` (compliance). `search` works on the editable collections only, and `direction` on scans only.
 
----
+Since no evaluation runs yet, every scan you see has decision `allow`, so `scans.stats` reports zero for the other three.
 
-## Scan History
+## Commands
 
-### `GET /v1/scans`
+| Intent | Payload | Does |
+|--------|---------|------|
+| `<collection>.create` | `row` | Create a row in your scope |
+| `<collection>.update` | `id`, `row`, `expected_updated_at` | Update a row. A stale `expected_updated_at` returns `CONFLICT` |
+| `<collection>.setEnabled` | `id`, `enabled` | Turn a row on or off |
+| `<collection>.delete` | `id` | Delete a row |
+| `policies.assign`, `policies.unassign` | `id` | Assign a policy to your tenant, or remove it |
+| `pii.retentionPreview` | none | List up to 100 expired PII tokens in your scope and return a preview ID, valid for five minutes |
+| `pii.purge`, `pii.deleteTokens`, `pii.deleteTenant` | `preview_id` | Delete the tokens in that preview. All three do the same thing |
 
-List scan results for the current tenant.
+Here `<collection>` is one of the editable collections: `instincts`, `awareness`, `boundaries`, `values`, `judgments`, `reflexes`, `profiles` and `policies`. Scans and compliance reports are read-only in the dashboard.
 
-**Query parameters**
+PII retention writes an audit event before it deletes anything and another one after. If the first one fails, nothing is deleted.
 
-| Param | Type | Description |
-|-------|------|-------------|
-| `direction` | string | Filter by direction: `input`, `output` |
-| `decision` | string | Filter by decision: `allow`, `block`, `flag`, `redact` |
-| `limit` | int | Max results (default: 20) |
-| `offset` | int | Pagination offset |
+## Errors
 
-**Response** `200 OK` — array of Result objects.
+Shield maps its errors to the dashboard contract's codes, and Forge turns each code into an HTTP status:
 
----
-
-### `GET /v1/scans/:scanId`
-
-Get a scan result by ID.
-
-**Response** `200 OK` — Result object.
-
-**Error** `404 Not Found` if scan does not exist for the current tenant.
-
----
-
-### `GET /v1/scans/stats`
-
-Get aggregated scan statistics.
-
-**Query parameters**
-
-| Param | Type | Description |
-|-------|------|-------------|
-| `from` | string | Start date (ISO 8601) |
-| `to` | string | End date (ISO 8601) |
-
-**Response** `200 OK`
-
-```json
-{
-  "total_scans": 1542,
-  "blocked_count": 23,
-  "flagged_count": 89,
-  "allowed_count": 1430,
-  "by_direction": {
-    "input": 1200,
-    "output": 342
-  },
-  "by_decision": {
-    "allow": 1430,
-    "block": 23,
-    "flag": 89
-  }
-}
-```
-
----
-
-## Safety Primitives
-
-Each safety primitive (instincts, awareness, boundaries, values, judgments, reflexes) follows the same CRUD pattern:
-
-### `POST /v1/{primitive}s`
-
-Create a new safety primitive.
-
-### `GET /v1/{primitive}s`
-
-List primitives for the current app.
-
-### `GET /v1/{primitive}s/:id`
-
-Get a primitive by ID.
-
-### `PUT /v1/{primitive}s/:id`
-
-Update a primitive.
-
-### `DELETE /v1/{primitive}s/:id`
-
-Delete a primitive.
-
-Where `{primitive}` is one of: `instinct`, `awareness`, `boundary`, `value`, `judgment`, `reflex`, `profile`.
-
----
-
-## Policies
-
-### `POST /v1/policies`
-
-Create a safety policy.
-
-### `GET /v1/policies`
-
-List policies for the current scope.
-
-### `POST /v1/policies/:policyId/assign`
-
-Assign a policy to a tenant.
-
-### `POST /v1/policies/:policyId/unassign`
-
-Unassign a policy from a tenant.
-
----
-
-## Error format
-
-All error responses use a consistent JSON envelope:
-
-```json
-{
-  "error": "human-readable message",
-  "code": "ERROR_CODE"
-}
-```
-
-| HTTP status | `code` | Cause |
-|-------------|--------|-------|
-| `400` | `BAD_REQUEST` | Missing required field, invalid input |
-| `404` | `NOT_FOUND` | Entity not found for tenant |
-| `409` | `CONFLICT` | Entity with same name already exists |
-| `500` | `INTERNAL_ERROR` | Store or engine failure |
+| Code | HTTP status | Typical cause in Shield |
+|------|-------------|-------------------------|
+| `BAD_REQUEST` | `400` | Unknown field in the payload, invalid row, unsupported collection |
+| `UNAUTHENTICATED` | `401` | No signed-in user |
+| `PERMISSION_DENIED` | `403` | Missing or conflicting scope claims, or a missing `shield_*` permission |
+| `NOT_FOUND` | `404` | No row with that ID in your scope |
+| `CONFLICT` | `409` | Duplicate name in the app, stale `expected_updated_at`, or an expired retention preview |
+| `UNAVAILABLE` | `503` | The store lacks an optional dashboard interface, or no audit sink for PII retention |
+| `INTERNAL` | `500` | Store or engine failure |

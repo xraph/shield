@@ -1,9 +1,9 @@
 ---
 title: End-to-End Safety Pipeline
-description: Complete walkthrough — configure safety primitives, compose a profile, scan content, and handle results.
+description: Wire the engine, a store and plugins around your agent, and handle scan results.
 ---
 
-This guide builds a complete AI safety pipeline from scratch using Shield.
+This guide puts Shield around an agent: scan the user's message, scan the agent's reply, and record both. The result-handling code is written for when evaluation ships. Today the six layers aren't implemented, so every scan returns `allow` with no findings, `Blocked` is `false` and `Redacted` is empty. The `if` branches below never run yet, and `eng.Capabilities().Evaluation` tells you when that changes.
 
 ## 1. Set up the engine
 
@@ -14,30 +14,48 @@ import (
     "context"
     "log"
 
+    "github.com/xraph/grove"
+    "github.com/xraph/grove/drivers/sqlitedriver"
+
     "github.com/xraph/shield"
     "github.com/xraph/shield/engine"
     "github.com/xraph/shield/observability"
     "github.com/xraph/shield/scan"
+    sqlitestore "github.com/xraph/shield/store/sqlite"
 )
 
 func main() {
     ctx := context.Background()
 
-    // Build engine with metrics
+    drv := sqlitedriver.New()
+    if err := drv.Open(ctx, "shield.db"); err != nil {
+        log.Fatal(err)
+    }
+    db, err := grove.Open(drv)
+    if err != nil {
+        log.Fatal(err)
+    }
+    st := sqlitestore.New(db)
+    if err := st.Migrate(ctx); err != nil {
+        log.Fatal(err)
+    }
+
+    // Build the engine with a store and metrics.
     metricsPlugin := observability.NewMetricsExtension()
 
     eng, err := engine.New(
-        engine.WithConfig(shield.Config{
-            EnableShortCircuit: true,
-            ScanConcurrency:   10,
-        }),
+        engine.WithStore(st),
         engine.WithPlugin(metricsPlugin),
     )
     if err != nil {
         log.Fatal(err)
     }
 
-    // Set tenant scope
+    if !eng.Capabilities().Evaluation {
+        log.Println("shield: evaluation is not implemented; scans are recorded but always allow")
+    }
+
+    // Set tenant scope. The engine stamps it on every scan.
     ctx = shield.WithTenant(ctx, "acme-corp")
     ctx = shield.WithApp(ctx, "support-bot")
 
@@ -49,7 +67,7 @@ func main() {
 
 ```go
 func run(ctx context.Context, eng *engine.Engine) {
-    // Scan incoming user message
+    // Scan the incoming user message.
     input := &scan.Input{
         Text: "Can you help me with my account? My email is john@example.com",
         Context: map[string]any{
@@ -63,7 +81,7 @@ func run(ctx context.Context, eng *engine.Engine) {
         log.Fatal("scan input:", err)
     }
 
-    log.Printf("Decision: %s", result.Decision)
+    log.Printf("Decision: %s", result.Decision) // allow, for now
     log.Printf("Findings: %d", len(result.Findings))
     log.Printf("Has PII: %v", result.HasPII())
 ```
@@ -71,20 +89,19 @@ func run(ctx context.Context, eng *engine.Engine) {
 ## 3. Handle scan results
 
 ```go
-    // Check if content was blocked
+    // Not reached today: no layer can block yet.
     if result.Blocked {
         log.Printf("Content blocked: %s", result.Decision)
         return
     }
 
-    // Check for PII
+    // Not reached today: no PII detection runs yet.
     if result.HasPII() {
         log.Printf("PII detected: %d instances", result.PIICount)
         log.Printf("Redacted text: %s", result.Redacted)
-        // Use result.Redacted instead of original text
     }
 
-    // Inspect findings
+    // Empty today.
     for _, finding := range result.Findings {
         log.Printf("[%s] %s: %s (score: %.2f)",
             finding.Layer,
@@ -98,7 +115,7 @@ func run(ctx context.Context, eng *engine.Engine) {
 ## 4. Scan agent output
 
 ```go
-    // Before sending agent response to user, scan it
+    // Before sending the agent's response to the user, scan it.
     agentResponse := "Here is your account information..."
 
     outputResult, err := eng.ScanOutput(ctx, &scan.Input{
@@ -110,11 +127,10 @@ func run(ctx context.Context, eng *engine.Engine) {
 
     if outputResult.Blocked {
         log.Printf("Agent response blocked: %s", outputResult.Decision)
-        // Return a safe fallback response
         return
     }
 
-    // Use the (possibly redacted) output
+    // Use the redacted output once redaction exists.
     finalResponse := agentResponse
     if outputResult.HasPII() {
         finalResponse = outputResult.Redacted
@@ -126,7 +142,7 @@ func run(ctx context.Context, eng *engine.Engine) {
 ## 5. Graceful shutdown
 
 ```go
-    // Stop the engine (notifies all plugins)
+    // Stop the engine (notifies plugins that implement OnShutdown).
     if err := eng.Stop(ctx); err != nil {
         log.Printf("shutdown error: %v", err)
     }
@@ -135,13 +151,13 @@ func run(ctx context.Context, eng *engine.Engine) {
 
 ## 6. Adding audit trails
 
-For production, add an audit trail plugin to record all safety events:
+Add the audit hook plugin to record safety events. The import path is `audit_hook`; the package name is `audithook`.
 
 ```go
-import "github.com/xraph/shield/audit_hook"
+import audithook "github.com/xraph/shield/audit_hook"
 
-// Create a recorder that bridges to your audit backend
-recorder := audit_hook.RecorderFunc(func(ctx context.Context, event *audit_hook.AuditEvent) error {
+// A recorder that bridges to your audit backend.
+recorder := audithook.RecorderFunc(func(ctx context.Context, event *audithook.AuditEvent) error {
     log.Printf("[AUDIT] %s %s: %s (severity: %s)",
         event.Action,
         event.Resource,
@@ -151,26 +167,31 @@ recorder := audit_hook.RecorderFunc(func(ctx context.Context, event *audit_hook.
     return nil
 })
 
-auditPlugin := audit_hook.New(recorder)
+auditPlugin := audithook.New(recorder)
 
-eng, _ := engine.New(
+eng, err := engine.New(
+    engine.WithStore(st),
     engine.WithPlugin(metricsPlugin),
     engine.WithPlugin(auditPlugin),
 )
 ```
 
+Today the recorder sees `shield.scan.started` and `shield.scan.completed` for every scan, and nothing else.
+
 ## Scan result decisions
+
+`scan.Decision` has four values. Only `allow` is produced today.
 
 | Decision | Meaning |
 |----------|---------|
 | `allow` | Content is safe to proceed |
-| `block` | Content is blocked — do not send |
+| `block` | Content is blocked, do not send |
 | `flag` | Content is flagged for review but allowed |
 | `redact` | Content contains PII that was redacted |
 
 ## Finding layers
 
-Each finding indicates which safety layer produced it:
+Each `scan.Finding` names the layer that produced it in its `Layer` field. No findings are produced yet.
 
 | Layer | Description |
 |-------|-------------|

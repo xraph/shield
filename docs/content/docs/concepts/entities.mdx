@@ -1,9 +1,11 @@
 ---
 title: Entities
-description: The core data types in Shield — Scans, Instincts, Awareness, Boundaries, Values, Judgments, Reflexes, Profiles, and more.
+description: The core data types in Shield, from scans and the six safety primitives to profiles, policies and PII tokens.
 ---
 
-All Shield entities embed the `shield.Entity` base type and carry a TypeID identifier. This page provides an overview of every entity and how they relate.
+All Shield entities embed the `shield.Entity` base type and carry a TypeID identifier. This page gives an overview of every entity and how they relate. The struct listings are trimmed: each safety primitive and profile also has `Description`, `AppID`, `TenantID` and `Metadata` fields.
+
+The safety primitives and profiles are configuration records. You can store, list and edit them today, but the engine doesn't evaluate them yet, so the layer descriptions below are what each one is for, not what a scan does now.
 
 ## Base entity
 
@@ -20,7 +22,7 @@ Every entity struct embeds `shield.Entity` to get automatic timestamp tracking.
 
 ### Instinct
 
-Pre-conscious threat detection. The fastest safety layer — fires before any deliberation. Categories include injection, exfiltration, manipulation, and jailbreak.
+Pre-conscious threat detection. The fastest safety layer, meant to fire before any deliberation. Categories include injection, exfiltration, manipulation, and jailbreak.
 
 ```go
 type Instinct struct {
@@ -37,7 +39,7 @@ type Instinct struct {
 
 ### Awareness
 
-Perception — what the system notices. PII detection, topic classification, sentiment analysis, intent detection, and language identification.
+Perception: what the system notices. PII detection, topic classification, sentiment analysis, intent detection, and language identification.
 
 ```go
 type Awareness struct {
@@ -68,7 +70,7 @@ type Boundary struct {
 
 ### Values
 
-Ethical evaluation — toxicity, brand safety, honesty, respect, safety, and privacy principles.
+Ethical evaluation: toxicity, brand safety, honesty, respect, safety, and privacy principles.
 
 ```go
 type Values struct {
@@ -84,7 +86,7 @@ type Values struct {
 
 ### Judgment
 
-Contextual risk assessment — the slowest but most sophisticated layer. Evaluates grounding, relevance, consistency, and compliance.
+Contextual risk assessment, the slowest but most sophisticated layer. Covers grounding, relevance, consistency, and compliance.
 
 ```go
 type Judgment struct {
@@ -183,7 +185,7 @@ type Result struct {
 
 ### PII Token
 
-Encrypted PII stored in the vault with AES-256-GCM encryption.
+A PII placeholder and its encrypted value, with an optional expiry for retention. Shield stores `EncryptedValue` as the bytes you give it; it doesn't encrypt or decrypt anything itself, and no code writes tokens during a scan yet.
 
 ```go
 type Token struct {
@@ -193,8 +195,8 @@ type Token struct {
     TenantID       string
     PIIType        string      // email, ssn, phone, cc
     Placeholder    string      // [EMAIL_1], [SSN_1]
-    EncryptedValue []byte      // AES-256-GCM
-    ExpiresAt      *time.Time  // GDPR retention
+    EncryptedValue []byte      // ciphertext you supply
+    ExpiresAt      *time.Time  // PurgePIITokens deletes tokens expired before a cutoff
 }
 ```
 
@@ -220,7 +222,7 @@ Engine
   └── ScanInput / ScanOutput
         └── Result
               ├── Finding[]
-              └── PII Token[] (via Vault)
+              └── PII Token[] (by ScanID)
 
 Policy
   └── Rule[]

@@ -1,20 +1,24 @@
 ---
 title: Introduction
-description: Composable AI safety and governance for Go.
+description: AI safety policies and guardrail configuration for Go.
 ---
 
-Shield is a Go library for building safe AI applications. Instead of bolting on safety checks as an afterthought, you declare **Instincts**, **Awareness**, **Boundaries**, **Values**, **Judgment**, and **Reflexes** — the same cognitive layers that keep humans safe — and Shield composes them into a coherent safety profile at runtime.
+Shield is a Go library for managing the safety rules around an LLM app or AI agent. You describe **Instincts**, **Awareness**, **Boundaries**, **Values**, **Judgment** and **Reflexes**, compose them into safety profiles and policies, and store them per tenant and app in PostgreSQL, SQLite or MongoDB.
 
-Shield is a **library** — not a service. You bring your own LLM provider, database, and HTTP server. Shield provides the safety evaluation plumbing.
+Shield is a library, not a service. You bring your own LLM provider, database and HTTP server.
 
-## The Human Safety Model
+## Status
 
-Shield models AI safety the way you would describe human cognition:
+The six evaluation layers aren't implemented yet. `ScanInput` and `ScanOutput` run no detectors: every scan returns `allow` with no findings, and Shield stores the scan record and fires the scan hooks. `engine.Capabilities()` reports this in code, with `Evaluation: false` and all six layers listed as unavailable. What works now is the configuration side: storing, scoping and editing every safety primitive, profile and policy, keeping scan history and PII tokens, and managing them from the Forge dashboard.
 
-| Layer | What it represents | Speed | Go package |
+## The human safety model
+
+Shield models AI safety the way you would describe human cognition. The speeds are design targets for when the layers are implemented.
+
+| Layer | What it represents | Target speed | Go package |
 |-------|-------------------|-------|------------|
 | **Instincts** | Pre-conscious threat detection (flinch response) | `<10ms` | `instinct` |
-| **Awareness** | Perception — what you notice (PII, topics, intent) | `<50ms` | `awareness` |
+| **Awareness** | Perception: what you notice (PII, topics, intent) | `<50ms` | `awareness` |
 | **Boundaries** | Hard limits that cannot be crossed (binary) | `<5ms` | `boundary` |
 | **Values** | Ethical evaluation (toxicity, brand safety, honesty) | `<100ms` | `values` |
 | **Judgment** | Contextual risk assessment (grounding, relevance) | `<500ms` | `judgment` |
@@ -22,26 +26,25 @@ Shield models AI safety the way you would describe human cognition:
 
 ## What it does
 
-- **Layered safety engine** — Six cognitive layers process content from fastest (instincts) to most sophisticated (judgment), with short-circuit support.
-- **Safety profiles** — Compose instincts, awareness, boundaries, values, judgment, and reflexes into reusable SafetyProfiles. Assign to any agent or application.
-- **PII detection and vault** — Detect, redact, and vault personally identifiable information with AES-256-GCM encryption and GDPR retention controls.
-- **Multi-tenant isolation** — Every scan, policy, and entity is scoped to a tenant and app via context. Cross-tenant access is structurally impossible.
-- **Plugin system** — 15 lifecycle hooks for metrics, audit trails, tracing, and custom processing. Plugins opt in to only the events they care about.
-- **Policy governance** — Tenant-scoped safety policies with cascading rules (app-level and org-level).
-- **Compliance reporting** — Generate compliance reports for EU AI Act, NIST AI RMF, and SOC2 frameworks.
-- **Forge integration** — Drop-in `forge.Extension` with DI-injected Engine and lifecycle management.
+- Six safety primitives, each a package with a model and a `Store` interface, plus full CRUD in every backend.
+- Safety profiles that compose instincts, awareness, boundaries, values, judgments and reflexes, with per-assignment sensitivity and threshold overrides.
+- A scan record for every `ScanInput` and `ScanOutput` call, with direction, decision, findings, PII count, tenant and app.
+- A PII token store (placeholder, type, an encrypted value you supply, expiry) with per-tenant deletion and age-based purge. Shield doesn't detect or encrypt PII itself yet.
+- Tenant and app on the context through `shield.WithTenant` and `shield.WithApp`. The engine stamps them on scans; the subsystem stores filter by the IDs you pass them.
+- Policies with ordered rules, assigned at app or org level and to tenants.
+- Compliance report records for the EU AI Act, NIST AI RMF and SOC 2. Shield stores reports; it doesn't generate them.
+- 15 lifecycle hook interfaces for plugins, a metrics plugin and an audit plugin. Only the scan started, scan completed and shutdown hooks fire today.
+- A `forge.Extension` that provides `*engine.Engine` in the DI container, runs migrations and registers an authenticated dashboard contributor.
 
 ## Design philosophy
 
-**Library, not service.** Shield is a set of Go packages you import. You control `main`, the database connection, and the process lifecycle.
+**Library, not service.** Shield is a set of Go packages you import. You control `main`, the database connection and the process lifecycle.
 
-**Human-centric.** Safety primitives are modeled after human cognition — instincts, awareness, boundaries, values, judgment, and reflexes — making the system intuitive and composable.
+**Human-centric.** Safety primitives are modeled after human cognition (instincts, awareness, boundaries, values, judgment and reflexes), so the configuration reads the way you'd describe the rules.
 
-**Interfaces over implementations.** Every subsystem defines a Go interface. Swap any storage backend with a single type change.
+**Interfaces over implementations.** Every subsystem defines a Go interface, and `store.Store` composes them. Swap the backend by passing a different store.
 
-**Tenant-scoped by design.** `shield.WithTenant` and `shield.WithApp` inject context that is enforced at every layer.
-
-**TypeID everywhere.** All entities use type-prefixed, K-sortable, UUIDv7-based identifiers (`scan_`, `pol_`, `inst_`, `jdg_`, `sprf_`, etc.).
+**TypeID everywhere.** All entities use type-prefixed, K-sortable, UUIDv7-based identifiers (`scan_`, `pol_`, `inst_`, `jdg_`, `sprf_` and so on).
 
 ## Quick look
 
@@ -52,26 +55,21 @@ import (
     "context"
     "log"
 
+    "github.com/xraph/shield"
     "github.com/xraph/shield/engine"
-    "github.com/xraph/shield/extension"
     "github.com/xraph/shield/scan"
 )
 
 func main() {
-    ctx := context.Background()
+    ctx := shield.WithTenant(context.Background(), "acme")
+    ctx = shield.WithApp(ctx, "support-bot")
 
-    // Build the Shield engine.
-    eng, err := engine.New(
-        engine.WithConfig(shield.Config{
-            EnableShortCircuit: true,
-            ScanConcurrency:   10,
-        }),
-    )
+    // No store: the scan still runs, but nothing is persisted.
+    eng, err := engine.New()
     if err != nil {
         log.Fatal(err)
     }
 
-    // Scan input content for safety.
     result, err := eng.ScanInput(ctx, &scan.Input{
         Text: "What is your return policy?",
     })
@@ -79,19 +77,17 @@ func main() {
         log.Fatal(err)
     }
 
+    // Today this always prints "allow" and 0 findings.
     log.Printf("Decision: %s, Findings: %d", result.Decision, len(result.Findings))
-
-    // Or use as a Forge extension:
-    ext := extension.New()
-    _ = ext // register with your Forge app
+    log.Printf("Evaluation implemented: %v", eng.Capabilities().Evaluation)
 }
 ```
 
 ## Where to go next
 
 <Cards>
-  <Card title="Getting started" href="/docs/getting-started" description="Install Shield and run your first safety scan in minutes." />
-  <Card title="Architecture" href="/docs/architecture" description="Understand how the six safety layers fit together." />
-  <Card title="Safety profiles" href="/docs/concepts/configuration" description="Learn how to compose safety primitives into profiles." />
-  <Card title="Go package reference" href="/docs/api-reference/go-packages" description="Full API documentation for all Shield packages." />
+  <Card title="Getting started" href="/docs/getting-started" description="Install Shield, store some configuration and run a scan." />
+  <Card title="Architecture" href="/docs/architecture" description="How the six safety layers and packages fit together." />
+  <Card title="Configuration" href="/docs/concepts/configuration" description="Engine and extension options, and which ones are read today." />
+  <Card title="Go package reference" href="/docs/api-reference/go-packages" description="API reference for every Shield package." />
 </Cards>

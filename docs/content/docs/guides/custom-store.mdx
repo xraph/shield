@@ -3,7 +3,7 @@ title: Custom Store
 description: Implement a custom store backend for Shield persistence.
 ---
 
-Every Shield subsystem defines a Go store interface. These are composed into the single `store.Store` composite. Implement this interface to use any database backend.
+Every Shield subsystem defines a Go store interface, and `store.Store` composes them. Implement it to put Shield on another database. If you also want the Forge dashboard to work, implement the scoped dashboard interfaces described at the end.
 
 ## The composite store interface
 
@@ -29,14 +29,12 @@ type Store interface {
 
 ## Implementing a custom store
 
-Your struct must implement all methods from each subsystem store. Here's the pattern:
+Your type must implement every method of every subsystem store:
 
 ```go
 package mystore
 
 import (
-    "context"
-
     "github.com/xraph/shield/store"
 )
 
@@ -44,16 +42,23 @@ type MyStore struct {
     // your database connection fields
 }
 
-// Compile-time check
+// Compile-time check.
 var _ store.Store = (*MyStore)(nil)
-
-// Register with the engine:
-eng, _ := engine.New(engine.WithStore(&MyStore{}))
 ```
+
+Then pass it to the engine:
+
+```go
+eng, err := engine.New(engine.WithStore(&mystore.MyStore{}))
+```
+
+or to the Forge extension with `extension.WithStore`. In a Forge app, a `*grove.DB` in the container takes precedence over `WithStore` (see [Forge extension](/docs/guides/forge-extension#store-resolution)).
+
+The engine itself calls only `CreateScan` (once per scan) and `Ping` (from `Health`). Everything else is there for your own code and the dashboard.
 
 ## Subsystem store interfaces
 
-Each safety primitive defines its own store interface. Here are the key ones:
+Each safety primitive defines its own store interface. The key ones:
 
 ### instinct.Store
 
@@ -93,6 +98,8 @@ type Store interface {
 }
 ```
 
+The built-in stores implement `PurgePIITokens` as "delete tokens whose `ExpiresAt` is set and before `olderThan`".
+
 ### policy.Store
 
 ```go
@@ -109,11 +116,29 @@ type Store interface {
 }
 ```
 
-All other subsystem stores (awareness, boundary, values, judgment, reflex, profile, compliance) follow the same CRUD pattern as `instinct.Store`.
+The other subsystem stores (awareness, boundary, values, judgment, reflex and profile) follow the same CRUD pattern as `instinct.Store`. `compliance.Store` has only `CreateReport`, `GetReport` and `ListReports`.
+
+## Dashboard support
+
+The Forge dashboard contributor only registers when the store also implements `store.DashboardStore`:
+
+```go
+type DashboardStore interface {
+    DashboardList(context.Context, Scope, string, Filter) (Page, error)
+    DashboardGet(context.Context, Scope, string, string) (json.RawMessage, error)
+    DashboardCreate(context.Context, Scope, string, json.RawMessage) (json.RawMessage, error)
+    DashboardUpdate(context.Context, Scope, string, string, json.RawMessage) (json.RawMessage, error)
+    DashboardDelete(context.Context, Scope, string, string) error
+}
+```
+
+These calls are strict. Validate the `store.Scope` on every call and return `store.ErrScope` for an empty tenant or app instead of widening the query. Return `store.ErrNotFound` for a row outside the scope, and `store.ErrConflict` when an update's expected `updated_at` doesn't match. Policy assignment, PII token listing and retention, and PII stats come from the optional `store.AssignmentStore`, `store.PrivacyStore` and `store.PrivacyStatsStore` interfaces; without them those dashboard features report themselves unavailable.
+
+The `store/storetest` package has a shared suite for all of this. `storetest.Run(t, factory)` takes a factory returning a `storetest.Backend` (the store plus all four dashboard interfaces) and runs the same checks the built-in stores pass.
 
 ## Tips
 
-- Use compile-time interface checks: `var _ store.Store = (*MyStore)(nil)`
-- Enforce tenant scoping in all queries — filter by `app_id` and `tenant_id`
-- Wrap sentinel errors with context: `fmt.Errorf("mystore: %w", shield.ErrScanNotFound)`
-- Use JSONB columns for slice fields like `Strategies`, `Detectors`, `Rules`, `Triggers`, `Actions`
+- Use compile-time interface checks: `var _ store.Store = (*MyStore)(nil)`.
+- Return the subsystem's not-found sentinel (`shield.ErrScanNotFound` and so on) when a row is missing, as the built-in stores do, so `errors.Is` works for callers.
+- The plain `store.Store` methods aren't scoped by context in the built-in stores; they filter by the IDs in the filter. You can be stricter in yours.
+- Keep slice fields such as `Strategies`, `Detectors`, `Rules`, `Triggers` and `Actions` in JSON or JSONB columns, as the built-in SQL stores do.

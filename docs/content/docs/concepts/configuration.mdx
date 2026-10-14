@@ -1,20 +1,24 @@
 ---
 title: Configuration
-description: Options and defaults for the Shield engine and Forge extension.
+description: Options and defaults for the Shield engine and Forge extension, and which ones are read today.
 ---
+
+Most of Shield's engine configuration describes how the evaluation layers will behave once they exist. The layers aren't implemented yet, so the engine stores these values and never reads them. This page says which settings do something today.
 
 ## Engine configuration
 
-`shield.Config` holds global defaults for the safety engine:
+`shield.Config` holds the engine settings:
 
 ```go
 type Config struct {
-    DefaultProfile     string        // safety profile to use when none specified
+    DefaultProfile     string        // safety profile to use when none is specified
     ShutdownTimeout    time.Duration // graceful shutdown timeout (default: 30s)
     ScanConcurrency    int           // max parallel scans (default: 10)
     EnableShortCircuit bool          // skip deeper layers on block (default: true)
 }
 ```
+
+None of these four fields is read anywhere. The engine keeps the struct and returns it from `eng.Config()` (the dashboard shows it through its `config.detail` query), but scans don't resolve a default profile, there's no concurrency limit, no layer runs that could short-circuit, and `Stop` doesn't wait on a timeout.
 
 ### Defaults
 
@@ -27,9 +31,7 @@ shield.DefaultConfig() // returns:
 // }
 ```
 
-### Overriding defaults
-
-Pass a custom config via engine options:
+`engine.New` starts from `shield.DefaultConfig()`. Pass `engine.WithConfig` to replace it:
 
 ```go
 eng, err := engine.New(
@@ -46,102 +48,95 @@ eng, err := engine.New(
 
 | Option | Description |
 |--------|-------------|
-| `engine.WithStore(s)` | Sets the composite store |
-| `engine.WithConfig(cfg)` | Sets the engine configuration |
+| `engine.WithStore(s)` | Sets the composite `store.Store`. Scans are persisted only when a store is set |
+| `engine.WithConfig(cfg)` | Replaces the `shield.Config` (stored, not read) |
 | `engine.WithPlugin(p)` | Registers a lifecycle plugin |
-| `engine.WithLogger(l)` | Sets the structured logger |
+| `engine.WithLogger(l)` | Sets the go-utils `log.Logger` the engine uses to warn when a scan can't be persisted |
+
+The plugin registry always uses a no-op logger, so `WithLogger` doesn't make hook errors visible. A plugin that returns an error is skipped silently.
 
 ## Top-level Shield options
 
-The root `shield` package provides options for composing safety primitives inline:
+The root `shield` package defines an `Option` type and an `Options` struct:
 
 ```go
 type Options struct {
     Config     Config
-    Profile    string     // default safety profile name
-    Instincts  []string   // inline instinct names
-    Awareness  []string   // inline awareness detector names
-    Values     []string   // inline value names
-    Boundaries []string   // inline boundary names
-    Judgments  []string   // inline judgment names
-    Reflexes   []string   // inline reflex names
+    Profile    string   // default safety profile name
+    Instincts  []string // inline instinct names
+    Awareness  []string // inline awareness detector names
+    Values     []string // inline value names
+    Boundaries []string // inline boundary names
+    Judgments  []string // inline judgment names
+    Reflexes   []string // inline reflex names
 }
 ```
 
-| Option | Description |
-|--------|-------------|
-| `shield.WithConfig(cfg)` | Sets the Shield configuration |
-| `shield.WithProfile(name)` | Sets the default safety profile |
-| `shield.WithInstincts(names...)` | Adds inline instinct names |
-| `shield.WithAwareness(names...)` | Adds inline awareness detector names |
-| `shield.WithValues(names...)` | Adds inline value names |
-| `shield.WithBoundaries(names...)` | Adds inline boundary names |
-| `shield.WithJudgments(names...)` | Adds inline judgment names |
-| `shield.WithReflexes(names...)` | Adds inline reflex names |
+with `shield.WithConfig`, `shield.WithProfile`, `shield.WithInstincts`, `shield.WithAwareness`, `shield.WithValues`, `shield.WithBoundaries`, `shield.WithJudgments` and `shield.WithReflexes`. Nothing in Shield accepts these options: there's no `shield.New`, and the engine takes `engine.Option` values instead. Ignore them for now.
 
 ## Forge extension options
 
-The `extension.New` function accepts its own set of options:
+`extension.New` takes its own options:
 
 ```go
-ext := extension.New(
-    extension.WithStore(pgStore),
-    extension.WithPlugin(metricsPlugin),
-    extension.WithDisableRoutes(),
-    extension.WithDisableMigrate(),
-    extension.WithBasePath("/shield"),
-    extension.WithGroveDatabase(""),
+ext := shieldext.New(
+    shieldext.WithStore(pgStore),
+    shieldext.WithPlugin(metricsPlugin),
+    shieldext.WithDisableRoutes(),
+    shieldext.WithDisableMigrate(),
+    shieldext.WithGroveDatabase(""),
 )
 ```
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `WithStore(s)` | `store.Store` | -- | Composite store (auto-resolved from grove if not set). |
-| `WithPlugin(p)` | `plugin.Plugin` | -- | Lifecycle plugin (repeatable). |
-| `WithEngineOption(opt)` | `engine.Option` | -- | Pass-through engine option. |
-| `WithConfig(cfg)` | `Config` | defaults | Full config struct. |
-| `WithDisableRoutes()` | -- | `false` | Skip HTTP route registration. |
-| `WithDisableMigrate()` | -- | `false` | Skip migrations on Start. |
-| `WithBasePath(path)` | `string` | `""` | URL prefix for shield routes. |
-| `WithGroveDatabase(name)` | `string` | `""` | Named grove.DB to resolve from DI. |
-| `WithRequireConfig(b)` | `bool` | `false` | Require config in YAML files. |
+| `WithStore(s)` | `store.Store` | none | Composite store. A store built from a `*grove.DB` in the container replaces it |
+| `WithGroveDatabase(name)` | `string` | not set | Resolve a `*grove.DB` from DI; `""` means the default one |
+| `WithPlugin(p)` | `plugin.Plugin` | none | Lifecycle plugin (repeatable) |
+| `WithEngineOption(opt)` | `engine.Option` | none | Pass any engine option through |
+| `WithConfig(cfg)` | `extension.Config` | `DefaultConfig()` | Replace the whole config struct |
+| `WithDisableRoutes()` | none | `false` | Don't register the dashboard contributor (Shield has no REST routes) |
+| `WithDisableMigrate()` | none | `false` | Skip migrations on `Start` |
+| `WithBasePath(path)` | `string` | `""` | Stored but not used by anything |
+| `WithRequireConfig(b)` | `bool` | `false` | Fail `Register` when no config key is found |
+| `WithDashboardActorResolver(fn)` | `contract.ActorResolver` | claims resolver | Map the dashboard principal to a scope and permissions |
+| `WithDashboardAudit(fn)` | `admin.Audit` | none | Audit sink required by PII retention commands |
 
 ## File-based configuration (YAML)
 
-When running as a Forge extension, Shield automatically loads configuration from YAML config files. The extension looks for config under the following keys (in order):
+As a Forge extension, Shield reads its config from the first of these keys it finds:
 
-1. `extensions.shield` -- standard Forge extension config namespace
-2. `shield` -- top-level shorthand
-
-### Example
+1. `extensions.shield`
+2. `shield`
 
 ```yaml
-# forge.yaml
 extensions:
   shield:
     disable_routes: false
     disable_migrate: false
-    base_path: "/shield"
+    grove_database: ""
     default_profile: ""
-    shutdown_timeout: "30s"
     scan_concurrency: 10
     enable_short_circuit: true
-    grove_database: ""
+    shutdown_timeout: 30s
+    base_path: ""
 ```
 
-### Config fields
-
-| YAML Key | Type | Default | Description |
+| YAML key | Type | Default | What it does today |
 |----------|------|---------|-------------|
-| `disable_routes` | `bool` | `false` | Skip HTTP route registration |
-| `disable_migrate` | `bool` | `false` | Skip migrations on Start |
-| `base_path` | `string` | `""` | URL prefix for all routes |
-| `default_profile` | `string` | `""` | Safety profile when none specified |
-| `shutdown_timeout` | `duration` | `"30s"` | Max graceful shutdown wait |
-| `scan_concurrency` | `int` | `10` | Max parallel scan operations |
-| `enable_short_circuit` | `bool` | `true` | Skip deeper layers on block decision |
-| `grove_database` | `string` | `""` | Named grove.DB from DI |
+| `disable_routes` | `bool` | `false` | `true` stops the dashboard contributor from registering |
+| `disable_migrate` | `bool` | `false` | `true` skips migrations on `Start` |
+| `grove_database` | `string` | `""` | Named `*grove.DB` to resolve from DI |
+| `default_profile` | `string` | `""` | Passed to the engine config, never read |
+| `scan_concurrency` | `int` | `10` | Passed to the engine config, never read |
+| `enable_short_circuit` | `bool` | `true` | Passed to the engine config, never read |
+| `shutdown_timeout` | `duration` | `30s` | Passed to the engine config, never read |
+| `base_path` | `string` | `""` | Read and logged, never used |
+
+`WithRequireConfig` has no YAML key.
 
 ### Merge behaviour
 
-File-based configuration is merged with programmatic options. Programmatic boolean flags (`DisableRoutes`, `DisableMigrate`) always win when set to `true`. For other fields, YAML values take precedence, then programmatic values, then defaults.
+File-based configuration is merged with programmatic options. `DisableRoutes`, `DisableMigrate` and `EnableShortCircuit` set to `true` in code always win, and because `EnableShortCircuit` defaults to `true`, YAML can't turn it off. For the other fields the file wins, then programmatic values, then defaults.
+
+The [Forge extension guide](/docs/guides/forge-extension) covers store resolution and the dashboard claims.

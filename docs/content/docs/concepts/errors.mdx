@@ -1,79 +1,68 @@
 ---
 title: Error Handling
-description: Sentinel errors returned by Shield operations.
+description: Sentinel errors in Shield, and which ones the code actually returns.
 ---
 
-Shield defines sentinel errors in the root `shield` package. All errors are created with `errors.New` and can be checked with `errors.Is`.
+Shield defines sentinel errors in the root `shield` package and in `store`. All are created with `errors.New`, so check them with `errors.Is`. Many of the root sentinels are reserved for the evaluation layers and aren't returned by anything yet; the tables below say which.
 
-## Store errors
+## Not-found errors
 
-| Error | Description |
+The PostgreSQL, SQLite and MongoDB stores return these from `Get<Thing>` and `Get<Thing>ByName` when no row matches.
+
+| Error | Returned by |
+|-------|-------------|
+| `ErrScanNotFound` | `GetScan` |
+| `ErrPolicyNotFound` | `GetPolicy`, `GetPolicyByName` |
+| `ErrInstinctNotFound` | `GetInstinct`, `GetInstinctByName` |
+| `ErrJudgmentNotFound` | `GetJudgment`, `GetJudgmentByName` |
+| `ErrAwarenessNotFound` | `GetAwareness`, `GetAwarenessByName` |
+| `ErrValueNotFound` | `GetValues`, `GetValuesByName` |
+| `ErrReflexNotFound` | `GetReflex`, `GetReflexByName` |
+| `ErrBoundaryNotFound` | `GetBoundary`, `GetBoundaryByName` |
+| `ErrProfileNotFound` | `GetProfile`, `GetProfileByName` |
+| `ErrComplianceNotFound` | `GetReport` |
+
+`ErrPIITokenNotFound` is defined but not returned: the PII load methods return whatever tokens exist.
+
+## Dashboard store errors
+
+The `store` package defines the errors for the scoped `store.DashboardStore` contract that the Forge dashboard uses:
+
+| Error | Cause |
+|-------|-------------|
+| `store.ErrScope` | Tenant or app missing from the `store.Scope`, or an invalid policy scope |
+| `store.ErrNotFound` | No row with that ID inside the scope |
+| `store.ErrCollection` | Unknown collection name |
+| `store.ErrConflict` | An update's expected `updated_at` doesn't match (someone else saved first) |
+
+## Defined but not returned yet
+
+These exist for the engine and evaluation layers and aren't returned by any code today:
+
+| Error | Intended meaning |
 |-------|-------------|
 | `ErrNoStore` | No store was configured on the engine |
 | `ErrStoreClosed` | The store has been closed |
 | `ErrMigrateFailed` | Database migration failed |
-
-## Not-found errors
-
-| Error | Description |
-|-------|-------------|
-| `ErrScanNotFound` | Scan result with the given ID does not exist |
-| `ErrPolicyNotFound` | Policy with the given ID does not exist |
-| `ErrInstinctNotFound` | Instinct with the given ID does not exist |
-| `ErrJudgmentNotFound` | Judgment with the given ID does not exist |
-| `ErrAwarenessNotFound` | Awareness detector with the given ID does not exist |
-| `ErrValueNotFound` | Value with the given ID does not exist |
-| `ErrReflexNotFound` | Reflex with the given ID does not exist |
-| `ErrBoundaryNotFound` | Boundary with the given ID does not exist |
-| `ErrProfileNotFound` | Safety profile with the given ID does not exist |
-| `ErrPIITokenNotFound` | PII token with the given ID does not exist |
-| `ErrComplianceNotFound` | Compliance report with the given ID does not exist |
-
-## Conflict errors
-
-| Error | Description |
-|-------|-------------|
 | `ErrAlreadyExists` | A resource with the same name already exists |
-
-## Scan errors
-
-| Error | Description |
-|-------|-------------|
-| `ErrInputBlocked` | Input content was blocked by safety scan |
-| `ErrOutputBlocked` | Output content was blocked by safety scan |
-
-## Engine errors
-
-| Error | Description |
-|-------|-------------|
+| `ErrInputBlocked` | Input content was blocked by a safety scan |
+| `ErrOutputBlocked` | Output content was blocked by a safety scan |
 | `ErrNoProfile` | No safety profile configured for the scan |
 | `ErrInvalidConfig` | Invalid engine configuration |
-
-## PII errors
-
-| Error | Description |
-|-------|-------------|
 | `ErrEncryptionKeyMissing` | PII encryption key not configured |
-
-## State errors
-
-| Error | Description |
-|-------|-------------|
 | `ErrInvalidState` | Invalid state transition |
 
-## Error wrapping
+A few consequences worth knowing. A duplicate name comes back as the database driver's own unique-constraint error, not `ErrAlreadyExists`. A blocked scan wouldn't be an error either: `ScanInput` and `ScanOutput` report blocking through `Result.Blocked`, and today they never block. With no store, `engine.Health` returns its own `shield: persistence is not configured` error rather than `ErrNoStore`.
 
-Store implementations wrap these sentinel errors with additional context:
+## Checking errors
 
-```go
-return fmt.Errorf("postgres: get scan %s: %w", scanID, shield.ErrScanNotFound)
-```
-
-Check errors using `errors.Is`:
+The built-in stores return the not-found sentinel itself and wrap every other error with a prefix such as `shield/sqlite: get scan: ...`. Use `errors.Is` either way:
 
 ```go
-result, err := eng.GetScan(ctx, scanID)
+result, err := eng.Store().GetScan(ctx, scanID)
 if errors.Is(err, shield.ErrScanNotFound) {
     // handle not found
 }
 ```
+
+`eng.Store()` returns `nil` when the engine has no store, so check for that first if you didn't set one.
