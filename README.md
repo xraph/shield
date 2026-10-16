@@ -134,7 +134,8 @@ Safety rules for an AI product change often and differ per customer. One tenant 
 | PII handling with retention | A PII token vault (placeholder, type, your encrypted value, expiry), per-tenant deletion and age-based purge |
 | Evidence for audits | Compliance report records for the EU AI Act, NIST AI RMF and SOC 2 |
 | An admin UI with real permissions | A Forge dashboard contract where scope comes only from the signed-in user's claims, with optimistic concurrency on edits |
-| Hooks into your own systems | 15 lifecycle hooks, an audit bridge for [Chronicle](https://github.com/xraph/chronicle) and a metrics plugin |
+| Hooks into your own systems | 15 lifecycle hooks and an audit bridge for [Chronicle](https://github.com/xraph/chronicle) |
+| To see what it's doing | OpenTelemetry spans for every scan, plugin hook and PII purge, plus scan and hook metrics on Forge's `/_/metrics` |
 
 ## The safety model
 
@@ -173,16 +174,13 @@ The `extension` package registers Shield as a Forge extension. It reads `extensi
 import (
 	"github.com/xraph/forge"
 	shieldext "github.com/xraph/shield/extension"
-	"github.com/xraph/shield/observability"
 )
 
 app := forge.NewApp(forge.AppConfig{
 	Name:        "safety",
 	HTTPAddress: ":8080",
 	Extensions: []forge.Extension{
-		shieldext.New(
-			shieldext.WithPlugin(observability.NewMetricsExtension()),
-		),
+		shieldext.New(),
 	},
 })
 ```
@@ -207,7 +205,25 @@ The dashboard takes tenant and app from the signed-in user's `tenant_id` and `ap
 
 ## Lifecycle hooks
 
-Register a plugin with `engine.WithPlugin` (or `WithPlugin` on the extension). It can implement any of 15 hooks: scan started, completed, blocked and failed, one per layer (`OnInstinctTriggered`, `OnAwarenessDetected`, `OnBoundaryEnforced`, `OnValueViolated`, `OnJudgmentAssessed`, `OnReflexFired`), PII detected and redacted, policy evaluated, profile resolved, and shutdown. Today only the scan and shutdown hooks fire. `audithook.New(recorder)` (import path `github.com/xraph/shield/audit_hook`) writes them to an audit trail, and `observability.NewMetricsExtension()` counts them.
+Register a plugin with `engine.WithPlugin` (or `WithPlugin` on the extension). It can implement any of 15 hooks: scan started, completed, blocked and failed, one per layer (`OnInstinctTriggered`, `OnAwarenessDetected`, `OnBoundaryEnforced`, `OnValueViolated`, `OnJudgmentAssessed`, `OnReflexFired`), PII detected and redacted, policy evaluated, profile resolved, and shutdown. Today only the scan and shutdown hooks fire. `audithook.New(recorder)` (import path `github.com/xraph/shield/audit_hook`) writes them to an audit trail. A hook that returns an error is logged and counted, and the scan carries on.
+
+## Telemetry
+
+You don't wire anything in a Forge app. The extension hands `app.Metrics()` and the app logger to the engine, and spans go to the tracer provider `forge.New` installs. Outside Forge, pass a go-utils `metrics.Metrics` to `engine.WithMetrics` and install a global OpenTelemetry tracer provider.
+
+| Span | Kind | Attributes |
+| --- | --- | --- |
+| `scan content` | Internal | `shield.scan.id`, `shield.scan.direction`, `shield.scan.decision`, `shield.scan.blocked`, `shield.scan.findings`, `shield.scan.persisted` (only with a store) |
+| `run plugin hooks` | Internal, child of the scan | `shield.plugin.hook`, `shield.plugin.count`, `shield.plugin.failures` (on failure) |
+| `purge pii tokens` | Internal | `shield.retention.tokens_selected`, `shield.retention.tokens_deleted` |
+
+| Metric (as scraped) | Type | Labels |
+| --- | --- | --- |
+| `forge_shield_scans_completed_total` | counter | `direction` (`input`, `output`), `decision` (`allow`, `block`, `flag`, `redact`) |
+| `forge_shield_scan_duration_seconds` | histogram | `direction`, `decision` |
+| `forge_shield_plugin_hooks_failed_total` | counter | `hook` (`scan_started`, `scan_completed` and the other 13 hooks in snake case) |
+
+Scanned text, findings, tenants, apps and error messages never go on a span or a label. The [observability guide](https://www.xraph.com/docs/shield/guides/observability) has the details, including what changed for anyone scraping the old `shield.scan.*` counters.
 
 ## Documentation
 
@@ -216,7 +232,7 @@ Register a plugin with `engine.WithPlugin` (or `WithPlugin` on the extension). I
 | Overview | [Introduction](https://www.xraph.com/docs/shield), [architecture](https://www.xraph.com/docs/shield/architecture), [getting started](https://www.xraph.com/docs/shield/getting-started) |
 | Concepts | [Entities](https://www.xraph.com/docs/shield/concepts/entities), [multi-tenancy](https://www.xraph.com/docs/shield/concepts/multi-tenancy), [configuration](https://www.xraph.com/docs/shield/concepts/configuration), [errors](https://www.xraph.com/docs/shield/concepts/errors) |
 | Storage | [PostgreSQL](https://www.xraph.com/docs/shield/stores/postgres), [SQLite](https://www.xraph.com/docs/shield/stores/sqlite), [MongoDB](https://www.xraph.com/docs/shield/stores/mongo) |
-| Forge and plugins | [Forge extension](https://www.xraph.com/docs/shield/guides/forge-extension), [custom plugins](https://www.xraph.com/docs/shield/guides/custom-plugin) |
+| Forge and plugins | [Forge extension](https://www.xraph.com/docs/shield/guides/forge-extension), [custom plugins](https://www.xraph.com/docs/shield/guides/custom-plugin), [observability](https://www.xraph.com/docs/shield/guides/observability) |
 
 Some docs pages, including getting started, show scans that block and redact. They describe the design, not what the code does yet, so trust [Status](#status) over them. The Go API is on [pkg.go.dev](https://pkg.go.dev/github.com/xraph/shield).
 

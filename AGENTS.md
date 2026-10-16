@@ -87,7 +87,9 @@ For govulncheck, use CI's Go. CI always resolves the newest 1.26 patch, and an o
 | `store/storetest/` | The shared dashboard conformance suite |
 | `admin/` | `admin.Service`: validation, permissions, field schemas and audited retention between the contract and the scoped stores |
 | `plugin/` | Lifecycle hook interfaces and the registry |
-| `audit_hook/` (package `audithook`), `observability/` | Plugins for an audit trail and for metrics |
+| `audit_hook/` (package `audithook`) | Plugin for an audit trail |
+| `observability/` | Deprecated metrics plugin, kept so old builds compile. It records nothing |
+| `internal/telemetry/` | The shared tracer, the span error helper and the labelled metric vectors the engine, plugin registry and admin service use |
 | `extension/` | The Forge extension, its `Config` and options |
 | `extension/contract/` | The `shield` dashboard contributor: `manifest.yaml`, handlers, and the claim-based actor resolver in `scope.go` |
 | `docs/` | The Fumadocs site |
@@ -107,7 +109,9 @@ IDs come from the `id` package (`id.NewInstinctID()` and friends). Don't build t
 
 `engine.New(opts...)` takes `type Option func(*Engine)` and returns `(*Engine, error)`. `extension.New(opts...)` takes `type Option func(*Extension)`. The extension reads YAML under `extensions.shield`, then `shield`, and merges it with the programmatic options. Its store comes from `WithStore`, a named grove DB (`WithGroveDatabase`), or the default `*grove.DB` in the container, chosen by driver name (`pg`, `sqlite`, `mongo`). With no store at all, `Health` reports that persistence is not configured. Shield mounts no HTTP routes of its own: `BasePath` is loaded and merged but nothing reads it, and `WithDisableRoutes` only stops the dashboard contract from registering.
 
-Logging uses `github.com/xraph/go-utils/log`, with `log.NewNoopLogger()` as the engine default.
+Logging uses `github.com/xraph/go-utils/log`, with `log.NewNoopLogger()` as the engine default. The Forge extension passes the app logger, and the engine passes its logger on to the plugin registry.
+
+Telemetry goes through `internal/telemetry`. Start spans from `telemetry.Tracer()` (scope `github.com/xraph/shield`), mark failures with `telemetry.Fail(span, "<class>", err)`, and never call `span.RecordError` or put an error message, scanned text, a tenant, app, subject or user-chosen name on a span or a label. Metrics take a go-utils `metrics.Metrics` through `engine.WithMetrics` (nil means off), and the extension wires `e.Metrics()`. Name them `shield_<object>_<verb>_total` or `shield_<operation>_duration_seconds`; Forge scrapes them with a `forge_` prefix. `docs/content/docs/guides/observability.mdx` lists every span and metric, so update it when you add one.
 
 ## Dependencies
 

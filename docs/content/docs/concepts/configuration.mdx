@@ -51,9 +51,10 @@ eng, err := engine.New(
 | `engine.WithStore(s)` | Sets the composite `store.Store`. Scans are persisted only when a store is set |
 | `engine.WithConfig(cfg)` | Replaces the `shield.Config` (stored, not read) |
 | `engine.WithPlugin(p)` | Registers a lifecycle plugin |
-| `engine.WithLogger(l)` | Sets the go-utils `log.Logger` the engine uses to warn when a scan can't be persisted |
+| `engine.WithLogger(l)` | Sets the go-utils `log.Logger` the engine uses to warn when a scan can't be persisted. The plugin registry logs hook errors on it too |
+| `engine.WithMetrics(m)` | Records scan and plugin-hook metrics on a go-utils `metrics.Metrics`. `nil`, the default, records nothing. See [Observability](/docs/guides/observability) |
 
-The plugin registry always uses a no-op logger, so `WithLogger` doesn't make hook errors visible. A plugin that returns an error is skipped silently.
+The Forge extension passes the app's logger and metrics for you. An option you pass with `WithEngineOption` comes later, so it wins.
 
 ## Top-level Shield options
 
@@ -81,7 +82,7 @@ with `shield.WithConfig`, `shield.WithProfile`, `shield.WithInstincts`, `shield.
 ```go
 ext := shieldext.New(
     shieldext.WithStore(pgStore),
-    shieldext.WithPlugin(metricsPlugin),
+    shieldext.WithPlugin(auditPlugin),
     shieldext.WithDisableRoutes(),
     shieldext.WithDisableMigrate(),
     shieldext.WithGroveDatabase(""),

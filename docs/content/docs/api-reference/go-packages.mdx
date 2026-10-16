@@ -41,7 +41,9 @@ The scan entry points. No evaluation layer runs yet.
 | `WithStore(s)` | Set composite store |
 | `WithPlugin(p)` | Register lifecycle plugin |
 | `WithConfig(cfg)` | Set engine configuration |
-| `WithLogger(l)` | Set a go-utils `log.Logger` |
+| `WithLogger(l)` | Set a go-utils `log.Logger`; plugin hook errors go to it too |
+| `WithMetrics(m)` | Record `shield_scans_completed_total`, `shield_scan_duration_seconds` and `shield_plugin_hooks_failed_total` on a go-utils `metrics.Metrics` |
+| `ScansCompletedMetric`, `ScanDurationMetric`, `ScanDurationBuckets` | The metric names and histogram bounds |
 
 ### `github.com/xraph/shield/scan`
 
@@ -179,9 +181,11 @@ Compliance report records for the EU AI Act, NIST AI RMF and SOC 2. Shield store
 
 ### `github.com/xraph/shield/plugin`
 
-The `Plugin` base interface, `Registry`, `NewRegistry` and all lifecycle hook interfaces: `ScanStarted`, `ScanCompleted`, `ScanBlocked`, `ScanFailed`, `InstinctTriggered`, `AwarenessDetected`, `JudgmentAssessed`, `ValueViolated`, `ReflexFired`, `BoundaryEnforced`, `PIIDetected`, `PIIRedacted`, `PolicyEvaluated`, `SafetyProfileResolved`, `Shutdown`. Only `ScanStarted`, `ScanCompleted` and `Shutdown` are emitted today.
+The `Plugin` base interface, `Registry` (with `NewRegistry`, `SetLogger` and `SetMetrics`), `HooksFailedMetric` and all lifecycle hook interfaces: `ScanStarted`, `ScanCompleted`, `ScanBlocked`, `ScanFailed`, `InstinctTriggered`, `AwarenessDetected`, `JudgmentAssessed`, `ValueViolated`, `ReflexFired`, `BoundaryEnforced`, `PIIDetected`, `PIIRedacted`, `PolicyEvaluated`, `SafetyProfileResolved`, `Shutdown`. Only `ScanStarted`, `ScanCompleted` and `Shutdown` are emitted today.
 
 ### `github.com/xraph/shield/observability`
+
+Deprecated. `MetricsExtension` implements no hooks and records nothing; use `engine.WithMetrics`.
 
 ```go
 func NewMetricsExtension() *MetricsExtension
