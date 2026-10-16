@@ -185,7 +185,7 @@ The `Plugin` base interface, `Registry` (with `NewRegistry`, `SetLogger` and `Se
 
 ### `github.com/xraph/shield/observability`
 
-Deprecated. `MetricsExtension` implements no hooks and records nothing; use `engine.WithMetrics`.
+Deprecated. `MetricsExtension` implements no hooks and records nothing; use `engine.WithMetrics`. Its exported counter fields (`ScanStartedCount` and the rest) and its `On*` hook methods were removed in v1.8.0, so code that read them no longer compiles. Code that only builds and registers the plugin still does.
 
 ```go
 func NewMetricsExtension() *MetricsExtension

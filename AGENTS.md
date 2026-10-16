@@ -88,7 +88,7 @@ For govulncheck, use CI's Go. CI always resolves the newest 1.26 patch, and an o
 | `admin/` | `admin.Service`: validation, permissions, field schemas and audited retention between the contract and the scoped stores |
 | `plugin/` | Lifecycle hook interfaces and the registry |
 | `audit_hook/` (package `audithook`) | Plugin for an audit trail |
-| `observability/` | Deprecated metrics plugin, kept so old builds compile. It records nothing |
+| `observability/` | Deprecated metrics plugin. It records nothing. Code that only builds and registers it still compiles; its old counter fields and hook methods are gone |
 | `internal/telemetry/` | The shared tracer, the span error helper and the labelled metric vectors the engine, plugin registry and admin service use |
 | `extension/` | The Forge extension, its `Config` and options |
 | `extension/contract/` | The `shield` dashboard contributor: `manifest.yaml`, handlers, and the claim-based actor resolver in `scope.go` |
