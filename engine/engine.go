@@ -23,6 +23,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	log "github.com/xraph/go-utils/log"
+	gometrics "github.com/xraph/go-utils/metrics"
 
 	"github.com/xraph/shield"
 	"github.com/xraph/shield/id"
@@ -32,12 +33,30 @@ import (
 	"github.com/xraph/shield/store"
 )
 
+// The metrics the engine records when WithMetrics is set. A Forge app scrapes
+// them with a forge_ prefix: forge_shield_scans_completed_total and
+// forge_shield_scan_duration_seconds. Both carry direction (input, output)
+// and decision (allow, block, flag, redact).
+const (
+	ScansCompletedMetric = "shield_scans_completed_total"
+	ScanDurationMetric   = "shield_scan_duration_seconds"
+)
+
+// ScanDurationBuckets are the histogram bounds for ScanDurationMetric, in
+// seconds. They span the layer budgets, from a 5ms boundary check to a
+// 500ms judgment, with headroom for storing the result.
+var ScanDurationBuckets = []float64{0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5}
+
 // Engine is the core safety execution engine.
 type Engine struct {
 	store    store.Store
 	registry *plugin.Registry
 	config   shield.Config
 	logger   log.Logger
+	metrics  gometrics.Metrics
+
+	scansCompleted *telemetry.CounterVec
+	scanDuration   *telemetry.HistogramVec
 }
 
 // Option configures the Engine.
@@ -64,6 +83,14 @@ func WithLogger(l log.Logger) Option {
 	return func(e *Engine) { e.logger = l }
 }
 
+// WithMetrics records scan and plugin metrics on m: ScansCompletedMetric,
+// ScanDurationMetric and plugin.HooksFailedMetric. In a Forge app pass
+// app.Metrics(); the Shield Forge extension does this for you. A nil m, the
+// default, records nothing.
+func WithMetrics(m gometrics.Metrics) Option {
+	return func(e *Engine) { e.metrics = m }
+}
+
 // New creates a new safety engine with the given options.
 func New(opts ...Option) (*Engine, error) {
 	e := &Engine{
@@ -75,6 +102,12 @@ func New(opts ...Option) (*Engine, error) {
 		opt(e)
 	}
 	e.registry.SetLogger(e.logger)
+	e.registry.SetMetrics(e.metrics)
+	e.scansCompleted = telemetry.NewCounterVec(e.metrics, ScansCompletedMetric,
+		"Safety scans completed, by direction and decision.", "direction", "decision")
+	e.scanDuration = telemetry.NewHistogramVec(e.metrics, ScanDurationMetric,
+		"Wall time of one safety scan, plugin hooks and storing the result included.",
+		"s", ScanDurationBuckets, "direction", "decision")
 	return e, nil
 }
 
@@ -164,6 +197,10 @@ func (e *Engine) executeScan(ctx context.Context, input *scan.Input) (*scan.Resu
 		attribute.Bool("shield.scan.blocked", result.Blocked),
 		attribute.Int("shield.scan.findings", len(result.Findings)),
 	)
+	direction, decision := string(result.Direction), string(result.Decision)
+	e.scansCompleted.Inc(direction, decision)
+	e.scanDuration.Observe(time.Since(start).Seconds(), direction, decision)
+
 	return result, nil
 }
 

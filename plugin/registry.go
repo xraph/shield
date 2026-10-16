@@ -9,12 +9,18 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	log "github.com/xraph/go-utils/log"
+	gometrics "github.com/xraph/go-utils/metrics"
 
 	"github.com/xraph/shield/id"
 	"github.com/xraph/shield/internal/telemetry"
 )
 
-// The shield.plugin.hook span attribute values.
+// HooksFailedMetric counts hook calls that returned an error, labelled by
+// hook. A Forge app scrapes it as forge_shield_plugin_hooks_failed_total.
+const HooksFailedMetric = "shield_plugin_hooks_failed_total"
+
+// The hook label values on HooksFailedMetric and the shield.plugin.hook span
+// attribute.
 const (
 	hookScanStarted           = "scan_started"
 	hookScanCompleted         = "scan_completed"
@@ -43,8 +49,9 @@ type entry[H any] struct {
 // It type-caches plugins at registration time so emit calls iterate
 // only over plugins that implement the relevant hook.
 type Registry struct {
-	plugins []Plugin
-	logger  log.Logger
+	plugins     []Plugin
+	logger      log.Logger
+	hooksFailed *telemetry.CounterVec
 
 	scanStarted           []entry[ScanStarted]
 	scanCompleted         []entry[ScanCompleted]
@@ -79,10 +86,18 @@ func (r *Registry) SetLogger(l log.Logger) {
 	}
 }
 
+// SetMetrics counts failed hook calls on m as HooksFailedMetric. In a Forge
+// app pass app.Metrics(); the engine does this for you with engine.WithMetrics.
+// A nil m records nothing. Call it before the first Emit.
+func (r *Registry) SetMetrics(m gometrics.Metrics) {
+	r.hooksFailed = telemetry.NewCounterVec(m, HooksFailedMetric,
+		"Plugin hook calls that returned an error. Shield logs the error and carries on.", "hook")
+}
+
 // run calls one hook on every plugin that implements it. When there is at
 // least one, the calls share a "run plugin hooks" span under ctx, so a slow
 // or failing plugin shows up inside the scan that triggered it. Hook errors
-// are logged, never returned: a plugin can't fail a scan.
+// are logged and counted, never returned: a plugin can't fail a scan.
 func run[H any](ctx context.Context, r *Registry, hook string, entries []entry[H], call func(context.Context, H) error) {
 	if len(entries) == 0 {
 		return
@@ -98,6 +113,7 @@ func run[H any](ctx context.Context, r *Registry, hook string, entries []entry[H
 		if err := call(ctx, e.hook); err != nil {
 			failures++
 			r.logger.Warn("plugin: hook error", log.String("hook", hook), log.String("plugin", e.name), log.Error(err))
+			r.hooksFailed.Inc(hook)
 			telemetry.Exception(span, err)
 		}
 	}

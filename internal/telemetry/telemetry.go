@@ -1,8 +1,10 @@
-// Package telemetry holds the tracing helpers the engine, the plugin
-// registry and the admin service share.
+// Package telemetry holds the tracing and metric helpers the engine, the
+// plugin registry and the admin service share.
 //
 // Spans go to the global OpenTelemetry tracer provider, which forge.New
-// installs.
+// installs. Metrics go to a go-utils metrics.Metrics, which in a Forge app is
+// app.Metrics(); Forge scrapes a name like shield_scans_completed_total as
+// forge_shield_scans_completed_total.
 package telemetry
 
 import (
