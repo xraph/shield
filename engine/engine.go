@@ -19,10 +19,14 @@ import (
 	"errors"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+
 	log "github.com/xraph/go-utils/log"
 
 	"github.com/xraph/shield"
 	"github.com/xraph/shield/id"
+	"github.com/xraph/shield/internal/telemetry"
 	"github.com/xraph/shield/plugin"
 	"github.com/xraph/shield/scan"
 	"github.com/xraph/shield/store"
@@ -54,7 +58,8 @@ func WithConfig(cfg shield.Config) Option {
 	return func(e *Engine) { e.config = cfg }
 }
 
-// WithLogger sets a custom logger.
+// WithLogger sets a custom logger. The plugin registry reports hook errors
+// on it too.
 func WithLogger(l log.Logger) Option {
 	return func(e *Engine) { e.logger = l }
 }
@@ -69,6 +74,7 @@ func New(opts ...Option) (*Engine, error) {
 	for _, opt := range opts {
 		opt(e)
 	}
+	e.registry.SetLogger(e.logger)
 	return e, nil
 }
 
@@ -85,9 +91,20 @@ func (e *Engine) ScanOutput(ctx context.Context, input *scan.Input) (*scan.Resul
 }
 
 // executeScan runs the layered safety evaluation.
+//
+// The scan runs under a "scan content" span. Its attributes are counts,
+// enums and the scan ID; the scanned text, findings and tenant never go on
+// it. Plugin hooks and the store write nest under it, and so will each
+// layer once it exists.
 func (e *Engine) executeScan(ctx context.Context, input *scan.Input) (*scan.Result, error) {
 	start := time.Now()
 	scanID := id.NewScanID()
+
+	ctx, span := telemetry.Tracer().Start(ctx, "scan content", trace.WithAttributes(
+		attribute.String("shield.scan.id", scanID.String()),
+		attribute.String("shield.scan.direction", string(input.Direction)),
+	))
+	defer span.End()
 
 	result := &scan.Result{
 		ID:        scanID,
@@ -99,6 +116,10 @@ func (e *Engine) executeScan(ctx context.Context, input *scan.Input) (*scan.Resu
 
 	// Emit scan started
 	e.registry.EmitScanStarted(ctx, scanID, string(input.Direction), input.Text)
+
+	// Each layer below, once implemented, gets a child span of ctx with a
+	// shield.scan.layer attribute naming it (instincts, awareness,
+	// boundaries, values, judgments, reflexes).
 
 	// Layer 1: INSTINCTS — fastest, pre-conscious threat detection
 	// TODO: Execute registered instincts
@@ -127,13 +148,22 @@ func (e *Engine) executeScan(ctx context.Context, input *scan.Input) (*scan.Resu
 		e.registry.EmitScanBlocked(ctx, scanID, string(result.Decision))
 	}
 
-	// Persist result
+	// Persist result. A failed write doesn't fail the scan, but the span
+	// says so: the dashboard will never show this scan.
 	if e.store != nil {
-		if err := e.store.CreateScan(ctx, result); err != nil {
-			e.logger.Warn("engine: failed to persist scan result", log.String("scan_id", scanID.String()), log.Error(err))
+		persistErr := e.store.CreateScan(ctx, result)
+		if persistErr != nil {
+			e.logger.Warn("engine: failed to persist scan result", log.String("scan_id", scanID.String()), log.Error(persistErr))
+			telemetry.Fail(span, "persist_failed", persistErr)
 		}
+		span.SetAttributes(attribute.Bool("shield.scan.persisted", persistErr == nil))
 	}
 
+	span.SetAttributes(
+		attribute.String("shield.scan.decision", string(result.Decision)),
+		attribute.Bool("shield.scan.blocked", result.Blocked),
+		attribute.Int("shield.scan.findings", len(result.Findings)),
+	)
 	return result, nil
 }
 

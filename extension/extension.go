@@ -105,10 +105,15 @@ func (e *Extension) Register(fapp forge.App) error {
 		)
 	}
 
-	opts := append([]engine.Option{engine.WithConfig(shield.Config{
-		DefaultProfile: e.config.DefaultProfile, ShutdownTimeout: e.config.ShutdownTimeout,
-		ScanConcurrency: e.config.ScanConcurrency, EnableShortCircuit: e.config.EnableShortCircuit,
-	})}, e.engineOpts...)
+	// The app's logger goes first, so an engine option you pass through
+	// WithEngineOption can still replace it.
+	opts := append([]engine.Option{
+		engine.WithConfig(shield.Config{
+			DefaultProfile: e.config.DefaultProfile, ShutdownTimeout: e.config.ShutdownTimeout,
+			ScanConcurrency: e.config.ScanConcurrency, EnableShortCircuit: e.config.EnableShortCircuit,
+		}),
+		engine.WithLogger(e.Logger()),
+	}, e.engineOpts...)
 	eng, err := engine.New(opts...)
 	if err != nil {
 		return err
