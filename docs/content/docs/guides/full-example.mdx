@@ -19,7 +19,6 @@ import (
 
     "github.com/xraph/shield"
     "github.com/xraph/shield/engine"
-    "github.com/xraph/shield/observability"
     "github.com/xraph/shield/scan"
     sqlitestore "github.com/xraph/shield/store/sqlite"
 )
@@ -40,12 +39,10 @@ func main() {
         log.Fatal(err)
     }
 
-    // Build the engine with a store and metrics.
-    metricsPlugin := observability.NewMetricsExtension()
-
+    // Build the engine with a store. Pass engine.WithMetrics to count
+    // scans; see the observability guide.
     eng, err := engine.New(
         engine.WithStore(st),
-        engine.WithPlugin(metricsPlugin),
     )
     if err != nil {
         log.Fatal(err)
@@ -171,7 +168,6 @@ auditPlugin := audithook.New(recorder)
 
 eng, err := engine.New(
     engine.WithStore(st),
-    engine.WithPlugin(metricsPlugin),
     engine.WithPlugin(auditPlugin),
 )
 ```

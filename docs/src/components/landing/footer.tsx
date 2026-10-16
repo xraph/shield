@@ -20,7 +20,7 @@ const footerLinks = {
   ],
   Extensions: [
     { label: "Audit Hook", href: "/docs/extensions/audit-hook" },
-    { label: "Observability", href: "/docs/extensions/observability" },
+    { label: "Observability", href: "/docs/guides/observability" },
     { label: "Custom Plugin", href: "/docs/guides/custom-plugin" },
     { label: "Custom Store", href: "/docs/guides/custom-store" },
   ],

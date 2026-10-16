@@ -9,8 +9,12 @@ import (
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/xraph/shield/engine"
 	"github.com/xraph/shield/id"
+	"github.com/xraph/shield/internal/telemetry"
 	"github.com/xraph/shield/store"
 )
 
@@ -423,17 +427,28 @@ func (s *Service) RetentionExecute(ctx context.Context, a Actor, key string) (in
 	if !ok {
 		return 0, fail("UNAVAILABLE", "PII retention is unavailable")
 	}
+	// The purge itself (audit, delete, audit) runs under its own span inside
+	// forge's dispatch span, so you can see which step failed and how many
+	// tokens went. The checks above are the dispatch span's business.
+	ctx, span := telemetry.Tracer().Start(ctx, "purge pii tokens", trace.WithAttributes(
+		attribute.Int("shield.retention.tokens_selected", len(p.TokenIDs)),
+	))
+	defer span.End()
 	event := AuditEvent{Subject: a.Subject, Scope: a.Scope, Action: "pii.retention.requested", TokenIDs: p.TokenIDs, Cutoff: p.Cutoff}
 	if err := s.audit(ctx, event); err != nil {
+		telemetry.Fail(span, "audit_failed", err)
 		return 0, fail("UNAVAILABLE", "Could not record retention audit; nothing was deleted")
 	}
 	n, err := db.DashboardDeleteTokens(ctx, a.Scope, p.Cutoff, p.TokenIDs)
 	if err != nil {
+		telemetry.Fail(span, "delete_failed", err)
 		return 0, err
 	}
+	span.SetAttributes(attribute.Int64("shield.retention.tokens_deleted", n))
 	event.Action = "pii.retention.completed"
 	event.Affected = n
 	if err = s.audit(ctx, event); err != nil {
+		telemetry.Fail(span, "completion_audit_failed", err)
 		return n, fail("INTERNAL", "Retention completed but its completion audit failed")
 	}
 	return n, nil

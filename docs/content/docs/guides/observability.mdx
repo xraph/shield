@@ -1,0 +1,113 @@
+---
+title: Observability
+description: The spans and metrics Shield records, how to see them, and what changed from the old metrics plugin.
+---
+
+In a Forge app you don't set anything up. The extension hands the engine your app's metrics and logger, and Shield's spans go to the tracer provider `forge.New` installs. Run a scan, then look:
+
+```bash
+curl -s localhost:8080/_/metrics | grep forge_shield_
+```
+
+```text
+forge_shield_scans_completed_total{decision="allow",direction="input"} 1
+forge_shield_scan_duration_seconds_count{decision="allow",direction="input"} 1
+```
+
+Traces show up wherever your Forge app exports them. A scan made inside an HTTP handler sits under that request's server span.
+
+## Without Forge
+
+Give the engine a go-utils `metrics.Metrics` and install a global OpenTelemetry tracer provider:
+
+```go
+import (
+    "go.opentelemetry.io/otel"
+    sdktrace "go.opentelemetry.io/otel/sdk/trace"
+
+    "github.com/xraph/shield/engine"
+)
+
+otel.SetTracerProvider(sdktrace.NewTracerProvider( /* your exporter */ ))
+
+eng, err := engine.New(
+    engine.WithStore(st),
+    engine.WithMetrics(m),   // nil, the default, records nothing
+    engine.WithLogger(logger),
+)
+```
+
+The sink has to keep one series per label set, the way a Forge app's `app.Metrics()` does. go-utils' plain `metrics.NewMetricsCollector` keys series by name alone, so every direction and decision would land on the same counter.
+
+To switch metrics off inside Forge, pass `shieldext.WithEngineOption(engine.WithMetrics(nil))`. Options you pass that way come after the extension's own, so yours win.
+
+## Spans
+
+Every span comes from the `github.com/xraph/shield` tracer and has kind Internal.
+
+| Span | Where | Attributes |
+| --- | --- | --- |
+| `scan content` | Every `ScanInput` and `ScanOutput` call | `shield.scan.id`, `shield.scan.direction` (`input`, `output`), `shield.scan.decision` (`allow`, `block`, `flag`, `redact`), `shield.scan.blocked`, `shield.scan.findings` (count), `shield.scan.persisted` (only when a store is set) |
+| `run plugin hooks` | Child of the scan, once per hook that at least one plugin implements | `shield.plugin.hook` (the hook in snake case, such as `scan_started`), `shield.plugin.count`, `shield.plugin.failures` (only when a hook failed) |
+| `purge pii tokens` | `pii.purge` and the other retention commands, after the permission and preview checks pass | `shield.retention.tokens_selected`, `shield.retention.tokens_deleted` |
+
+A span that failed has an error status with a short class and one `exception` event carrying `exception.type`, the error's Go type:
+
+| Span | Status | When |
+| --- | --- | --- |
+| `scan content` | `persist_failed` | The store write failed. The scan still returns its verdict, but the dashboard won't have it |
+| `run plugin hooks` | `plugin_hook_failed` | At least one plugin returned an error. The scan carries on |
+| `purge pii tokens` | `audit_failed` | The request audit failed, so nothing was deleted |
+| `purge pii tokens` | `delete_failed` | The token delete failed |
+| `purge pii tokens` | `completion_audit_failed` | The tokens are gone but the completion audit wasn't written |
+
+The store queries under these spans come from grove, which traces every call as a `db.client` span. The dashboard intents themselves (`dispatch:shield/pii.purge@1` and so on) are traced and counted by Forge's dispatcher, so Shield adds nothing there.
+
+The six layers don't run yet. When one lands, it gets its own child span of `scan content` with a `shield.scan.layer` attribute (`instincts`, `awareness`, `boundaries`, `values`, `judgments`, `reflexes`).
+
+## Metrics
+
+Shield records three. The names below are what a Forge app scrapes; the engine registers them without the `forge_` prefix (`engine.ScansCompletedMetric`, `engine.ScanDurationMetric`, `plugin.HooksFailedMetric`).
+
+| Metric | Type | Labels |
+| --- | --- | --- |
+| `forge_shield_scans_completed_total` | counter | `direction` (`input`, `output`), `decision` (`allow`, `block`, `flag`, `redact`) |
+| `forge_shield_scan_duration_seconds` | histogram | `direction`, `decision` |
+| `forge_shield_plugin_hooks_failed_total` | counter | `hook` |
+
+The duration is the wall time of one `ScanInput` or `ScanOutput` call, plugin hooks and the store write included. Its buckets run from 1ms to 5s (`engine.ScanDurationBuckets`), which covers the layer budgets from a 5ms boundary check to a 500ms judgment.
+
+`hook` is one of `scan_started`, `scan_completed`, `scan_blocked`, `scan_failed`, `instinct_triggered`, `awareness_detected`, `judgment_assessed`, `value_violated`, `reflex_fired`, `boundary_enforced`, `pii_detected`, `pii_redacted`, `policy_evaluated`, `safety_profile_resolved` or `shutdown`.
+
+A few queries to start from:
+
+```text
+# Share of scans that blocked, over five minutes
+sum(rate(forge_shield_scans_completed_total{decision="block"}[5m]))
+  / sum(rate(forge_shield_scans_completed_total[5m]))
+
+# p95 scan latency by direction
+histogram_quantile(0.95,
+  sum by (le, direction) (rate(forge_shield_scan_duration_seconds_bucket[5m])))
+
+# Any plugin failing
+sum by (hook) (rate(forge_shield_plugin_hooks_failed_total[5m])) > 0
+```
+
+## What never goes on a span or a label
+
+The scanned text, findings, matched patterns, PII values and types, tenant and app IDs, the signed-in subject, PII token IDs and error messages. Error messages are left off because drivers and plugins quote the values they failed on. Plugin, profile, policy and rule names aren't labels either, since you or your tenants choose them. The scan ID is on the scan span so you can find the stored record; it's an opaque ID and never a label.
+
+## Moving from the observability plugin
+
+Shield used to ship `observability.MetricsExtension`, a plugin with 14 unlabelled counters named like `shield.scan.started`. Built with `NewMetricsExtension()` they went to a private collector nobody could scrape. Built from `app.Metrics()` they showed up as `forge_shield_scan_started` and friends, typed as gauges, and only the started and completed pair ever moved.
+
+Those series are gone. If you scraped them, switch to the table above:
+
+| Old series | Now |
+| --- | --- |
+| `forge_shield_scan_started`, `forge_shield_scan_completed` | `forge_shield_scans_completed_total` (scans are counted once, when they finish) |
+| `forge_shield_scan_blocked` | `forge_shield_scans_completed_total{decision="block"}` |
+| `forge_shield_scan_failed` and the ten per-layer counters | Nothing yet. Those events never fired, and they'll get metrics when the layers land |
+
+The `observability` package still compiles so your build doesn't break, but `MetricsExtension` is deprecated, implements no hooks and has no counter fields. Take it out of your plugin list.

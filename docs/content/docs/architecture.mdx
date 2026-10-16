@@ -50,8 +50,9 @@ eng, err := engine.New(
         EnableShortCircuit: true,
         ScanConcurrency:    10,
     }),
-    engine.WithPlugin(metricsPlugin),    // optional: lifecycle hooks
+    engine.WithPlugin(auditPlugin),      // optional: lifecycle hooks
     engine.WithLogger(logger),           // optional: a go-utils log.Logger
+    engine.WithMetrics(metrics),         // optional: a go-utils metrics.Metrics
 )
 ```
 
@@ -67,6 +68,8 @@ What `ScanInput` and `ScanOutput` do today:
 4. Skip the six layers (they're placeholders).
 5. Emit `OnScanCompleted`, and `OnScanBlocked` if the result is blocked (it never is yet).
 6. Persist the result with `CreateScan` when a store is set. A persistence error is logged as a warning and the scan still returns successfully.
+
+All six steps run under one `scan content` span, so the plugin hooks and the store write show up as its children. When the scan returns, the engine counts it on `shield_scans_completed_total` and records its wall time on `shield_scan_duration_seconds`. See [Observability](/docs/guides/observability).
 
 The layers, once implemented, are meant to run in this order:
 
@@ -109,13 +112,14 @@ type BoundaryEnforced interface { /* ... */ }
 // ... 15 hook interfaces in total
 ```
 
-`plugin.Registry` type-caches plugins at registration time, so emit calls iterate only over plugins that implement the relevant hook. Hook errors never reach the scan. The engine builds its registry with a no-op logger, so those errors are dropped silently.
+`plugin.Registry` type-caches plugins at registration time, so emit calls iterate only over plugins that implement the relevant hook. Hook errors never reach the scan. The registry logs them on the engine's logger, counts them on `shield_plugin_hooks_failed_total` and marks the `run plugin hooks` span failed.
 
 Only `OnScanStarted`, `OnScanCompleted` and `OnShutdown` are emitted today. The other twelve hooks are defined and the built-in plugins implement them, but nothing calls them yet.
 
-Built-in plugins:
-- `observability.MetricsExtension`: 14 counters, one per hook except shutdown
+Built-in plugin:
 - `audithook.Extension` (import path `audit_hook`): bridges lifecycle events to an audit trail backend
+
+`observability.MetricsExtension` is deprecated and does nothing. The engine records its own metrics through `engine.WithMetrics`; see [Observability](/docs/guides/observability).
 
 ## Package index
 
@@ -136,7 +140,7 @@ Built-in plugins:
 | `pii` | `.../pii` | PII token store (you supply the encrypted value) |
 | `compliance` | `.../compliance` | Compliance report records |
 | `plugin` | `.../plugin` | Plugin interfaces and Registry |
-| `observability` | `.../observability` | Metrics plugin (14 counters) |
+| `observability` | `.../observability` | Deprecated metrics plugin; records nothing |
 | `audithook` | `.../audit_hook` | Audit trail plugin |
 | `store` | `.../store` | Composite `Store`, plus the scoped `DashboardStore` contract |
 | `postgres`, `sqlite`, `mongo` | `.../store/postgres`, `.../store/sqlite`, `.../store/mongo` | Store backends on grove |

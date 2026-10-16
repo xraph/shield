@@ -19,14 +19,33 @@ import (
 	"errors"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+
 	log "github.com/xraph/go-utils/log"
+	gometrics "github.com/xraph/go-utils/metrics"
 
 	"github.com/xraph/shield"
 	"github.com/xraph/shield/id"
+	"github.com/xraph/shield/internal/telemetry"
 	"github.com/xraph/shield/plugin"
 	"github.com/xraph/shield/scan"
 	"github.com/xraph/shield/store"
 )
+
+// The metrics the engine records when WithMetrics is set. A Forge app scrapes
+// them with a forge_ prefix: forge_shield_scans_completed_total and
+// forge_shield_scan_duration_seconds. Both carry direction (input, output)
+// and decision (allow, block, flag, redact).
+const (
+	ScansCompletedMetric = "shield_scans_completed_total"
+	ScanDurationMetric   = "shield_scan_duration_seconds"
+)
+
+// ScanDurationBuckets are the histogram bounds for ScanDurationMetric, in
+// seconds. They span the layer budgets, from a 5ms boundary check to a
+// 500ms judgment, with headroom for storing the result.
+var ScanDurationBuckets = []float64{0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5}
 
 // Engine is the core safety execution engine.
 type Engine struct {
@@ -34,6 +53,10 @@ type Engine struct {
 	registry *plugin.Registry
 	config   shield.Config
 	logger   log.Logger
+	metrics  gometrics.Metrics
+
+	scansCompleted *telemetry.CounterVec
+	scanDuration   *telemetry.HistogramVec
 }
 
 // Option configures the Engine.
@@ -54,9 +77,18 @@ func WithConfig(cfg shield.Config) Option {
 	return func(e *Engine) { e.config = cfg }
 }
 
-// WithLogger sets a custom logger.
+// WithLogger sets a custom logger. The plugin registry reports hook errors
+// on it too.
 func WithLogger(l log.Logger) Option {
 	return func(e *Engine) { e.logger = l }
+}
+
+// WithMetrics records scan and plugin metrics on m: ScansCompletedMetric,
+// ScanDurationMetric and plugin.HooksFailedMetric. In a Forge app pass
+// app.Metrics(); the Shield Forge extension does this for you. A nil m, the
+// default, records nothing.
+func WithMetrics(m gometrics.Metrics) Option {
+	return func(e *Engine) { e.metrics = m }
 }
 
 // New creates a new safety engine with the given options.
@@ -69,6 +101,13 @@ func New(opts ...Option) (*Engine, error) {
 	for _, opt := range opts {
 		opt(e)
 	}
+	e.registry.SetLogger(e.logger)
+	e.registry.SetMetrics(e.metrics)
+	e.scansCompleted = telemetry.NewCounterVec(e.metrics, ScansCompletedMetric,
+		"Safety scans completed, by direction and decision.", "direction", "decision")
+	e.scanDuration = telemetry.NewHistogramVec(e.metrics, ScanDurationMetric,
+		"Wall time of one safety scan, plugin hooks and storing the result included.",
+		"s", ScanDurationBuckets, "direction", "decision")
 	return e, nil
 }
 
@@ -85,9 +124,20 @@ func (e *Engine) ScanOutput(ctx context.Context, input *scan.Input) (*scan.Resul
 }
 
 // executeScan runs the layered safety evaluation.
+//
+// The scan runs under a "scan content" span. Its attributes are counts,
+// enums and the scan ID; the scanned text, findings and tenant never go on
+// it. Plugin hooks and the store write nest under it, and so will each
+// layer once it exists.
 func (e *Engine) executeScan(ctx context.Context, input *scan.Input) (*scan.Result, error) {
 	start := time.Now()
 	scanID := id.NewScanID()
+
+	ctx, span := telemetry.Tracer().Start(ctx, "scan content", trace.WithAttributes(
+		attribute.String("shield.scan.id", scanID.String()),
+		attribute.String("shield.scan.direction", string(input.Direction)),
+	))
+	defer span.End()
 
 	result := &scan.Result{
 		ID:        scanID,
@@ -99,6 +149,10 @@ func (e *Engine) executeScan(ctx context.Context, input *scan.Input) (*scan.Resu
 
 	// Emit scan started
 	e.registry.EmitScanStarted(ctx, scanID, string(input.Direction), input.Text)
+
+	// Each layer below, once implemented, gets a child span of ctx with a
+	// shield.scan.layer attribute naming it (instincts, awareness,
+	// boundaries, values, judgments, reflexes).
 
 	// Layer 1: INSTINCTS — fastest, pre-conscious threat detection
 	// TODO: Execute registered instincts
@@ -127,12 +181,25 @@ func (e *Engine) executeScan(ctx context.Context, input *scan.Input) (*scan.Resu
 		e.registry.EmitScanBlocked(ctx, scanID, string(result.Decision))
 	}
 
-	// Persist result
+	// Persist result. A failed write doesn't fail the scan, but the span
+	// says so: the dashboard will never show this scan.
 	if e.store != nil {
-		if err := e.store.CreateScan(ctx, result); err != nil {
-			e.logger.Warn("engine: failed to persist scan result", log.String("scan_id", scanID.String()), log.Error(err))
+		persistErr := e.store.CreateScan(ctx, result)
+		if persistErr != nil {
+			e.logger.Warn("engine: failed to persist scan result", log.String("scan_id", scanID.String()), log.Error(persistErr))
+			telemetry.Fail(span, "persist_failed", persistErr)
 		}
+		span.SetAttributes(attribute.Bool("shield.scan.persisted", persistErr == nil))
 	}
+
+	span.SetAttributes(
+		attribute.String("shield.scan.decision", string(result.Decision)),
+		attribute.Bool("shield.scan.blocked", result.Blocked),
+		attribute.Int("shield.scan.findings", len(result.Findings)),
+	)
+	direction, decision := string(result.Direction), string(result.Decision)
+	e.scansCompleted.Inc(direction, decision)
+	e.scanDuration.Observe(time.Since(start).Seconds(), direction, decision)
 
 	return result, nil
 }

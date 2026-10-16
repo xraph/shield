@@ -23,7 +23,6 @@ import (
 
     "github.com/xraph/forge"
     shieldext "github.com/xraph/shield/extension"
-    "github.com/xraph/shield/observability"
 )
 
 func main() {
@@ -31,9 +30,7 @@ func main() {
         Name:        "safety",
         HTTPAddress: ":8080",
         Extensions: []forge.Extension{
-            shieldext.New(
-                shieldext.WithPlugin(observability.NewMetricsExtension()),
-            ),
+            shieldext.New(),
         },
     })
 
@@ -158,20 +155,14 @@ The default resolver takes scope only from the signed-in user's claims, never fr
 
 PII retention also needs an audit sink from `WithDashboardAudit`. Without one, those commands return `UNAVAILABLE`. If your claims look different, pass your own resolver with `WithDashboardActorResolver`. It must authenticate the principal and authorize every scope and permission it returns.
 
-## Adding metrics
+## Metrics and tracing
 
-`NewMetricsExtension()` uses its own collector. To report through your app's metrics, build the plugin from `app.Metrics()`:
+There's nothing to add. `Register` hands the engine your app's metrics and logger, so scan and plugin-hook metrics show up on `/_/metrics` as `forge_shield_scans_completed_total`, `forge_shield_scan_duration_seconds` and `forge_shield_plugin_hooks_failed_total`. Scans, plugin hooks and PII purges are traced on the provider `forge.New` installs, under whatever span called them. The [observability guide](/docs/guides/observability) lists every span, attribute, metric and label.
+
+To turn the metrics off, pass a nil sink through to the engine:
 
 ```go
-app := forge.NewApp(forge.AppConfig{Name: "safety"})
-
-metricsPlugin := observability.NewMetricsExtensionWithFactory(app.Metrics())
-
-if err := app.RegisterExtension(shieldext.New(
-    shieldext.WithPlugin(metricsPlugin),
-)); err != nil {
-    log.Fatal(err)
-}
+shieldext.New(shieldext.WithEngineOption(engine.WithMetrics(nil)))
 ```
 
 ## Adding audit trails
@@ -190,7 +181,6 @@ auditPlugin := audithook.New(myRecorder,
 )
 
 ext := shieldext.New(
-    shieldext.WithPlugin(metricsPlugin),
     shieldext.WithPlugin(auditPlugin),
 )
 ```
