@@ -183,7 +183,7 @@ Delete `shield.db` before you run it again, since the instinct and profile names
 
 ## Step 7: Add a plugin
 
-Plugins observe lifecycle events. Shield ships a metrics plugin and an audit plugin. Today only the scan started, scan completed and shutdown hooks fire.
+Plugins observe lifecycle events. Shield ships an audit plugin. Today only the scan started, scan completed and shutdown hooks fire.
 
 ```go
 import (
@@ -192,10 +192,8 @@ import (
 
     audithook "github.com/xraph/shield/audit_hook"
     "github.com/xraph/shield/engine"
-    "github.com/xraph/shield/observability"
 )
 
-metricsPlugin := observability.NewMetricsExtension()
 auditPlugin := audithook.New(audithook.RecorderFunc(
     func(ctx context.Context, ev *audithook.AuditEvent) error {
         log.Printf("audit: %s %s", ev.Action, ev.ResourceID)
@@ -205,12 +203,13 @@ auditPlugin := audithook.New(audithook.RecorderFunc(
 
 eng, err := engine.New(
     engine.WithStore(st),
-    engine.WithPlugin(metricsPlugin),
     engine.WithPlugin(auditPlugin),
 )
 ```
 
 The import path is `github.com/xraph/shield/audit_hook`, but the package name is `audithook`.
+
+Metrics aren't a plugin. Pass a go-utils `metrics.Metrics` with `engine.WithMetrics(m)` and the engine counts scans and failed hooks itself. In a Forge app the extension does that for you. See [Observability](/docs/guides/observability).
 
 ## Step 8: Use it with Forge
 
@@ -220,16 +219,13 @@ If you run a [Forge](https://github.com/xraph/forge) app, the `extension` packag
 import (
     "github.com/xraph/forge"
     shieldext "github.com/xraph/shield/extension"
-    "github.com/xraph/shield/observability"
 )
 
 app := forge.NewApp(forge.AppConfig{
     Name:        "safety",
     HTTPAddress: ":8080",
     Extensions: []forge.Extension{
-        shieldext.New(
-            shieldext.WithPlugin(observability.NewMetricsExtension()),
-        ),
+        shieldext.New(),
     },
 })
 if err := app.Run(); err != nil {

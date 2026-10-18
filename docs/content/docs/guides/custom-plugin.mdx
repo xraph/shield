@@ -1,6 +1,6 @@
 ---
 title: Custom Plugins
-description: Build plugins that react to Shield lifecycle events with metrics, audit trails, tracing, or custom logic.
+description: Build plugins that react to Shield lifecycle events with audit trails, alerts or custom logic.
 ---
 
 Shield uses an opt-in plugin system. Implement the `plugin.Plugin` base interface and any combination of 15 lifecycle hook interfaces to receive only the events you care about.
@@ -99,7 +99,6 @@ Register plugins when creating the engine:
 ```go
 eng, err := engine.New(
     engine.WithPlugin(&MyPlugin{}),
-    engine.WithPlugin(observability.NewMetricsExtension()),
 )
 ```
 
@@ -127,7 +126,9 @@ If you forget to implement a method, the compiler will tell you.
 
 ## Error handling
 
-Hook errors never reach the scan or `Stop`. The registry passes each error to its logger as a warning and moves on to the next plugin. The engine builds that registry with a no-op logger, and `engine.WithLogger` doesn't change it, so today a hook error is dropped silently. Log inside your hook if you need to see failures.
+Hook errors never reach the scan or `Stop`. The registry logs each one as a warning, with the hook and your plugin's `Name()`, and moves on to the next plugin. It uses the engine's logger, which is whatever you pass to `engine.WithLogger` (the Forge extension passes the app logger). With a metrics sink it also counts the failure on `forge_shield_plugin_hooks_failed_total{hook="..."}`, and the `run plugin hooks` span for that call is marked failed. See [Observability](/docs/guides/observability).
+
+Each call to a hook runs inside that span, a child of the scan's span. If your plugin starts spans of its own from the `ctx` it's given, they nest there too.
 
 A panic in a hook isn't recovered. It propagates out of `ScanInput`, `ScanOutput` or `Stop`.
 
@@ -169,19 +170,7 @@ func (p *SlackAlertPlugin) OnInstinctTriggered(
 
 ## Built-in plugins
 
-Shield ships two built-in plugins.
-
-### `observability.MetricsExtension`
-
-Holds 14 `gu.Counter` values from a go-utils `metrics.MetricFactory`, one per hook except shutdown, named like `shield.scan.started`. Today only `ScanStartedCount` and `ScanCompletedCount` move.
-
-```go
-import "github.com/xraph/shield/observability"
-
-metrics := observability.NewMetricsExtension()
-// or with your own factory, such as a Forge app's metrics:
-metrics = observability.NewMetricsExtensionWithFactory(app.Metrics())
-```
+Shield ships one built-in plugin. The `observability` package still exists, but its `MetricsExtension` is deprecated and does nothing: the engine records its own metrics now (see [Observability](/docs/guides/observability)). Drop it from your plugin list.
 
 ### `audithook.Extension`
 

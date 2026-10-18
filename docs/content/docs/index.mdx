@@ -33,7 +33,8 @@ Shield models AI safety the way you would describe human cognition. The speeds a
 - Tenant and app on the context through `shield.WithTenant` and `shield.WithApp`. The engine stamps them on scans; the subsystem stores filter by the IDs you pass them.
 - Policies with ordered rules, assigned at app or org level and to tenants.
 - Compliance report records for the EU AI Act, NIST AI RMF and SOC 2. Shield stores reports; it doesn't generate them.
-- 15 lifecycle hook interfaces for plugins, a metrics plugin and an audit plugin. Only the scan started, scan completed and shutdown hooks fire today.
+- 15 lifecycle hook interfaces for plugins, and an audit plugin. Only the scan started, scan completed and shutdown hooks fire today.
+- OpenTelemetry spans for scans, plugin hooks and PII purges, and scan and hook metrics that a Forge app scrapes on `/_/metrics`. See [Observability](/docs/guides/observability).
 - A `forge.Extension` that provides `*engine.Engine` in the DI container, runs migrations and registers an authenticated dashboard contributor.
 
 ## Design philosophy
