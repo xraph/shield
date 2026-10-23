@@ -271,6 +271,6 @@ SQLite store tests always run. Postgres and MongoDB skip unless you set `SHIELD_
 
 ## License
 
-See the [Shield repository](https://github.com/xraph/shield) for license terms.
+MIT. See [LICENSE](LICENSE).
 
 Shield is part of the [forgery stack](https://github.com/xraph/forge#the-forgery-stack) built on [Forge](https://github.com/xraph/forge), by [Rex Raphael](https://github.com/juicycleff) and [contributors](https://github.com/xraph/shield/graphs/contributors).
