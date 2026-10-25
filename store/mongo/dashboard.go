@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
+	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
 
 	"github.com/xraph/shield/awareness"
@@ -312,6 +313,9 @@ func (s *Store) DashboardCreate(ctx context.Context, scope store.Scope, kind str
 		return nil, err
 	}
 	_, err = s.mdb.Collection(dashboardCollection(kind)).InsertOne(ctx, model)
+	if mongo.IsDuplicateKeyError(err) {
+		return nil, store.ErrConflict
+	}
 	if err != nil {
 		return nil, fmt.Errorf("create %s: %w", kind, err)
 	}

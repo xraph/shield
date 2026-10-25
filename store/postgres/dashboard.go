@@ -3,9 +3,12 @@ package postgres
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/xraph/shield/awareness"
 	"github.com/xraph/shield/boundary"
@@ -309,6 +312,9 @@ func (s *Store) DashboardCreate(ctx context.Context, scope store.Scope, kind str
 		return nil, err
 	}
 	_, err = s.pgdb.NewInsert(model).Exec(ctx)
+	if uniqueViolation(err) {
+		return nil, store.ErrConflict
+	}
 	if err != nil {
 		return nil, fmt.Errorf("create %s: %w", kind, err)
 	}
@@ -402,4 +408,10 @@ func (s *Store) DashboardAssign(ctx context.Context, scope store.Scope, key stri
 	m := &policyTenantModel{TenantID: scope.TenantID, PolicyID: key, CreatedAt: time.Now().UTC()}
 	_, err := s.pgdb.NewInsert(m).OnConflict("(tenant_id, policy_id) DO NOTHING").Exec(ctx)
 	return err
+}
+
+// uniqueViolation reports whether err is a Postgres unique_violation (SQLSTATE 23505).
+func uniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }

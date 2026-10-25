@@ -64,6 +64,14 @@ func New(db *grove.DB) *Store {
 // Migrate creates indexes for all shield collections.
 func (s *Store) Migrate(ctx context.Context) error {
 	indexes := migrationIndexes()
+	for _, col := range tenantUniqueCollections {
+		// Stores created before names became unique per tenant still carry the
+		// (app_id, name) index, which would reject the same name in a second tenant.
+		err := s.mdb.Collection(col).Indexes().DropOne(ctx, indexName(appNameIndex))
+		if err != nil && !isIndexNotFound(err) {
+			return fmt.Errorf("shield/mongo: migrate %s indexes: %w", col, err)
+		}
+	}
 	for col, models := range indexes {
 		if len(models) == 0 {
 			continue
@@ -109,49 +117,49 @@ func migrationIndexes() map[string][]mongod.IndexModel {
 	return map[string][]mongod.IndexModel{
 		colInstincts: {
 			{
-				Keys:    bson.D{{Key: "app_id", Value: 1}, {Key: "name", Value: 1}},
+				Keys:    bson.D{{Key: "app_id", Value: 1}, {Key: "tenant_id", Value: 1}, {Key: "name", Value: 1}},
 				Options: options.Index().SetUnique(true),
 			},
 			{Keys: bson.D{{Key: "app_id", Value: 1}, {Key: "tenant_id", Value: 1}}},
 		},
 		colAwareness: {
 			{
-				Keys:    bson.D{{Key: "app_id", Value: 1}, {Key: "name", Value: 1}},
+				Keys:    bson.D{{Key: "app_id", Value: 1}, {Key: "tenant_id", Value: 1}, {Key: "name", Value: 1}},
 				Options: options.Index().SetUnique(true),
 			},
 			{Keys: bson.D{{Key: "app_id", Value: 1}, {Key: "tenant_id", Value: 1}}},
 		},
 		colBoundaries: {
 			{
-				Keys:    bson.D{{Key: "app_id", Value: 1}, {Key: "name", Value: 1}},
+				Keys:    bson.D{{Key: "app_id", Value: 1}, {Key: "tenant_id", Value: 1}, {Key: "name", Value: 1}},
 				Options: options.Index().SetUnique(true),
 			},
 			{Keys: bson.D{{Key: "app_id", Value: 1}, {Key: "tenant_id", Value: 1}}},
 		},
 		colValues: {
 			{
-				Keys:    bson.D{{Key: "app_id", Value: 1}, {Key: "name", Value: 1}},
+				Keys:    bson.D{{Key: "app_id", Value: 1}, {Key: "tenant_id", Value: 1}, {Key: "name", Value: 1}},
 				Options: options.Index().SetUnique(true),
 			},
 			{Keys: bson.D{{Key: "app_id", Value: 1}, {Key: "tenant_id", Value: 1}}},
 		},
 		colJudgments: {
 			{
-				Keys:    bson.D{{Key: "app_id", Value: 1}, {Key: "name", Value: 1}},
+				Keys:    bson.D{{Key: "app_id", Value: 1}, {Key: "tenant_id", Value: 1}, {Key: "name", Value: 1}},
 				Options: options.Index().SetUnique(true),
 			},
 			{Keys: bson.D{{Key: "app_id", Value: 1}, {Key: "tenant_id", Value: 1}}},
 		},
 		colReflexes: {
 			{
-				Keys:    bson.D{{Key: "app_id", Value: 1}, {Key: "name", Value: 1}},
+				Keys:    bson.D{{Key: "app_id", Value: 1}, {Key: "tenant_id", Value: 1}, {Key: "name", Value: 1}},
 				Options: options.Index().SetUnique(true),
 			},
 			{Keys: bson.D{{Key: "app_id", Value: 1}, {Key: "tenant_id", Value: 1}}},
 		},
 		colProfiles: {
 			{
-				Keys:    bson.D{{Key: "app_id", Value: 1}, {Key: "name", Value: 1}},
+				Keys:    bson.D{{Key: "app_id", Value: 1}, {Key: "tenant_id", Value: 1}, {Key: "name", Value: 1}},
 				Options: options.Index().SetUnique(true),
 			},
 			{Keys: bson.D{{Key: "app_id", Value: 1}, {Key: "tenant_id", Value: 1}}},
