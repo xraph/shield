@@ -111,10 +111,11 @@ func Families(cat instinct.Category) []Family {
 // capped at 1). Extra regexes run on Folded, which is lower case.
 func Patterns(t Text, cat instinct.Category, extra []*regexp.Regexp, extraWeight float64) Result {
 	var c collector
+	s := &scan{t: t}
 	run := categories[cat]
 	for _, p := range corpus {
 		if slices.Contains(run, p.family) {
-			p.each(t, func(start, end int) {
+			p.each(s, func(start, end int) {
 				c.add(t, p.family, weights[p.family], start, end)
 			})
 		}

@@ -90,7 +90,7 @@ func Fold(s string) Text {
 		if ascii {
 			buf = append(buf[:0], seg[0])
 		} else {
-			buf = norm.NFKC.AppendString(buf[:0], seg)
+			buf = norm.NFKC.AppendString(buf[:0], stripMarks(seg))
 		}
 		for _, r := range string(buf) {
 			if unicode.IsSpace(r) {
@@ -166,12 +166,18 @@ func stripHidden(s string) (string, []removal) {
 			kept = make([]byte, 0, len(s))
 		}
 		kept = append(kept, s[last:i]...)
+		// One legitimate joiner, mark or BOM per run: a second one between
+		// the same two neighbours does no job and counts.
+		exempted := false
 		for k := i; k < j; {
 			rk, sk := utf8.DecodeRuneInString(s[k:])
-			removed = append(removed, removal{
-				at: k, size: sk, kept: len(kept),
-				counted: k >= flagEnd && hides(rk, k, prev, base, next),
-			})
+			counted := false
+			if k >= flagEnd && !hides(rk, k, prev, base, next) {
+				counted, exempted = exempted, true
+			} else if k >= flagEnd {
+				counted = true
+			}
+			removed = append(removed, removal{at: k, size: sk, kept: len(kept), counted: counted})
 			k += sk
 		}
 		last, i = j, j
@@ -186,7 +192,8 @@ func stripHidden(s string) (string, []removal) {
 // given the visible runes around its run. The exceptions are the jobs these
 // runes do in ordinary text: a byte order mark that opens a file, a joiner
 // inside an emoji sequence or a non-Latin word, and direction marks and
-// non-joiners in non-Latin text (Persian, Arabic, Hebrew).
+// non-joiners in non-Latin text (Persian, Arabic, Hebrew). Fold allows one
+// such exception per run of invisible runes.
 func hides(r rune, i int, prev, base, next rune) bool {
 	switch r {
 	case 0xFEFF:
@@ -335,6 +342,39 @@ func foldConfusables(folded []byte, starts, ends []int32) (outFolded []byte, out
 		i = j
 	}
 	return outFolded, outStarts, outEnds
+}
+
+// stripMarks drops the nonspacing marks of a segment whose base is a Latin
+// letter or a lookalike, so "ig" + U+0307 + "nore" folds to "ignore". A
+// precomposed letter such as the é in café has no separate mark and is left
+// alone.
+func stripMarks(seg string) string {
+	base, size := utf8.DecodeRuneInString(seg)
+	if !isLatinLetter(base) && !isLookalike(base) {
+		return seg
+	}
+	if !strings.ContainsFunc(seg[size:], isNonspacingMark) {
+		return seg
+	}
+	var b strings.Builder
+	b.WriteString(seg[:size])
+	for _, r := range seg[size:] {
+		if !isNonspacingMark(r) {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// isNonspacingMark reports whether r is a Unicode Mn combining mark.
+func isNonspacingMark(r rune) bool {
+	return unicode.Is(unicode.Mn, r)
+}
+
+// isLookalike reports whether r, in either case, is a confusable letter.
+func isLookalike(r rune) bool {
+	_, ok := confusables[unicode.ToLower(r)]
+	return ok
 }
 
 // isWordRune reports whether r continues a word for the confusables check.
