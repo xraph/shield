@@ -27,3 +27,34 @@ func TestNoisyOr(t *testing.T) {
 		}
 	}
 }
+
+func TestNoisyOrIsOrderIndependent(t *testing.T) {
+	ws := []float64{0.9, 0.7, 0.8, 0.6, 0.65, 0.33}
+	want := scoring.NoisyOr(ws...)
+	for i := range len(ws) {
+		rotated := append(append([]float64{}, ws[i:]...), ws[:i]...)
+		if got := scoring.NoisyOr(rotated...); got != want {
+			t.Fatalf("NoisyOr(%v) = %v, want exactly %v", rotated, got, want)
+		}
+	}
+	if ws[0] != 0.9 {
+		t.Fatal("NoisyOr reordered its input")
+	}
+}
+
+func TestMaxPerKey(t *testing.T) {
+	m := scoring.MaxPerKey[string]{}
+	m.Add("override", 0.9)
+	m.Add("override", 0.5)
+	m.Add("role", 0.7)
+	m.Add("role", math.NaN())
+	if len(m) != 2 || m["override"] != 0.9 || m["role"] != 0.7 {
+		t.Fatalf("MaxPerKey = %v", m)
+	}
+	if got, want := m.NoisyOr(), 1-(0.1*0.3); math.Abs(got-want) > 1e-9 {
+		t.Fatalf("NoisyOr() = %v, want %v", got, want)
+	}
+	if got := (scoring.MaxPerKey[string]{}).NoisyOr(); got != 0 {
+		t.Fatalf("empty NoisyOr() = %v", got)
+	}
+}

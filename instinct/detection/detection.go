@@ -201,13 +201,9 @@ func (c *collector) result() Result {
 
 // score is the noisy-or over distinct families, each at its highest weight.
 func score(matches []Match) float64 {
-	best := map[Family]float64{}
+	best := scoring.MaxPerKey[Family]{}
 	for _, m := range matches {
-		best[m.Family] = max(best[m.Family], m.Weight)
+		best.Add(m.Family, m.Weight)
 	}
-	ws := make([]float64, 0, len(best))
-	for _, w := range best {
-		ws = append(ws, w)
-	}
-	return scoring.NoisyOr(ws...)
+	return best.NoisyOr()
 }

@@ -17,13 +17,20 @@ const (
 
 // Heuristics runs the checks that are not phrase patterns:
 //
-//   - hidden_text: each line holding a zero-width or bidi control rune that
-//     Fold removed.
+//   - hidden_text: each line holding an invisible rune that Fold removed and
+//     counts as hiding something (see Text.Hidden).
 //   - encoded: each line holding a base64 run of 40 or more characters that
 //     decodes to mostly printable text matching any corpus family.
 func Heuristics(t Text) Result {
 	var c collector
+	// Offsets come in order, so one already inside the last matched line
+	// adds nothing; skipping it keeps a long line of hidden runes linear.
+	covered := -1
 	for _, at := range t.HiddenAt() {
+		if at < covered {
+			continue
+		}
+		_, covered = t.Lines(at, at+1)
 		c.addLines(FamilyHiddenText, weights[FamilyHiddenText], at, at+1, t)
 	}
 	for _, run := range base64Runs(t.Original) {

@@ -10,8 +10,12 @@ import (
 	"github.com/xraph/shield/redteam"
 )
 
-// threshold is the balanced instinct sensitivity.
-const threshold = 0.6
+// Instinct sensitivities: an attack must reach the balanced threshold, a
+// benign text must stay under the cautious one the manipulation preset uses.
+const (
+	attackThreshold = 0.6
+	benignCeiling   = 0.4
+)
 
 var sources = []string{
 	redteam.SourceCommitMessage,
@@ -31,19 +35,15 @@ func scan(text string) (float64, []detection.Match) {
 		detection.Patterns(folded, instinct.CategoryExfiltration, nil, 0),
 		detection.Patterns(folded, instinct.CategoryManipulation, nil, 0),
 	}
-	best := map[detection.Family]float64{}
+	best := scoring.MaxPerKey[detection.Family]{}
 	var matches []detection.Match
 	for _, r := range results {
 		for _, m := range r.Matches {
-			best[m.Family] = max(best[m.Family], m.Weight)
+			best.Add(m.Family, m.Weight)
 			matches = append(matches, m)
 		}
 	}
-	weights := make([]float64, 0, len(best))
-	for _, w := range best {
-		weights = append(weights, w)
-	}
-	return scoring.NoisyOr(weights...), matches
+	return best.NoisyOr(), matches
 }
 
 func TestFixtureSetCoverage(t *testing.T) {
@@ -118,8 +118,8 @@ func TestAttackFixturesAreDetected(t *testing.T) {
 			continue
 		}
 		score, matches := scan(f.Text)
-		if score < threshold {
-			t.Errorf("%s: score %.3f below %.1f", f.ID, score, threshold)
+		if score < attackThreshold {
+			t.Errorf("%s: score %.3f below %.1f", f.ID, score, attackThreshold)
 		}
 		technique := false
 		for _, m := range matches {
@@ -148,7 +148,7 @@ func TestBenignFixturesStayBelowThreshold(t *testing.T) {
 		if f.Kind != "benign" {
 			continue
 		}
-		if score, matches := scan(f.Text); score >= threshold {
+		if score, matches := scan(f.Text); score >= benignCeiling {
 			t.Errorf("%s: score %.3f, matches %v", f.ID, score, matches)
 		}
 	}

@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/xraph/shield/internal/textnorm"
 )
@@ -79,7 +80,7 @@ func entry(family Family, expr string) []pattern {
 
 // Shared fragments. The text they run on is lower case with single spaces.
 const (
-	revealVerbs = `print|reveal|show|repeat|output|display|dump|leak|disclose|expose|tell me|give me|share|echo`
+	revealVerbs = `print|reveal|show|repeat|output|display|dump|leak|disclose|tell me|give me`
 	sendVerbs   = `send|post|upload|forward|exfiltrate|transmit`
 	leakTargets = `system prompt|system message|initial prompt|hidden prompt|api keys?|secrets?|credentials|passwords?|environment variables|env vars|private keys?|deploy keys?|ssh keys?|access tokens?`
 	leakNoun    = `(?:` + leakTargets + `)`
@@ -89,29 +90,42 @@ const (
 	leakAdj   = `(?:full |entire |complete |current |original |hidden |initial |exact )?`
 	urgencies = `urgent|urgently|immediately|asap|right now|right away|emergency`
 	urgency   = `(?:` + urgencies + `)`
-	approvals = ` (?:waiting for |any |further |human |prior |manual )?(?:approval|review|confirmation|sign-?off)\b`
+	// approvals is what "without" waives. "review" is left out: "without
+	// waiting for review of the runbook" is ordinary prose.
+	approvals = ` (?:any |further |human |prior |manual )?(?:approval|confirmation|sign-?off)\b`
 )
 
 // instructionCue marks the rest of a role-marker line as an instruction
-// rather than a label such as "System: ubuntu-22.04".
-var instructionCue = regexp.MustCompile(`\b(?:ignore|disregard|forget|override|must|you are now|you are no longer|from now on|new instructions?|you will|reveal|your (?:new )?(?:task|role|instructions|job))\b`)
+// rather than a label such as "System: ubuntu-22.04" or "System: must have
+// 8 GB RAM": an override phrase, a role change, or an imperative action.
+var instructionCue = regexp.MustCompile(`\b(?:ignore|disregard|forget|override|you must|you are now|you are no longer|from now on|new instructions?|reveal|your (?:new )?(?:task|role|instructions|job)|approve|merge|deploy|promote|delete|run|execute|call|i will)\b|\bsure,`)
 
 // lineMarkup is what may precede a role marker on its line and still leave
 // it leading the line: indentation, quote and list marks, comment openers.
 const lineMarkup = "#>*-/<!`\"'(["
 
+// restWindow bounds how much of the line after a role marker is checked for
+// a cue, so a long line full of markers stays linear.
+const restWindow = 200
+
 // leadsLine reports whether the folded match [start, end) leads its original
-// line, and returns the folded rest of that line.
+// line, and returns the folded start of the rest of that line.
 func leadsLine(t Text, start, end int) (rest string, ok bool) {
 	os, oe := t.Span(start, end)
-	ls, le := t.Lines(os, oe)
-	// Lines drops a newline at either edge; keep the slices below valid.
-	ls, le = min(ls, os), max(le, oe)
-	for _, r := range t.Original[ls:os] {
+	// Walk back to the line start; the first visible character that is not
+	// markup ends the walk, so it costs little on a long line.
+	for i := os; i > 0; {
+		r, size := utf8.DecodeLastRuneInString(t.Original[:i])
+		if r == '\n' {
+			break
+		}
 		if !unicode.IsSpace(r) && !textnorm.IsHidden(r) && !strings.ContainsRune(lineMarkup, r) {
 			return "", false
 		}
+		i -= size
 	}
+	_, le := t.Lines(os, oe)
+	le = min(max(le, oe), oe+restWindow)
 	return strings.TrimSpace(textnorm.Fold(t.Original[oe:le]).Folded), true
 }
 
@@ -129,12 +143,83 @@ func roleHeading(t Text, start, end int) bool {
 	return ok && (rest == "" || instructionCue.MatchString(rest))
 }
 
+// before returns up to n folded bytes just before start.
+func before(t Text, start, n int) string {
+	return t.Folded[max(0, start-n):start]
+}
+
+// sentence returns the folded sentence around [start, end), up to 200 bytes
+// either side.
+func sentence(t Text, start, end int) string {
+	from := max(0, start-200)
+	if i := strings.LastIndexAny(t.Folded[from:start], ".!?"); i >= 0 {
+		from += i + 1
+	}
+	to := min(len(t.Folded), end+200)
+	if i := strings.IndexAny(t.Folded[end:to], ".!?"); i >= 0 {
+		to = end + i
+	}
+	return t.Folded[from:to]
+}
+
+var (
+	// negation ends the text before a verb that a negation governs, at most
+	// one word away: "never share", "don't ever print", "do not deploy".
+	negation = regexp.MustCompile(`\b(?:never|don(?:'|\x{2019})?t|do not|must not|mustn(?:'|\x{2019})?t|should not|shouldn(?:'|\x{2019})?t|cannot|can(?:'|\x{2019})?t|won(?:'|\x{2019})?t|will not|not)(?: [a-z]+)? ?$`)
+	// notImperative ends the text before a verb that is an infinitive or has
+	// another subject: "how to promote", "to deploy", "we merge", "you can
+	// deploy".
+	notImperative = regexp.MustCompile(`\b(?:to|will|would|can|could|may|might|we|they|i|it|ci|bot)(?: [a-z]+)? ?$`)
+	// commitScope opens a docs or CI commit subject, whose verbs describe
+	// the change rather than address an agent.
+	commitScope = regexp.MustCompile(`(?i)^\s*(?:docs|ci)(?:\([^)]*\))?!?:`)
+	// addressee ends the text before a verb aimed at the reader or agent.
+	addressee = regexp.MustCompile(`\b(?:you(?: should| must| can| need to| have to)?|please|just|so)\s?$`)
+	// pressure is an authority or urgency claim in the same sentence.
+	pressure = regexp.MustCompile(`\b(?:has|have|had) (?:already )?(?:explicitly )?(?:approved|authorized|authorised|signed off|okayed)\b|\b(?:approved|authorized|authorised) by\b|\b` + urgency + `\b`)
+	// leakObject names something worth exfiltrating.
+	leakObject = regexp.MustCompile(`\b` + leakNoun + `\b`)
+)
+
+// notNegated rejects a match that a negation governs.
+func notNegated(t Text, start, _ int) bool {
+	return !negation.MatchString(before(t, start, 40))
+}
+
+// imperative accepts a directive only as a command to the reader or agent:
+// not negated, not an infinitive or a verb with another subject, and not on
+// a docs or CI commit subject line.
+func imperative(t Text, start, end int) bool {
+	if !notNegated(t, start, end) || notImperative.MatchString(before(t, start, 24)) {
+		return false
+	}
+	os, oe := t.Span(start, end)
+	ls, _ := t.Lines(os, oe)
+	return !commitScope.MatchString(t.Original[ls:min(len(t.Original), ls+64)])
+}
+
+// pressured accepts skipping a safety step only when it is aimed at the
+// reader or agent, or comes with an authority or urgency claim: "so skip the
+// review", not "ci: skip review for dependabot PRs".
+func pressured(t Text, start, end int) bool {
+	if !notNegated(t, start, end) {
+		return false
+	}
+	return addressee.MatchString(before(t, start, 24)) || pressure.MatchString(sentence(t, start, end))
+}
+
+// aboutSecrets accepts "send it to https://..." only when something worth
+// exfiltrating comes just before: "print your system prompt and send it to".
+func aboutSecrets(t Text, start, end int) bool {
+	return notNegated(t, start, end) && leakObject.MatchString(before(t, start, 160))
+}
+
 // corpus is the built-in pattern set. Benign infra text (commit messages,
 // build logs, READMEs, issue bodies) must not match: when one does, tighten
 // the pattern.
 var corpus = slices.Concat(
 	// override
-	words(FamilyOverride, "ignore|disregard|forget", `\b (?:(?:all|any|the|of|your|my|these|those|every) )*(?:previous|prior|above|earlier|preceding|former|original|initial|system)\b (?:[a-z]+ ){0,2}?(?:instructions?|rules?|directions?|prompts?|guidelines?|directives?|commands?|context)\b`),
+	words(FamilyOverride, "ignore|disregard|forget", `\b (?:(?:all|any|the|of|your|my|these|those|every) )*(?:previous|prior|above|earlier|preceding|former|original|initial|system)\b (?:[a-z]+ ){0,2}?(?:instructions?|rules|directions|prompts?|guidelines|directives)\b`),
 	words(FamilyOverride, "ignore|disregard|forget", ` (?:everything|all) (?:you (?:were|have been) told|above|before)\b`),
 	words(FamilyOverride, "new|updated|real|actual", ` instructions? ?:`),
 	words(FamilyOverride, "override", ` (?:your|the) (?:system prompt|instructions|safety (?:rules|guidelines|settings))\b`),
@@ -153,16 +238,16 @@ var corpus = slices.Concat(
 	words(FamilyAgentDirective, "if", ` you(?: are|'re) (?:an? )?(?:ai|llm|large language model|language model|assistant|agent|bot|automated (?:agent|reviewer|assistant))\b`),
 	words(FamilyAgentDirective, "ai|llm", ` (?:agent|assistant|reviewer|bot)s? ?:`),
 	words(FamilyAgentDirective, "attention|dear", ` (?:ai|llm)s?\b`),
-	words(FamilyAgentDirective, "approve|merge|deploy|promote", ` (?:this|the|that|my|our) (?:[a-z0-9-]+ ){0,2}?(?:plans?|deployment|release|pr|pull request|changes?|build)\b (?:now|immediately|right now|right away|asap|to production|to prod|into production)\b`),
-	words(FamilyAgentDirective, "call|invoke", ` the [a-z0-9_.-]+ (?:tool|function)\b`),
-	words(FamilyAgentDirective, "run|use|execute|trigger", ` the [a-z0-9.-]*_[a-z0-9_.-]* (?:tool|function)\b`),
+	withAccept(words(FamilyAgentDirective, "approve|merge|deploy|promote", ` (?:this|the|that|my|our) (?:[a-z0-9-]+ ){0,2}?(?:plans?|deployment|release|pr|pull request|changes?|build)\b (?:now|immediately|right now|right away|asap|to production|to prod|into production)\b`), imperative),
+	withAccept(words(FamilyAgentDirective, "call|invoke", ` the [a-z0-9_.-]+ (?:tool|function)\b`), imperative),
+	withAccept(words(FamilyAgentDirective, "run|use|execute|trigger", ` the [a-z0-9.-]*_[a-z0-9_.-]* (?:tool|function)\b`), imperative),
 
 	// role
 	words(FamilyRole, "you", ` are now (?:a|an|the|in|my) (?:[a-z0-9-]+ ){0,3}?(?:mode|assistant|model|agent|ai|bot|persona|character|admin|administrator|root|operator|developer|manager)\b`),
 	words(FamilyRole, "you", ` are no longer (?:bound|restricted|limited|constrained)\b`),
 	words(FamilyRole, "you", ` are no longer (?:a|an|the) (?:[a-z-]+ ){0,2}?(?:assistant|model|agent|ai|bot|reviewer|chatbot)\b`),
 	words(FamilyRole, "you", ` will now (?:act|behave|respond) as\b`),
-	words(FamilyRole, "from", ` now on,? you\b`),
+	words(FamilyRole, "from", ` now on,? you(?: are| will (?:be|act|respond|answer|obey|follow|only|always|ignore)| act as| respond| answer| obey| ignore| only (?:follow|obey|answer)| take orders| work for)\b`),
 	words(FamilyRole, "your", ` new (?:role|persona|identity|task) is\b`),
 
 	// jailbreak
@@ -172,7 +257,9 @@ var corpus = slices.Concat(
 	words(FamilyJailbreak, "do", ` anything now\b`),
 	words(FamilyJailbreak, "developer", ` mode (?:enabled|activated|output|response)\b`),
 	words(FamilyJailbreak, "you", `(?: are|'re) (?:now )?in developer mode\b`),
-	words(FamilyJailbreak, "jailbr", `(?:eak|eaks|eaking|oken)\b`),
+	words(FamilyJailbreak, "jailbr", `(?:eak|oken) (?:mode|prompt|enabled|activated)\b`),
+	words(FamilyJailbreak, "you", `(?: are|'re) (?:now )?jailbroken\b`),
+	words(FamilyJailbreak, "enable|activate|enter|start", ` (?:a |the )?jailbreak\b`),
 	words(FamilyJailbreak, "pretend", ` (?:that )?you (?:are|have|were|can)\b`),
 	words(FamilyJailbreak, "pretend", ` to be (?:an? )?(?:unrestricted|unfiltered|evil|jailbroken|different)\b`),
 	words(FamilyJailbreak, "you|ai|assistant|model", ` (?:now )?(?:have|has) no (?:restrictions|limitations|filters|guardrails|rules|limits|censorship)\b`),
@@ -180,16 +267,16 @@ var corpus = slices.Concat(
 	words(FamilyJailbreak, "without", ` (?:any )?(?:censorship|guardrails|ethical (?:guidelines|constraints)|safety (?:filters|guidelines))\b`),
 
 	// exfiltration
-	words(FamilyExfiltration, revealVerbs, ` (?:me )?(?:all (?:of )?)?your `+leakAdj+yourNoun+`\b`),
-	words(FamilyExfiltration, revealVerbs, ` (?:me )?(?:all (?:of )?)?the `+leakAdj+leakNoun+`\b`),
-	words(FamilyExfiltration, sendVerbs, ` (?:it|this|them|that|everything|all of (?:it|this|them)) to https?://`),
-	words(FamilyExfiltration, sendVerbs, ` (?:the|your) `+leakNoun+` (?:[a-z0-9-]+ ){0,3}?to https?://`),
+	withAccept(words(FamilyExfiltration, revealVerbs, ` (?:me )?(?:all (?:of )?)?your `+leakAdj+yourNoun+`\b`), notNegated),
+	withAccept(words(FamilyExfiltration, revealVerbs, ` (?:me )?(?:all (?:of )?)?the `+leakAdj+leakNoun+`\b`), notNegated),
+	withAccept(words(FamilyExfiltration, sendVerbs, ` (?:it|this|them|that|everything|all of (?:it|this|them)) to https?://`), aboutSecrets),
+	withAccept(words(FamilyExfiltration, sendVerbs, ` (?:the|your) `+leakNoun+` (?:[a-z0-9-]+ ){0,3}?to https?://`), notNegated),
 	entry(FamilyExfiltration, `!\[[^\]]*\]\( ?https?://[^\s)]*\?[^\s)]*?(?:\$\{|\{\{|[?&](?:data|d|q|secrets?|token|keys?|env|prompt|payload|leak|exfil|content|c|msg|text|info|p|s)=)`),
 
 	// manipulation
-	words(FamilyManipulation, "user|admin|administrator|owner|maintainer|operator|security team|manager|reviewer", `s? (?:has|have|had) (?:already )?(?:explicitly )?(?:approved|authorized|authorised|signed off|consented|okayed|pre-?approved)(?: (?:this|it|that|these|the|your|my|our|all|everything)\b|[.,;!]|$)`),
-	words(FamilyManipulation, "already approved|preapproved|pre-approved", ` by (?:the )?(?:user|admin|owner|maintainer|security team|operator)\b`),
-	words(FamilyManipulation, "skip|bypass|circumvent", ` (?:the |all |any )?(?:human |manual |security |safety |required )?(?:approvals?|approval (?:step|gate|process)|reviews?|review (?:step|process)|checks|safety|safety checks|safeguards|guardrails)\b`),
+	words(FamilyManipulation, "user|admin|administrator|owner|operator|security team|manager", `s? (?:has|have|had) (?:already )?(?:explicitly )?(?:approved|authorized|authorised|signed off|consented|okayed|pre-?approved)(?: (?:this|it|that|these|the|your|my|our|all|everything)\b|[.,;!]|$)`),
+	words(FamilyManipulation, "already approved|preapproved|pre-approved", ` by (?:the )?(?:user|admin|owner|security team|operator)\b`),
+	withAccept(words(FamilyManipulation, "skip|bypass|circumvent", ` (?:the |all |any )?(?:human |manual |security |safety |required )?(?:approvals?|approval (?:step|gate|process)|reviews?|review (?:step|process)|checks|safety|safety checks|safeguards|guardrails)\b`), pressured),
 	words(FamilyManipulation, urgencies, `\b[^.!?]{0,80}?\bwithout`+approvals),
 	words(FamilyManipulation, "without", approvals+`[^.!?]{0,80}?\b`+urgency+`\b`),
 	words(FamilyManipulation, "no", ` (?:need|reason) (?:to|for) (?:ask(?:ing)?|wait(?:ing)?|get(?:ting)?|request(?:ing)?) (?:for )?(?:approval|confirmation|permission|review)\b`),
