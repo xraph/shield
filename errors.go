@@ -22,6 +22,10 @@ var (
 	ErrPIITokenNotFound   = errors.New("shield: pii token not found")
 	ErrComplianceNotFound = errors.New("shield: compliance report not found")
 
+	// Tenancy errors.
+	ErrTenantRequired = errors.New("shield: tenant is required")
+	ErrTenantMismatch = errors.New("shield: tenant does not match the context tenant")
+
 	// Duplicate errors.
 	ErrAlreadyExists = errors.New("shield: entity already exists")
 

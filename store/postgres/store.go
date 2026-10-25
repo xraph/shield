@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/xraph/grove"
@@ -71,4 +72,40 @@ func notFoundOrWrap(err, sentinel error, msg string) error {
 		return sentinel
 	}
 	return fmt.Errorf("shield/postgres: %s: %w", msg, err)
+}
+
+// whereIn builds a "column IN (?, ...)" clause. The grove drivers bind a slice
+// to one placeholder as a single value, so each element gets its own.
+func whereIn(column string, items []string) (clause string, args []any) {
+	marks := make([]string, len(items))
+	args = make([]any, len(items))
+	for i, v := range items {
+		marks[i] = "?"
+		args[i] = v
+	}
+	return column + " IN (" + strings.Join(marks, ", ") + ")", args
+}
+
+// claimTenant fills an entity's empty TenantID from the context tenant and
+// refuses one that names a different tenant (store.Tenant).
+func claimTenant(ctx context.Context, tenantID *string) error {
+	tenant, err := store.Tenant(ctx, *tenantID)
+	if err != nil {
+		return err
+	}
+	*tenantID = tenant
+	return nil
+}
+
+// updatedOrNotFound returns sentinel when an update matched no row: the ID is
+// missing or belongs to another tenant, and the caller cannot tell which.
+func updatedOrNotFound(res interface{ RowsAffected() (int64, error) }, sentinel error, msg string) error {
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("shield/postgres: %s rows affected: %w", msg, err)
+	}
+	if n == 0 {
+		return sentinel
+	}
+	return nil
 }

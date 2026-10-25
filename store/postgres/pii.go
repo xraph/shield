@@ -7,6 +7,7 @@ import (
 
 	"github.com/xraph/shield/id"
 	"github.com/xraph/shield/pii"
+	"github.com/xraph/shield/store"
 )
 
 func (s *Store) StorePIITokens(ctx context.Context, tokens []*pii.Token) error {
@@ -16,6 +17,9 @@ func (s *Store) StorePIITokens(ctx context.Context, tokens []*pii.Token) error {
 	n := now()
 	models := make([]piiTokenModel, len(tokens))
 	for i, t := range tokens {
+		if err := claimTenant(ctx, &t.TenantID); err != nil {
+			return err
+		}
 		t.CreatedAt = n
 		t.UpdatedAt = n
 		models[i] = *piiTokenToModel(t)
@@ -28,6 +32,10 @@ func (s *Store) StorePIITokens(ctx context.Context, tokens []*pii.Token) error {
 }
 
 func (s *Store) LoadPIITokens(ctx context.Context, tokenIDs []id.PIITokenID) ([]*pii.Token, error) {
+	tenant, tenantErr := store.Tenant(ctx, "")
+	if tenantErr != nil {
+		return nil, tenantErr
+	}
 	if len(tokenIDs) == 0 {
 		return nil, nil
 	}
@@ -36,7 +44,8 @@ func (s *Store) LoadPIITokens(ctx context.Context, tokenIDs []id.PIITokenID) ([]
 		ids[i] = tid.String()
 	}
 	var models []piiTokenModel
-	err := s.pgdb.NewSelect(&models).Where("id IN (?)", ids).Scan(ctx)
+	clause, args := whereIn("id", ids)
+	err := s.pgdb.NewSelect(&models).Where(clause, args...).Where("tenant_id = ?", tenant).Scan(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("shield/postgres: load pii tokens: %w", err)
 	}
@@ -48,9 +57,14 @@ func (s *Store) LoadPIITokens(ctx context.Context, tokenIDs []id.PIITokenID) ([]
 }
 
 func (s *Store) LoadPIITokensByScan(ctx context.Context, scanID id.ScanID) ([]*pii.Token, error) {
+	tenant, tenantErr := store.Tenant(ctx, "")
+	if tenantErr != nil {
+		return nil, tenantErr
+	}
 	var models []piiTokenModel
 	err := s.pgdb.NewSelect(&models).
 		Where("scan_id = ?", scanID.String()).
+		Where("tenant_id = ?", tenant).
 		OrderExpr("created_at ASC").
 		Scan(ctx)
 	if err != nil {
@@ -64,6 +78,10 @@ func (s *Store) LoadPIITokensByScan(ctx context.Context, scanID id.ScanID) ([]*p
 }
 
 func (s *Store) DeletePIITokens(ctx context.Context, tokenIDs []id.PIITokenID) error {
+	tenant, tenantErr := store.Tenant(ctx, "")
+	if tenantErr != nil {
+		return tenantErr
+	}
 	if len(tokenIDs) == 0 {
 		return nil
 	}
@@ -71,7 +89,8 @@ func (s *Store) DeletePIITokens(ctx context.Context, tokenIDs []id.PIITokenID) e
 	for i, tid := range tokenIDs {
 		ids[i] = tid.String()
 	}
-	_, err := s.pgdb.NewDelete((*piiTokenModel)(nil)).Where("id IN (?)", ids).Exec(ctx)
+	clause, args := whereIn("id", ids)
+	_, err := s.pgdb.NewDelete((*piiTokenModel)(nil)).Where(clause, args...).Where("tenant_id = ?", tenant).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("shield/postgres: delete pii tokens: %w", err)
 	}
@@ -79,13 +98,19 @@ func (s *Store) DeletePIITokens(ctx context.Context, tokenIDs []id.PIITokenID) e
 }
 
 func (s *Store) DeletePIITokensByTenant(ctx context.Context, tenantID string) error {
-	_, err := s.pgdb.NewDelete((*piiTokenModel)(nil)).Where("tenant_id = ?", tenantID).Exec(ctx)
+	tenant, err := store.Tenant(ctx, tenantID)
+	if err != nil {
+		return err
+	}
+	_, err = s.pgdb.NewDelete((*piiTokenModel)(nil)).Where("tenant_id = ?", tenant).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("shield/postgres: delete pii tokens by tenant: %w", err)
 	}
 	return nil
 }
 
+// PurgePIITokens is an operator retention sweep: it removes expired tokens in
+// every tenant and so takes no tenant.
 func (s *Store) PurgePIITokens(ctx context.Context, olderThan time.Time) (int64, error) {
 	res, err := s.pgdb.NewDelete((*piiTokenModel)(nil)).
 		Where("expires_at IS NOT NULL").
@@ -102,12 +127,12 @@ func (s *Store) PurgePIITokens(ctx context.Context, olderThan time.Time) (int64,
 }
 
 func (s *Store) PIIStats(ctx context.Context, tenantID string) (*pii.Stats, error) {
-	var models []piiTokenModel
-	q := s.pgdb.NewSelect(&models)
-	if tenantID != "" {
-		q = q.Where("tenant_id = ?", tenantID)
+	tenant, tenantErr := store.Tenant(ctx, tenantID)
+	if tenantErr != nil {
+		return nil, tenantErr
 	}
-	if err := q.Scan(ctx); err != nil {
+	var models []piiTokenModel
+	if err := s.pgdb.NewSelect(&models).Where("tenant_id = ?", tenant).Scan(ctx); err != nil {
 		if isNoRows(err) {
 			return &pii.Stats{
 				ByType:   make(map[string]int64),

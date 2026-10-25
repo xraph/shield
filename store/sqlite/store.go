@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/xraph/grove"
@@ -86,11 +87,50 @@ func notFoundOrWrap(err, sentinel error, msg string) error {
 	return fmt.Errorf("shield/sqlite: %s: %w", msg, err)
 }
 
+// whereIn builds a "column IN (?, ...)" clause. The grove drivers bind a slice
+// to one placeholder as a single value, so each element gets its own.
+func whereIn(column string, items []string) (clause string, args []any) {
+	marks := make([]string, len(items))
+	args = make([]any, len(items))
+	for i, v := range items {
+		marks[i] = "?"
+		args[i] = v
+	}
+	return column + " IN (" + strings.Join(marks, ", ") + ")", args
+}
+
+// claimTenant fills an entity's empty TenantID from the context tenant and
+// refuses one that names a different tenant (store.Tenant).
+func claimTenant(ctx context.Context, tenantID *string) error {
+	tenant, err := store.Tenant(ctx, *tenantID)
+	if err != nil {
+		return err
+	}
+	*tenantID = tenant
+	return nil
+}
+
+// updatedOrNotFound returns sentinel when an update matched no row: the ID is
+// missing or belongs to another tenant, and the caller cannot tell which.
+func updatedOrNotFound(res interface{ RowsAffected() (int64, error) }, sentinel error, msg string) error {
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("shield/sqlite: %s rows affected: %w", msg, err)
+	}
+	if n == 0 {
+		return sentinel
+	}
+	return nil
+}
+
 // ──────────────────────────────────────────────────
 // Instinct operations
 // ──────────────────────────────────────────────────
 
 func (s *Store) CreateInstinct(ctx context.Context, inst *instinct.Instinct) error {
+	if err := claimTenant(ctx, &inst.TenantID); err != nil {
+		return err
+	}
 	n := now()
 	inst.CreatedAt = n
 	inst.UpdatedAt = n
@@ -106,8 +146,12 @@ func (s *Store) CreateInstinct(ctx context.Context, inst *instinct.Instinct) err
 }
 
 func (s *Store) GetInstinct(ctx context.Context, instID id.InstinctID) (*instinct.Instinct, error) {
+	tenant, tenantErr := store.Tenant(ctx, "")
+	if tenantErr != nil {
+		return nil, tenantErr
+	}
 	m := new(instinctModel)
-	err := s.sdb.NewSelect(m).Where("id = ?", instID.String()).Scan(ctx)
+	err := s.sdb.NewSelect(m).Where("id = ?", instID.String()).Where("tenant_id = ?", tenant).Scan(ctx)
 	if err != nil {
 		return nil, notFoundOrWrap(err, shield.ErrInstinctNotFound, "get instinct")
 	}
@@ -115,9 +159,14 @@ func (s *Store) GetInstinct(ctx context.Context, instID id.InstinctID) (*instinc
 }
 
 func (s *Store) GetInstinctByName(ctx context.Context, appID, name string) (*instinct.Instinct, error) {
+	tenant, tenantErr := store.Tenant(ctx, "")
+	if tenantErr != nil {
+		return nil, tenantErr
+	}
 	m := new(instinctModel)
 	err := s.sdb.NewSelect(m).
 		Where("app_id = ?", appID).
+		Where("tenant_id = ?", tenant).
 		Where("name = ?", name).
 		Scan(ctx)
 	if err != nil {
@@ -127,20 +176,27 @@ func (s *Store) GetInstinctByName(ctx context.Context, appID, name string) (*ins
 }
 
 func (s *Store) UpdateInstinct(ctx context.Context, inst *instinct.Instinct) error {
+	if err := claimTenant(ctx, &inst.TenantID); err != nil {
+		return err
+	}
 	inst.UpdatedAt = now()
 	m, err := instinctToModel(inst)
 	if err != nil {
 		return fmt.Errorf("shield/sqlite: update instinct: %w", err)
 	}
-	_, err = s.sdb.NewUpdate(m).WherePK().Exec(ctx)
+	res, err := s.sdb.NewUpdate(m).WherePK().Where("tenant_id = ?", inst.TenantID).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("shield/sqlite: update instinct: %w", err)
 	}
-	return nil
+	return updatedOrNotFound(res, shield.ErrInstinctNotFound, "update instinct")
 }
 
 func (s *Store) DeleteInstinct(ctx context.Context, instID id.InstinctID) error {
-	_, err := s.sdb.NewDelete((*instinctModel)(nil)).Where("id = ?", instID.String()).Exec(ctx)
+	tenant, tenantErr := store.Tenant(ctx, "")
+	if tenantErr != nil {
+		return tenantErr
+	}
+	_, err := s.sdb.NewDelete((*instinctModel)(nil)).Where("id = ?", instID.String()).Where("tenant_id = ?", tenant).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("shield/sqlite: delete instinct: %w", err)
 	}
@@ -148,14 +204,19 @@ func (s *Store) DeleteInstinct(ctx context.Context, instID id.InstinctID) error 
 }
 
 func (s *Store) ListInstincts(ctx context.Context, filter *instinct.ListFilter) ([]*instinct.Instinct, error) {
+	var want string
+	if filter != nil {
+		want = filter.TenantID
+	}
+	tenant, tenantErr := store.Tenant(ctx, want)
+	if tenantErr != nil {
+		return nil, tenantErr
+	}
 	var models []instinctModel
-	q := s.sdb.NewSelect(&models).OrderExpr("created_at ASC")
+	q := s.sdb.NewSelect(&models).Where("tenant_id = ?", tenant).OrderExpr("created_at ASC")
 	if filter != nil {
 		if filter.AppID != "" {
 			q = q.Where("app_id = ?", filter.AppID)
-		}
-		if filter.TenantID != "" {
-			q = q.Where("tenant_id = ?", filter.TenantID)
 		}
 		if filter.Category != "" {
 			q = q.Where("category = ?", string(filter.Category))
@@ -189,6 +250,9 @@ func (s *Store) ListInstincts(ctx context.Context, filter *instinct.ListFilter) 
 // ──────────────────────────────────────────────────
 
 func (s *Store) CreateAwareness(ctx context.Context, a *awareness.Awareness) error {
+	if err := claimTenant(ctx, &a.TenantID); err != nil {
+		return err
+	}
 	n := now()
 	a.CreatedAt = n
 	a.UpdatedAt = n
@@ -204,8 +268,12 @@ func (s *Store) CreateAwareness(ctx context.Context, a *awareness.Awareness) err
 }
 
 func (s *Store) GetAwareness(ctx context.Context, aID id.AwarenessID) (*awareness.Awareness, error) {
+	tenant, tenantErr := store.Tenant(ctx, "")
+	if tenantErr != nil {
+		return nil, tenantErr
+	}
 	m := new(awarenessModel)
-	err := s.sdb.NewSelect(m).Where("id = ?", aID.String()).Scan(ctx)
+	err := s.sdb.NewSelect(m).Where("id = ?", aID.String()).Where("tenant_id = ?", tenant).Scan(ctx)
 	if err != nil {
 		return nil, notFoundOrWrap(err, shield.ErrAwarenessNotFound, "get awareness")
 	}
@@ -213,9 +281,14 @@ func (s *Store) GetAwareness(ctx context.Context, aID id.AwarenessID) (*awarenes
 }
 
 func (s *Store) GetAwarenessByName(ctx context.Context, appID, name string) (*awareness.Awareness, error) {
+	tenant, tenantErr := store.Tenant(ctx, "")
+	if tenantErr != nil {
+		return nil, tenantErr
+	}
 	m := new(awarenessModel)
 	err := s.sdb.NewSelect(m).
 		Where("app_id = ?", appID).
+		Where("tenant_id = ?", tenant).
 		Where("name = ?", name).
 		Scan(ctx)
 	if err != nil {
@@ -225,20 +298,27 @@ func (s *Store) GetAwarenessByName(ctx context.Context, appID, name string) (*aw
 }
 
 func (s *Store) UpdateAwareness(ctx context.Context, a *awareness.Awareness) error {
+	if err := claimTenant(ctx, &a.TenantID); err != nil {
+		return err
+	}
 	a.UpdatedAt = now()
 	m, err := awarenessToModel(a)
 	if err != nil {
 		return fmt.Errorf("shield/sqlite: update awareness: %w", err)
 	}
-	_, err = s.sdb.NewUpdate(m).WherePK().Exec(ctx)
+	res, err := s.sdb.NewUpdate(m).WherePK().Where("tenant_id = ?", a.TenantID).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("shield/sqlite: update awareness: %w", err)
 	}
-	return nil
+	return updatedOrNotFound(res, shield.ErrAwarenessNotFound, "update awareness")
 }
 
 func (s *Store) DeleteAwareness(ctx context.Context, aID id.AwarenessID) error {
-	_, err := s.sdb.NewDelete((*awarenessModel)(nil)).Where("id = ?", aID.String()).Exec(ctx)
+	tenant, tenantErr := store.Tenant(ctx, "")
+	if tenantErr != nil {
+		return tenantErr
+	}
+	_, err := s.sdb.NewDelete((*awarenessModel)(nil)).Where("id = ?", aID.String()).Where("tenant_id = ?", tenant).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("shield/sqlite: delete awareness: %w", err)
 	}
@@ -246,14 +326,19 @@ func (s *Store) DeleteAwareness(ctx context.Context, aID id.AwarenessID) error {
 }
 
 func (s *Store) ListAwareness(ctx context.Context, filter *awareness.ListFilter) ([]*awareness.Awareness, error) {
+	var want string
+	if filter != nil {
+		want = filter.TenantID
+	}
+	tenant, tenantErr := store.Tenant(ctx, want)
+	if tenantErr != nil {
+		return nil, tenantErr
+	}
 	var models []awarenessModel
-	q := s.sdb.NewSelect(&models).OrderExpr("created_at ASC")
+	q := s.sdb.NewSelect(&models).Where("tenant_id = ?", tenant).OrderExpr("created_at ASC")
 	if filter != nil {
 		if filter.AppID != "" {
 			q = q.Where("app_id = ?", filter.AppID)
-		}
-		if filter.TenantID != "" {
-			q = q.Where("tenant_id = ?", filter.TenantID)
 		}
 		if filter.Focus != "" {
 			q = q.Where("focus = ?", string(filter.Focus))
@@ -287,6 +372,9 @@ func (s *Store) ListAwareness(ctx context.Context, filter *awareness.ListFilter)
 // ──────────────────────────────────────────────────
 
 func (s *Store) CreateBoundary(ctx context.Context, b *boundary.Boundary) error {
+	if err := claimTenant(ctx, &b.TenantID); err != nil {
+		return err
+	}
 	n := now()
 	b.CreatedAt = n
 	b.UpdatedAt = n
@@ -302,8 +390,12 @@ func (s *Store) CreateBoundary(ctx context.Context, b *boundary.Boundary) error 
 }
 
 func (s *Store) GetBoundary(ctx context.Context, bID id.BoundaryID) (*boundary.Boundary, error) {
+	tenant, tenantErr := store.Tenant(ctx, "")
+	if tenantErr != nil {
+		return nil, tenantErr
+	}
 	m := new(boundaryModel)
-	err := s.sdb.NewSelect(m).Where("id = ?", bID.String()).Scan(ctx)
+	err := s.sdb.NewSelect(m).Where("id = ?", bID.String()).Where("tenant_id = ?", tenant).Scan(ctx)
 	if err != nil {
 		return nil, notFoundOrWrap(err, shield.ErrBoundaryNotFound, "get boundary")
 	}
@@ -311,9 +403,14 @@ func (s *Store) GetBoundary(ctx context.Context, bID id.BoundaryID) (*boundary.B
 }
 
 func (s *Store) GetBoundaryByName(ctx context.Context, appID, name string) (*boundary.Boundary, error) {
+	tenant, tenantErr := store.Tenant(ctx, "")
+	if tenantErr != nil {
+		return nil, tenantErr
+	}
 	m := new(boundaryModel)
 	err := s.sdb.NewSelect(m).
 		Where("app_id = ?", appID).
+		Where("tenant_id = ?", tenant).
 		Where("name = ?", name).
 		Scan(ctx)
 	if err != nil {
@@ -323,20 +420,27 @@ func (s *Store) GetBoundaryByName(ctx context.Context, appID, name string) (*bou
 }
 
 func (s *Store) UpdateBoundary(ctx context.Context, b *boundary.Boundary) error {
+	if err := claimTenant(ctx, &b.TenantID); err != nil {
+		return err
+	}
 	b.UpdatedAt = now()
 	m, err := boundaryToModel(b)
 	if err != nil {
 		return fmt.Errorf("shield/sqlite: update boundary: %w", err)
 	}
-	_, err = s.sdb.NewUpdate(m).WherePK().Exec(ctx)
+	res, err := s.sdb.NewUpdate(m).WherePK().Where("tenant_id = ?", b.TenantID).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("shield/sqlite: update boundary: %w", err)
 	}
-	return nil
+	return updatedOrNotFound(res, shield.ErrBoundaryNotFound, "update boundary")
 }
 
 func (s *Store) DeleteBoundary(ctx context.Context, bID id.BoundaryID) error {
-	_, err := s.sdb.NewDelete((*boundaryModel)(nil)).Where("id = ?", bID.String()).Exec(ctx)
+	tenant, tenantErr := store.Tenant(ctx, "")
+	if tenantErr != nil {
+		return tenantErr
+	}
+	_, err := s.sdb.NewDelete((*boundaryModel)(nil)).Where("id = ?", bID.String()).Where("tenant_id = ?", tenant).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("shield/sqlite: delete boundary: %w", err)
 	}
@@ -344,14 +448,19 @@ func (s *Store) DeleteBoundary(ctx context.Context, bID id.BoundaryID) error {
 }
 
 func (s *Store) ListBoundaries(ctx context.Context, filter *boundary.ListFilter) ([]*boundary.Boundary, error) {
+	var want string
+	if filter != nil {
+		want = filter.TenantID
+	}
+	tenant, tenantErr := store.Tenant(ctx, want)
+	if tenantErr != nil {
+		return nil, tenantErr
+	}
 	var models []boundaryModel
-	q := s.sdb.NewSelect(&models).OrderExpr("created_at ASC")
+	q := s.sdb.NewSelect(&models).Where("tenant_id = ?", tenant).OrderExpr("created_at ASC")
 	if filter != nil {
 		if filter.AppID != "" {
 			q = q.Where("app_id = ?", filter.AppID)
-		}
-		if filter.TenantID != "" {
-			q = q.Where("tenant_id = ?", filter.TenantID)
 		}
 		if filter.Enabled != nil {
 			q = q.Where("enabled = ?", *filter.Enabled)
@@ -382,6 +491,9 @@ func (s *Store) ListBoundaries(ctx context.Context, filter *boundary.ListFilter)
 // ──────────────────────────────────────────────────
 
 func (s *Store) CreateValues(ctx context.Context, v *values.Values) error {
+	if err := claimTenant(ctx, &v.TenantID); err != nil {
+		return err
+	}
 	n := now()
 	v.CreatedAt = n
 	v.UpdatedAt = n
@@ -397,8 +509,12 @@ func (s *Store) CreateValues(ctx context.Context, v *values.Values) error {
 }
 
 func (s *Store) GetValues(ctx context.Context, vID id.ValueID) (*values.Values, error) {
+	tenant, tenantErr := store.Tenant(ctx, "")
+	if tenantErr != nil {
+		return nil, tenantErr
+	}
 	m := new(valuesModel)
-	err := s.sdb.NewSelect(m).Where("id = ?", vID.String()).Scan(ctx)
+	err := s.sdb.NewSelect(m).Where("id = ?", vID.String()).Where("tenant_id = ?", tenant).Scan(ctx)
 	if err != nil {
 		return nil, notFoundOrWrap(err, shield.ErrValueNotFound, "get values")
 	}
@@ -406,9 +522,14 @@ func (s *Store) GetValues(ctx context.Context, vID id.ValueID) (*values.Values, 
 }
 
 func (s *Store) GetValuesByName(ctx context.Context, appID, name string) (*values.Values, error) {
+	tenant, tenantErr := store.Tenant(ctx, "")
+	if tenantErr != nil {
+		return nil, tenantErr
+	}
 	m := new(valuesModel)
 	err := s.sdb.NewSelect(m).
 		Where("app_id = ?", appID).
+		Where("tenant_id = ?", tenant).
 		Where("name = ?", name).
 		Scan(ctx)
 	if err != nil {
@@ -418,20 +539,27 @@ func (s *Store) GetValuesByName(ctx context.Context, appID, name string) (*value
 }
 
 func (s *Store) UpdateValues(ctx context.Context, v *values.Values) error {
+	if err := claimTenant(ctx, &v.TenantID); err != nil {
+		return err
+	}
 	v.UpdatedAt = now()
 	m, err := valuesToModel(v)
 	if err != nil {
 		return fmt.Errorf("shield/sqlite: update values: %w", err)
 	}
-	_, err = s.sdb.NewUpdate(m).WherePK().Exec(ctx)
+	res, err := s.sdb.NewUpdate(m).WherePK().Where("tenant_id = ?", v.TenantID).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("shield/sqlite: update values: %w", err)
 	}
-	return nil
+	return updatedOrNotFound(res, shield.ErrValueNotFound, "update values")
 }
 
 func (s *Store) DeleteValues(ctx context.Context, vID id.ValueID) error {
-	_, err := s.sdb.NewDelete((*valuesModel)(nil)).Where("id = ?", vID.String()).Exec(ctx)
+	tenant, tenantErr := store.Tenant(ctx, "")
+	if tenantErr != nil {
+		return tenantErr
+	}
+	_, err := s.sdb.NewDelete((*valuesModel)(nil)).Where("id = ?", vID.String()).Where("tenant_id = ?", tenant).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("shield/sqlite: delete values: %w", err)
 	}
@@ -439,14 +567,19 @@ func (s *Store) DeleteValues(ctx context.Context, vID id.ValueID) error {
 }
 
 func (s *Store) ListValues(ctx context.Context, filter *values.ListFilter) ([]*values.Values, error) {
+	var want string
+	if filter != nil {
+		want = filter.TenantID
+	}
+	tenant, tenantErr := store.Tenant(ctx, want)
+	if tenantErr != nil {
+		return nil, tenantErr
+	}
 	var models []valuesModel
-	q := s.sdb.NewSelect(&models).OrderExpr("created_at ASC")
+	q := s.sdb.NewSelect(&models).Where("tenant_id = ?", tenant).OrderExpr("created_at ASC")
 	if filter != nil {
 		if filter.AppID != "" {
 			q = q.Where("app_id = ?", filter.AppID)
-		}
-		if filter.TenantID != "" {
-			q = q.Where("tenant_id = ?", filter.TenantID)
 		}
 		if filter.Enabled != nil {
 			q = q.Where("enabled = ?", *filter.Enabled)
@@ -477,6 +610,9 @@ func (s *Store) ListValues(ctx context.Context, filter *values.ListFilter) ([]*v
 // ──────────────────────────────────────────────────
 
 func (s *Store) CreateJudgment(ctx context.Context, j *judgment.Judgment) error {
+	if err := claimTenant(ctx, &j.TenantID); err != nil {
+		return err
+	}
 	n := now()
 	j.CreatedAt = n
 	j.UpdatedAt = n
@@ -492,8 +628,12 @@ func (s *Store) CreateJudgment(ctx context.Context, j *judgment.Judgment) error 
 }
 
 func (s *Store) GetJudgment(ctx context.Context, jID id.JudgmentID) (*judgment.Judgment, error) {
+	tenant, tenantErr := store.Tenant(ctx, "")
+	if tenantErr != nil {
+		return nil, tenantErr
+	}
 	m := new(judgmentModel)
-	err := s.sdb.NewSelect(m).Where("id = ?", jID.String()).Scan(ctx)
+	err := s.sdb.NewSelect(m).Where("id = ?", jID.String()).Where("tenant_id = ?", tenant).Scan(ctx)
 	if err != nil {
 		return nil, notFoundOrWrap(err, shield.ErrJudgmentNotFound, "get judgment")
 	}
@@ -501,9 +641,14 @@ func (s *Store) GetJudgment(ctx context.Context, jID id.JudgmentID) (*judgment.J
 }
 
 func (s *Store) GetJudgmentByName(ctx context.Context, appID, name string) (*judgment.Judgment, error) {
+	tenant, tenantErr := store.Tenant(ctx, "")
+	if tenantErr != nil {
+		return nil, tenantErr
+	}
 	m := new(judgmentModel)
 	err := s.sdb.NewSelect(m).
 		Where("app_id = ?", appID).
+		Where("tenant_id = ?", tenant).
 		Where("name = ?", name).
 		Scan(ctx)
 	if err != nil {
@@ -513,20 +658,27 @@ func (s *Store) GetJudgmentByName(ctx context.Context, appID, name string) (*jud
 }
 
 func (s *Store) UpdateJudgment(ctx context.Context, j *judgment.Judgment) error {
+	if err := claimTenant(ctx, &j.TenantID); err != nil {
+		return err
+	}
 	j.UpdatedAt = now()
 	m, err := judgmentToModel(j)
 	if err != nil {
 		return fmt.Errorf("shield/sqlite: update judgment: %w", err)
 	}
-	_, err = s.sdb.NewUpdate(m).WherePK().Exec(ctx)
+	res, err := s.sdb.NewUpdate(m).WherePK().Where("tenant_id = ?", j.TenantID).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("shield/sqlite: update judgment: %w", err)
 	}
-	return nil
+	return updatedOrNotFound(res, shield.ErrJudgmentNotFound, "update judgment")
 }
 
 func (s *Store) DeleteJudgment(ctx context.Context, jID id.JudgmentID) error {
-	_, err := s.sdb.NewDelete((*judgmentModel)(nil)).Where("id = ?", jID.String()).Exec(ctx)
+	tenant, tenantErr := store.Tenant(ctx, "")
+	if tenantErr != nil {
+		return tenantErr
+	}
+	_, err := s.sdb.NewDelete((*judgmentModel)(nil)).Where("id = ?", jID.String()).Where("tenant_id = ?", tenant).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("shield/sqlite: delete judgment: %w", err)
 	}
@@ -534,14 +686,19 @@ func (s *Store) DeleteJudgment(ctx context.Context, jID id.JudgmentID) error {
 }
 
 func (s *Store) ListJudgments(ctx context.Context, filter *judgment.ListFilter) ([]*judgment.Judgment, error) {
+	var want string
+	if filter != nil {
+		want = filter.TenantID
+	}
+	tenant, tenantErr := store.Tenant(ctx, want)
+	if tenantErr != nil {
+		return nil, tenantErr
+	}
 	var models []judgmentModel
-	q := s.sdb.NewSelect(&models).OrderExpr("created_at ASC")
+	q := s.sdb.NewSelect(&models).Where("tenant_id = ?", tenant).OrderExpr("created_at ASC")
 	if filter != nil {
 		if filter.AppID != "" {
 			q = q.Where("app_id = ?", filter.AppID)
-		}
-		if filter.TenantID != "" {
-			q = q.Where("tenant_id = ?", filter.TenantID)
 		}
 		if filter.Domain != "" {
 			q = q.Where("domain = ?", string(filter.Domain))
@@ -575,6 +732,9 @@ func (s *Store) ListJudgments(ctx context.Context, filter *judgment.ListFilter) 
 // ──────────────────────────────────────────────────
 
 func (s *Store) CreateReflex(ctx context.Context, r *reflex.Reflex) error {
+	if err := claimTenant(ctx, &r.TenantID); err != nil {
+		return err
+	}
 	n := now()
 	r.CreatedAt = n
 	r.UpdatedAt = n
@@ -590,8 +750,12 @@ func (s *Store) CreateReflex(ctx context.Context, r *reflex.Reflex) error {
 }
 
 func (s *Store) GetReflex(ctx context.Context, rID id.ReflexID) (*reflex.Reflex, error) {
+	tenant, tenantErr := store.Tenant(ctx, "")
+	if tenantErr != nil {
+		return nil, tenantErr
+	}
 	m := new(reflexModel)
-	err := s.sdb.NewSelect(m).Where("id = ?", rID.String()).Scan(ctx)
+	err := s.sdb.NewSelect(m).Where("id = ?", rID.String()).Where("tenant_id = ?", tenant).Scan(ctx)
 	if err != nil {
 		return nil, notFoundOrWrap(err, shield.ErrReflexNotFound, "get reflex")
 	}
@@ -599,9 +763,14 @@ func (s *Store) GetReflex(ctx context.Context, rID id.ReflexID) (*reflex.Reflex,
 }
 
 func (s *Store) GetReflexByName(ctx context.Context, appID, name string) (*reflex.Reflex, error) {
+	tenant, tenantErr := store.Tenant(ctx, "")
+	if tenantErr != nil {
+		return nil, tenantErr
+	}
 	m := new(reflexModel)
 	err := s.sdb.NewSelect(m).
 		Where("app_id = ?", appID).
+		Where("tenant_id = ?", tenant).
 		Where("name = ?", name).
 		Scan(ctx)
 	if err != nil {
@@ -611,20 +780,27 @@ func (s *Store) GetReflexByName(ctx context.Context, appID, name string) (*refle
 }
 
 func (s *Store) UpdateReflex(ctx context.Context, r *reflex.Reflex) error {
+	if err := claimTenant(ctx, &r.TenantID); err != nil {
+		return err
+	}
 	r.UpdatedAt = now()
 	m, err := reflexToModel(r)
 	if err != nil {
 		return fmt.Errorf("shield/sqlite: update reflex: %w", err)
 	}
-	_, err = s.sdb.NewUpdate(m).WherePK().Exec(ctx)
+	res, err := s.sdb.NewUpdate(m).WherePK().Where("tenant_id = ?", r.TenantID).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("shield/sqlite: update reflex: %w", err)
 	}
-	return nil
+	return updatedOrNotFound(res, shield.ErrReflexNotFound, "update reflex")
 }
 
 func (s *Store) DeleteReflex(ctx context.Context, rID id.ReflexID) error {
-	_, err := s.sdb.NewDelete((*reflexModel)(nil)).Where("id = ?", rID.String()).Exec(ctx)
+	tenant, tenantErr := store.Tenant(ctx, "")
+	if tenantErr != nil {
+		return tenantErr
+	}
+	_, err := s.sdb.NewDelete((*reflexModel)(nil)).Where("id = ?", rID.String()).Where("tenant_id = ?", tenant).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("shield/sqlite: delete reflex: %w", err)
 	}
@@ -632,14 +808,19 @@ func (s *Store) DeleteReflex(ctx context.Context, rID id.ReflexID) error {
 }
 
 func (s *Store) ListReflexes(ctx context.Context, filter *reflex.ListFilter) ([]*reflex.Reflex, error) {
+	var want string
+	if filter != nil {
+		want = filter.TenantID
+	}
+	tenant, tenantErr := store.Tenant(ctx, want)
+	if tenantErr != nil {
+		return nil, tenantErr
+	}
 	var models []reflexModel
-	q := s.sdb.NewSelect(&models).OrderExpr("created_at ASC")
+	q := s.sdb.NewSelect(&models).Where("tenant_id = ?", tenant).OrderExpr("created_at ASC")
 	if filter != nil {
 		if filter.AppID != "" {
 			q = q.Where("app_id = ?", filter.AppID)
-		}
-		if filter.TenantID != "" {
-			q = q.Where("tenant_id = ?", filter.TenantID)
 		}
 		if filter.Enabled != nil {
 			q = q.Where("enabled = ?", *filter.Enabled)
@@ -670,6 +851,9 @@ func (s *Store) ListReflexes(ctx context.Context, filter *reflex.ListFilter) ([]
 // ──────────────────────────────────────────────────
 
 func (s *Store) CreateProfile(ctx context.Context, p *profile.SafetyProfile) error {
+	if err := claimTenant(ctx, &p.TenantID); err != nil {
+		return err
+	}
 	n := now()
 	p.CreatedAt = n
 	p.UpdatedAt = n
@@ -685,8 +869,12 @@ func (s *Store) CreateProfile(ctx context.Context, p *profile.SafetyProfile) err
 }
 
 func (s *Store) GetProfile(ctx context.Context, pID id.SafetyProfileID) (*profile.SafetyProfile, error) {
+	tenant, tenantErr := store.Tenant(ctx, "")
+	if tenantErr != nil {
+		return nil, tenantErr
+	}
 	m := new(profileModel)
-	err := s.sdb.NewSelect(m).Where("id = ?", pID.String()).Scan(ctx)
+	err := s.sdb.NewSelect(m).Where("id = ?", pID.String()).Where("tenant_id = ?", tenant).Scan(ctx)
 	if err != nil {
 		return nil, notFoundOrWrap(err, shield.ErrProfileNotFound, "get profile")
 	}
@@ -694,9 +882,14 @@ func (s *Store) GetProfile(ctx context.Context, pID id.SafetyProfileID) (*profil
 }
 
 func (s *Store) GetProfileByName(ctx context.Context, appID, name string) (*profile.SafetyProfile, error) {
+	tenant, tenantErr := store.Tenant(ctx, "")
+	if tenantErr != nil {
+		return nil, tenantErr
+	}
 	m := new(profileModel)
 	err := s.sdb.NewSelect(m).
 		Where("app_id = ?", appID).
+		Where("tenant_id = ?", tenant).
 		Where("name = ?", name).
 		Scan(ctx)
 	if err != nil {
@@ -706,20 +899,27 @@ func (s *Store) GetProfileByName(ctx context.Context, appID, name string) (*prof
 }
 
 func (s *Store) UpdateProfile(ctx context.Context, p *profile.SafetyProfile) error {
+	if err := claimTenant(ctx, &p.TenantID); err != nil {
+		return err
+	}
 	p.UpdatedAt = now()
 	m, err := profileToModel(p)
 	if err != nil {
 		return fmt.Errorf("shield/sqlite: update profile: %w", err)
 	}
-	_, err = s.sdb.NewUpdate(m).WherePK().Exec(ctx)
+	res, err := s.sdb.NewUpdate(m).WherePK().Where("tenant_id = ?", p.TenantID).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("shield/sqlite: update profile: %w", err)
 	}
-	return nil
+	return updatedOrNotFound(res, shield.ErrProfileNotFound, "update profile")
 }
 
 func (s *Store) DeleteProfile(ctx context.Context, pID id.SafetyProfileID) error {
-	_, err := s.sdb.NewDelete((*profileModel)(nil)).Where("id = ?", pID.String()).Exec(ctx)
+	tenant, tenantErr := store.Tenant(ctx, "")
+	if tenantErr != nil {
+		return tenantErr
+	}
+	_, err := s.sdb.NewDelete((*profileModel)(nil)).Where("id = ?", pID.String()).Where("tenant_id = ?", tenant).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("shield/sqlite: delete profile: %w", err)
 	}
@@ -727,14 +927,19 @@ func (s *Store) DeleteProfile(ctx context.Context, pID id.SafetyProfileID) error
 }
 
 func (s *Store) ListProfiles(ctx context.Context, filter *profile.ListFilter) ([]*profile.SafetyProfile, error) {
+	var want string
+	if filter != nil {
+		want = filter.TenantID
+	}
+	tenant, tenantErr := store.Tenant(ctx, want)
+	if tenantErr != nil {
+		return nil, tenantErr
+	}
 	var models []profileModel
-	q := s.sdb.NewSelect(&models).OrderExpr("created_at ASC")
+	q := s.sdb.NewSelect(&models).Where("tenant_id = ?", tenant).OrderExpr("created_at ASC")
 	if filter != nil {
 		if filter.AppID != "" {
 			q = q.Where("app_id = ?", filter.AppID)
-		}
-		if filter.TenantID != "" {
-			q = q.Where("tenant_id = ?", filter.TenantID)
 		}
 		if filter.Enabled != nil {
 			q = q.Where("enabled = ?", *filter.Enabled)
@@ -765,6 +970,9 @@ func (s *Store) ListProfiles(ctx context.Context, filter *profile.ListFilter) ([
 // ──────────────────────────────────────────────────
 
 func (s *Store) CreateScan(ctx context.Context, result *scan.Result) error {
+	if err := claimTenant(ctx, &result.TenantID); err != nil {
+		return err
+	}
 	n := now()
 	result.CreatedAt = n
 	result.UpdatedAt = n
@@ -780,8 +988,12 @@ func (s *Store) CreateScan(ctx context.Context, result *scan.Result) error {
 }
 
 func (s *Store) GetScan(ctx context.Context, scanID id.ScanID) (*scan.Result, error) {
+	tenant, tenantErr := store.Tenant(ctx, "")
+	if tenantErr != nil {
+		return nil, tenantErr
+	}
 	m := new(scanResultModel)
-	err := s.sdb.NewSelect(m).Where("id = ?", scanID.String()).Scan(ctx)
+	err := s.sdb.NewSelect(m).Where("id = ?", scanID.String()).Where("tenant_id = ?", tenant).Scan(ctx)
 	if err != nil {
 		return nil, notFoundOrWrap(err, shield.ErrScanNotFound, "get scan")
 	}
@@ -789,14 +1001,19 @@ func (s *Store) GetScan(ctx context.Context, scanID id.ScanID) (*scan.Result, er
 }
 
 func (s *Store) ListScans(ctx context.Context, filter *scan.ListFilter) ([]*scan.Result, error) {
+	var want string
+	if filter != nil {
+		want = filter.TenantID
+	}
+	tenant, tenantErr := store.Tenant(ctx, want)
+	if tenantErr != nil {
+		return nil, tenantErr
+	}
 	var models []scanResultModel
-	q := s.sdb.NewSelect(&models).OrderExpr("created_at DESC")
+	q := s.sdb.NewSelect(&models).Where("tenant_id = ?", tenant).OrderExpr("created_at DESC")
 	if filter != nil {
 		if filter.AppID != "" {
 			q = q.Where("app_id = ?", filter.AppID)
-		}
-		if filter.TenantID != "" {
-			q = q.Where("tenant_id = ?", filter.TenantID)
 		}
 		if filter.Direction != "" {
 			q = q.Where("direction = ?", string(filter.Direction))
@@ -826,14 +1043,19 @@ func (s *Store) ListScans(ctx context.Context, filter *scan.ListFilter) ([]*scan
 }
 
 func (s *Store) ScanStats(ctx context.Context, filter *scan.StatsFilter) (*scan.Stats, error) {
+	var want string
+	if filter != nil {
+		want = filter.TenantID
+	}
+	tenant, tenantErr := store.Tenant(ctx, want)
+	if tenantErr != nil {
+		return nil, tenantErr
+	}
 	var models []scanResultModel
-	q := s.sdb.NewSelect(&models)
+	q := s.sdb.NewSelect(&models).Where("tenant_id = ?", tenant)
 	if filter != nil {
 		if filter.AppID != "" {
 			q = q.Where("app_id = ?", filter.AppID)
-		}
-		if filter.TenantID != "" {
-			q = q.Where("tenant_id = ?", filter.TenantID)
 		}
 		if filter.From != "" {
 			q = q.Where("created_at >= ?", filter.From)
@@ -879,6 +1101,9 @@ func emptyScanStats() *scan.Stats {
 // ──────────────────────────────────────────────────
 
 func (s *Store) CreatePolicy(ctx context.Context, pol *policy.Policy) error {
+	if _, err := store.ScopeLevels(ctx, pol.ScopeKey, string(pol.ScopeLevel)); err != nil {
+		return err
+	}
 	n := now()
 	pol.CreatedAt = n
 	pol.UpdatedAt = n
@@ -894,41 +1119,84 @@ func (s *Store) CreatePolicy(ctx context.Context, pol *policy.Policy) error {
 }
 
 func (s *Store) GetPolicy(ctx context.Context, polID id.PolicyID) (*policy.Policy, error) {
+	m, err := s.visiblePolicy(ctx, polID)
+	if err != nil {
+		return nil, err
+	}
+	return policyFromModel(m)
+}
+
+// visiblePolicy loads a policy the context may see. A missing policy and one
+// in a scope the context cannot see both return ErrPolicyNotFound.
+func (s *Store) visiblePolicy(ctx context.Context, polID id.PolicyID) (*policyModel, error) {
 	m := new(policyModel)
 	err := s.sdb.NewSelect(m).Where("id = ?", polID.String()).Scan(ctx)
 	if err != nil {
 		return nil, notFoundOrWrap(err, shield.ErrPolicyNotFound, "get policy")
 	}
-	return policyFromModel(m)
+	if !store.ScopeVisible(ctx, m.ScopeKey, m.ScopeLevel) {
+		return nil, shield.ErrPolicyNotFound
+	}
+	return m, nil
 }
 
 func (s *Store) GetPolicyByName(ctx context.Context, scopeKey, name string) (*policy.Policy, error) {
+	levels, levelErr := store.ScopeLevels(ctx, scopeKey, "")
+	if levelErr != nil {
+		return nil, levelErr
+	}
 	m := new(policyModel)
-	err := s.sdb.NewSelect(m).
+	q := s.sdb.NewSelect(m).
 		Where("scope_key = ?", scopeKey).
-		Where("name = ?", name).
-		Scan(ctx)
-	if err != nil {
+		Where("name = ?", name)
+	if levels != nil {
+		clause, args := whereIn("scope_level", levels)
+		q = q.Where(clause, args...)
+	}
+	if err := q.Scan(ctx); err != nil {
 		return nil, notFoundOrWrap(err, shield.ErrPolicyNotFound, "get policy by name")
 	}
 	return policyFromModel(m)
 }
 
 func (s *Store) UpdatePolicy(ctx context.Context, pol *policy.Policy) error {
+	current, err := s.visiblePolicy(ctx, pol.ID)
+	if err != nil {
+		return err
+	}
+	if !store.ScopeVisible(ctx, pol.ScopeKey, string(pol.ScopeLevel)) {
+		return shield.ErrTenantMismatch
+	}
 	pol.UpdatedAt = now()
 	m, err := policyToModel(pol)
 	if err != nil {
 		return fmt.Errorf("shield/sqlite: update policy: %w", err)
 	}
-	_, err = s.sdb.NewUpdate(m).WherePK().Exec(ctx)
+	res, err := s.sdb.NewUpdate(m).WherePK().
+		Where("scope_key = ?", current.ScopeKey).
+		Where("scope_level = ?", current.ScopeLevel).
+		Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("shield/sqlite: update policy: %w", err)
 	}
-	return nil
+	return updatedOrNotFound(res, shield.ErrPolicyNotFound, "update policy")
 }
 
+// DeletePolicy is idempotent: a missing policy and one the context cannot see
+// both return nil, and the second is left in place.
 func (s *Store) DeletePolicy(ctx context.Context, polID id.PolicyID) error {
-	_, err := s.sdb.NewDelete((*policyModel)(nil)).Where("id = ?", polID.String()).Exec(ctx)
+	current, err := s.visiblePolicy(ctx, polID)
+	if errors.Is(err, shield.ErrPolicyNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	_, err = s.sdb.NewDelete((*policyModel)(nil)).
+		Where("id = ?", polID.String()).
+		Where("scope_key = ?", current.ScopeKey).
+		Where("scope_level = ?", current.ScopeLevel).
+		Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("shield/sqlite: delete policy: %w", err)
 	}
@@ -936,24 +1204,30 @@ func (s *Store) DeletePolicy(ctx context.Context, polID id.PolicyID) error {
 }
 
 func (s *Store) ListPolicies(ctx context.Context, filter *policy.ListFilter) ([]*policy.Policy, error) {
+	if filter == nil {
+		return nil, shield.ErrTenantRequired
+	}
+	levels, levelErr := store.ScopeLevels(ctx, filter.ScopeKey, string(filter.ScopeLevel))
+	if levelErr != nil {
+		return nil, levelErr
+	}
 	var models []policyModel
-	q := s.sdb.NewSelect(&models).OrderExpr("created_at ASC")
-	if filter != nil {
-		if filter.ScopeKey != "" {
-			q = q.Where("scope_key = ?", filter.ScopeKey)
-		}
-		if filter.ScopeLevel != "" {
-			q = q.Where("scope_level = ?", string(filter.ScopeLevel))
-		}
-		if filter.Enabled != nil {
-			q = q.Where("enabled = ?", *filter.Enabled)
-		}
-		if filter.Limit > 0 {
-			q = q.Limit(filter.Limit)
-		}
-		if filter.Offset > 0 {
-			q = q.Offset(filter.Offset)
-		}
+	q := s.sdb.NewSelect(&models).Where("scope_key = ?", filter.ScopeKey).OrderExpr("created_at ASC")
+	if levels != nil {
+		clause, args := whereIn("scope_level", levels)
+		q = q.Where(clause, args...)
+	}
+	if filter.ScopeLevel != "" {
+		q = q.Where("scope_level = ?", string(filter.ScopeLevel))
+	}
+	if filter.Enabled != nil {
+		q = q.Where("enabled = ?", *filter.Enabled)
+	}
+	if filter.Limit > 0 {
+		q = q.Limit(filter.Limit)
+	}
+	if filter.Offset > 0 {
+		q = q.Offset(filter.Offset)
 	}
 	if err := q.Scan(ctx); err != nil {
 		return nil, fmt.Errorf("shield/sqlite: list policies: %w", err)
@@ -970,6 +1244,9 @@ func (s *Store) ListPolicies(ctx context.Context, filter *policy.ListFilter) ([]
 }
 
 func (s *Store) GetPoliciesForScope(ctx context.Context, scopeKey string, level policy.ScopeLevel) ([]*policy.Policy, error) {
+	if _, err := store.ScopeLevels(ctx, scopeKey, string(level)); err != nil {
+		return nil, err
+	}
 	var models []policyModel
 	err := s.sdb.NewSelect(&models).
 		Where("scope_key = ?", scopeKey).
@@ -992,12 +1269,16 @@ func (s *Store) GetPoliciesForScope(ctx context.Context, scopeKey string, level 
 }
 
 func (s *Store) AssignToTenant(ctx context.Context, tenantID string, polID id.PolicyID) error {
+	tenant, err := store.Tenant(ctx, tenantID)
+	if err != nil {
+		return err
+	}
 	m := &policyTenantModel{
-		TenantID:  tenantID,
+		TenantID:  tenant,
 		PolicyID:  polID.String(),
 		CreatedAt: now(),
 	}
-	_, err := s.sdb.NewInsert(m).Exec(ctx)
+	_, err = s.sdb.NewInsert(m).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("shield/sqlite: assign policy to tenant: %w", err)
 	}
@@ -1005,8 +1286,12 @@ func (s *Store) AssignToTenant(ctx context.Context, tenantID string, polID id.Po
 }
 
 func (s *Store) UnassignFromTenant(ctx context.Context, tenantID string, polID id.PolicyID) error {
-	_, err := s.sdb.NewDelete((*policyTenantModel)(nil)).
-		Where("tenant_id = ?", tenantID).
+	tenant, err := store.Tenant(ctx, tenantID)
+	if err != nil {
+		return err
+	}
+	_, err = s.sdb.NewDelete((*policyTenantModel)(nil)).
+		Where("tenant_id = ?", tenant).
 		Where("policy_id = ?", polID.String()).
 		Exec(ctx)
 	if err != nil {
@@ -1026,6 +1311,9 @@ func (s *Store) StorePIITokens(ctx context.Context, tokens []*pii.Token) error {
 	n := now()
 	models := make([]piiTokenModel, len(tokens))
 	for i, t := range tokens {
+		if err := claimTenant(ctx, &t.TenantID); err != nil {
+			return err
+		}
 		t.CreatedAt = n
 		t.UpdatedAt = n
 		models[i] = *piiTokenToModel(t)
@@ -1038,6 +1326,10 @@ func (s *Store) StorePIITokens(ctx context.Context, tokens []*pii.Token) error {
 }
 
 func (s *Store) LoadPIITokens(ctx context.Context, tokenIDs []id.PIITokenID) ([]*pii.Token, error) {
+	tenant, tenantErr := store.Tenant(ctx, "")
+	if tenantErr != nil {
+		return nil, tenantErr
+	}
 	if len(tokenIDs) == 0 {
 		return nil, nil
 	}
@@ -1046,7 +1338,8 @@ func (s *Store) LoadPIITokens(ctx context.Context, tokenIDs []id.PIITokenID) ([]
 		ids[i] = tid.String()
 	}
 	var models []piiTokenModel
-	err := s.sdb.NewSelect(&models).Where("id IN (?)", ids).Scan(ctx)
+	clause, args := whereIn("id", ids)
+	err := s.sdb.NewSelect(&models).Where(clause, args...).Where("tenant_id = ?", tenant).Scan(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("shield/sqlite: load pii tokens: %w", err)
 	}
@@ -1062,9 +1355,14 @@ func (s *Store) LoadPIITokens(ctx context.Context, tokenIDs []id.PIITokenID) ([]
 }
 
 func (s *Store) LoadPIITokensByScan(ctx context.Context, scanID id.ScanID) ([]*pii.Token, error) {
+	tenant, tenantErr := store.Tenant(ctx, "")
+	if tenantErr != nil {
+		return nil, tenantErr
+	}
 	var models []piiTokenModel
 	err := s.sdb.NewSelect(&models).
 		Where("scan_id = ?", scanID.String()).
+		Where("tenant_id = ?", tenant).
 		OrderExpr("created_at ASC").
 		Scan(ctx)
 	if err != nil {
@@ -1082,6 +1380,10 @@ func (s *Store) LoadPIITokensByScan(ctx context.Context, scanID id.ScanID) ([]*p
 }
 
 func (s *Store) DeletePIITokens(ctx context.Context, tokenIDs []id.PIITokenID) error {
+	tenant, tenantErr := store.Tenant(ctx, "")
+	if tenantErr != nil {
+		return tenantErr
+	}
 	if len(tokenIDs) == 0 {
 		return nil
 	}
@@ -1089,7 +1391,8 @@ func (s *Store) DeletePIITokens(ctx context.Context, tokenIDs []id.PIITokenID) e
 	for i, tid := range tokenIDs {
 		ids[i] = tid.String()
 	}
-	_, err := s.sdb.NewDelete((*piiTokenModel)(nil)).Where("id IN (?)", ids).Exec(ctx)
+	clause, args := whereIn("id", ids)
+	_, err := s.sdb.NewDelete((*piiTokenModel)(nil)).Where(clause, args...).Where("tenant_id = ?", tenant).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("shield/sqlite: delete pii tokens: %w", err)
 	}
@@ -1097,13 +1400,19 @@ func (s *Store) DeletePIITokens(ctx context.Context, tokenIDs []id.PIITokenID) e
 }
 
 func (s *Store) DeletePIITokensByTenant(ctx context.Context, tenantID string) error {
-	_, err := s.sdb.NewDelete((*piiTokenModel)(nil)).Where("tenant_id = ?", tenantID).Exec(ctx)
+	tenant, err := store.Tenant(ctx, tenantID)
+	if err != nil {
+		return err
+	}
+	_, err = s.sdb.NewDelete((*piiTokenModel)(nil)).Where("tenant_id = ?", tenant).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("shield/sqlite: delete pii tokens by tenant: %w", err)
 	}
 	return nil
 }
 
+// PurgePIITokens is an operator retention sweep: it removes expired tokens in
+// every tenant and so takes no tenant.
 func (s *Store) PurgePIITokens(ctx context.Context, olderThan time.Time) (int64, error) {
 	res, err := s.sdb.NewDelete((*piiTokenModel)(nil)).
 		Where("expires_at IS NOT NULL").
@@ -1120,12 +1429,12 @@ func (s *Store) PurgePIITokens(ctx context.Context, olderThan time.Time) (int64,
 }
 
 func (s *Store) PIIStats(ctx context.Context, tenantID string) (*pii.Stats, error) {
-	var models []piiTokenModel
-	q := s.sdb.NewSelect(&models)
-	if tenantID != "" {
-		q = q.Where("tenant_id = ?", tenantID)
+	tenant, tenantErr := store.Tenant(ctx, tenantID)
+	if tenantErr != nil {
+		return nil, tenantErr
 	}
-	if err := q.Scan(ctx); err != nil {
+	var models []piiTokenModel
+	if err := s.sdb.NewSelect(&models).Where("tenant_id = ?", tenant).Scan(ctx); err != nil {
 		if isNoRows(err) {
 			return &pii.Stats{
 				ByType:   make(map[string]int64),
@@ -1152,6 +1461,9 @@ func (s *Store) PIIStats(ctx context.Context, tenantID string) (*pii.Stats, erro
 // ──────────────────────────────────────────────────
 
 func (s *Store) CreateReport(ctx context.Context, report *compliance.Report) error {
+	if _, err := store.ScopeLevels(ctx, report.ScopeKey, report.ScopeLevel); err != nil {
+		return err
+	}
 	n := now()
 	report.CreatedAt = n
 	report.UpdatedAt = n
@@ -1172,25 +1484,34 @@ func (s *Store) GetReport(ctx context.Context, reportID id.ComplianceReportID) (
 	if err != nil {
 		return nil, notFoundOrWrap(err, shield.ErrComplianceNotFound, "get compliance report")
 	}
+	if !store.ScopeVisible(ctx, m.ScopeKey, m.ScopeLevel) {
+		return nil, shield.ErrComplianceNotFound
+	}
 	return complianceFromModel(m)
 }
 
 func (s *Store) ListReports(ctx context.Context, filter *compliance.ListFilter) ([]*compliance.Report, error) {
+	if filter == nil {
+		return nil, shield.ErrTenantRequired
+	}
+	levels, levelErr := store.ScopeLevels(ctx, filter.ScopeKey, "")
+	if levelErr != nil {
+		return nil, levelErr
+	}
 	var models []complianceReportModel
-	q := s.sdb.NewSelect(&models).OrderExpr("generated_at DESC")
-	if filter != nil {
-		if filter.ScopeKey != "" {
-			q = q.Where("scope_key = ?", filter.ScopeKey)
-		}
-		if filter.Framework != "" {
-			q = q.Where("framework = ?", string(filter.Framework))
-		}
-		if filter.Limit > 0 {
-			q = q.Limit(filter.Limit)
-		}
-		if filter.Offset > 0 {
-			q = q.Offset(filter.Offset)
-		}
+	q := s.sdb.NewSelect(&models).Where("scope_key = ?", filter.ScopeKey).OrderExpr("generated_at DESC")
+	if levels != nil {
+		clause, args := whereIn("scope_level", levels)
+		q = q.Where(clause, args...)
+	}
+	if filter.Framework != "" {
+		q = q.Where("framework = ?", string(filter.Framework))
+	}
+	if filter.Limit > 0 {
+		q = q.Limit(filter.Limit)
+	}
+	if filter.Offset > 0 {
+		q = q.Offset(filter.Offset)
 	}
 	if err := q.Scan(ctx); err != nil {
 		return nil, fmt.Errorf("shield/sqlite: list compliance reports: %w", err)

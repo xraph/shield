@@ -7,9 +7,13 @@ import (
 	"github.com/xraph/shield"
 	"github.com/xraph/shield/id"
 	"github.com/xraph/shield/reflex"
+	"github.com/xraph/shield/store"
 )
 
 func (s *Store) CreateReflex(ctx context.Context, r *reflex.Reflex) error {
+	if err := claimTenant(ctx, &r.TenantID); err != nil {
+		return err
+	}
 	n := now()
 	r.CreatedAt = n
 	r.UpdatedAt = n
@@ -22,8 +26,12 @@ func (s *Store) CreateReflex(ctx context.Context, r *reflex.Reflex) error {
 }
 
 func (s *Store) GetReflex(ctx context.Context, rID id.ReflexID) (*reflex.Reflex, error) {
+	tenant, tenantErr := store.Tenant(ctx, "")
+	if tenantErr != nil {
+		return nil, tenantErr
+	}
 	m := new(reflexModel)
-	err := s.pgdb.NewSelect(m).Where("id = ?", rID.String()).Scan(ctx)
+	err := s.pgdb.NewSelect(m).Where("id = ?", rID.String()).Where("tenant_id = ?", tenant).Scan(ctx)
 	if err != nil {
 		return nil, notFoundOrWrap(err, shield.ErrReflexNotFound, "get reflex")
 	}
@@ -31,9 +39,14 @@ func (s *Store) GetReflex(ctx context.Context, rID id.ReflexID) (*reflex.Reflex,
 }
 
 func (s *Store) GetReflexByName(ctx context.Context, appID, name string) (*reflex.Reflex, error) {
+	tenant, tenantErr := store.Tenant(ctx, "")
+	if tenantErr != nil {
+		return nil, tenantErr
+	}
 	m := new(reflexModel)
 	err := s.pgdb.NewSelect(m).
 		Where("app_id = ?", appID).
+		Where("tenant_id = ?", tenant).
 		Where("name = ?", name).
 		Scan(ctx)
 	if err != nil {
@@ -43,17 +56,24 @@ func (s *Store) GetReflexByName(ctx context.Context, appID, name string) (*refle
 }
 
 func (s *Store) UpdateReflex(ctx context.Context, r *reflex.Reflex) error {
+	if err := claimTenant(ctx, &r.TenantID); err != nil {
+		return err
+	}
 	r.UpdatedAt = now()
 	m := reflexToModel(r)
-	_, err := s.pgdb.NewUpdate(m).WherePK().Exec(ctx)
+	res, err := s.pgdb.NewUpdate(m).WherePK().Where("tenant_id = ?", r.TenantID).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("shield/postgres: update reflex: %w", err)
 	}
-	return nil
+	return updatedOrNotFound(res, shield.ErrReflexNotFound, "update reflex")
 }
 
 func (s *Store) DeleteReflex(ctx context.Context, rID id.ReflexID) error {
-	_, err := s.pgdb.NewDelete((*reflexModel)(nil)).Where("id = ?", rID.String()).Exec(ctx)
+	tenant, tenantErr := store.Tenant(ctx, "")
+	if tenantErr != nil {
+		return tenantErr
+	}
+	_, err := s.pgdb.NewDelete((*reflexModel)(nil)).Where("id = ?", rID.String()).Where("tenant_id = ?", tenant).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("shield/postgres: delete reflex: %w", err)
 	}
@@ -61,14 +81,19 @@ func (s *Store) DeleteReflex(ctx context.Context, rID id.ReflexID) error {
 }
 
 func (s *Store) ListReflexes(ctx context.Context, filter *reflex.ListFilter) ([]*reflex.Reflex, error) {
+	var want string
+	if filter != nil {
+		want = filter.TenantID
+	}
+	tenant, tenantErr := store.Tenant(ctx, want)
+	if tenantErr != nil {
+		return nil, tenantErr
+	}
 	var models []reflexModel
-	q := s.pgdb.NewSelect(&models).OrderExpr("created_at ASC")
+	q := s.pgdb.NewSelect(&models).Where("tenant_id = ?", tenant).OrderExpr("created_at ASC")
 	if filter != nil {
 		if filter.AppID != "" {
 			q = q.Where("app_id = ?", filter.AppID)
-		}
-		if filter.TenantID != "" {
-			q = q.Where("tenant_id = ?", filter.TenantID)
 		}
 		if filter.Enabled != nil {
 			q = q.Where("enabled = ?", *filter.Enabled)

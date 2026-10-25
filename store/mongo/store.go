@@ -112,6 +112,17 @@ func notFoundOrWrap(err, sentinel error, msg string) error {
 	return fmt.Errorf("shield/mongo: %s: %w", msg, err)
 }
 
+// claimTenant fills an entity's empty TenantID from the context tenant and
+// refuses one that names a different tenant (store.Tenant).
+func claimTenant(ctx context.Context, tenantID *string) error {
+	tenant, err := store.Tenant(ctx, *tenantID)
+	if err != nil {
+		return err
+	}
+	*tenantID = tenant
+	return nil
+}
+
 // migrationIndexes returns the index definitions for all shield collections.
 func migrationIndexes() map[string][]mongod.IndexModel {
 	return map[string][]mongod.IndexModel{
@@ -191,6 +202,9 @@ func migrationIndexes() map[string][]mongod.IndexModel {
 // ──────────────────────────────────────────────────
 
 func (s *Store) CreateInstinct(ctx context.Context, inst *instinct.Instinct) error {
+	if err := claimTenant(ctx, &inst.TenantID); err != nil {
+		return err
+	}
 	n := now()
 	inst.CreatedAt = n
 	inst.UpdatedAt = n
@@ -203,8 +217,12 @@ func (s *Store) CreateInstinct(ctx context.Context, inst *instinct.Instinct) err
 }
 
 func (s *Store) GetInstinct(ctx context.Context, instID id.InstinctID) (*instinct.Instinct, error) {
+	tenant, tenantErr := store.Tenant(ctx, "")
+	if tenantErr != nil {
+		return nil, tenantErr
+	}
 	var m instinctModel
-	err := s.mdb.NewFind(&m).Filter(bson.M{"_id": instID.String()}).Scan(ctx)
+	err := s.mdb.NewFind(&m).Filter(bson.M{"_id": instID.String(), "tenant_id": tenant}).Scan(ctx)
 	if err != nil {
 		return nil, notFoundOrWrap(err, shield.ErrInstinctNotFound, "get instinct")
 	}
@@ -212,9 +230,13 @@ func (s *Store) GetInstinct(ctx context.Context, instID id.InstinctID) (*instinc
 }
 
 func (s *Store) GetInstinctByName(ctx context.Context, appID, name string) (*instinct.Instinct, error) {
+	tenant, tenantErr := store.Tenant(ctx, "")
+	if tenantErr != nil {
+		return nil, tenantErr
+	}
 	var m instinctModel
 	err := s.mdb.NewFind(&m).
-		Filter(bson.M{"app_id": appID, "name": name}).
+		Filter(bson.M{"app_id": appID, "tenant_id": tenant, "name": name}).
 		Scan(ctx)
 	if err != nil {
 		return nil, notFoundOrWrap(err, shield.ErrInstinctNotFound, "get instinct by name")
@@ -223,18 +245,28 @@ func (s *Store) GetInstinctByName(ctx context.Context, appID, name string) (*ins
 }
 
 func (s *Store) UpdateInstinct(ctx context.Context, inst *instinct.Instinct) error {
+	if err := claimTenant(ctx, &inst.TenantID); err != nil {
+		return err
+	}
 	inst.UpdatedAt = now()
 	m := instinctToModel(inst)
-	_, err := s.mdb.NewUpdate(m).Filter(bson.M{"_id": m.ID}).Exec(ctx)
+	res, err := s.mdb.NewUpdate(m).Filter(bson.M{"_id": m.ID, "tenant_id": inst.TenantID}).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("shield/mongo: update instinct: %w", err)
+	}
+	if res.MatchedCount() == 0 {
+		return shield.ErrInstinctNotFound
 	}
 	return nil
 }
 
 func (s *Store) DeleteInstinct(ctx context.Context, instID id.InstinctID) error {
+	tenant, tenantErr := store.Tenant(ctx, "")
+	if tenantErr != nil {
+		return tenantErr
+	}
 	_, err := s.mdb.NewDelete((*instinctModel)(nil)).
-		Filter(bson.M{"_id": instID.String()}).
+		Filter(bson.M{"_id": instID.String(), "tenant_id": tenant}).
 		Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("shield/mongo: delete instinct: %w", err)
@@ -243,14 +275,19 @@ func (s *Store) DeleteInstinct(ctx context.Context, instID id.InstinctID) error 
 }
 
 func (s *Store) ListInstincts(ctx context.Context, filter *instinct.ListFilter) ([]*instinct.Instinct, error) {
+	var want string
+	if filter != nil {
+		want = filter.TenantID
+	}
+	tenant, tenantErr := store.Tenant(ctx, want)
+	if tenantErr != nil {
+		return nil, tenantErr
+	}
 	var models []instinctModel
-	f := bson.M{}
+	f := bson.M{"tenant_id": tenant}
 	if filter != nil {
 		if filter.AppID != "" {
 			f["app_id"] = filter.AppID
-		}
-		if filter.TenantID != "" {
-			f["tenant_id"] = filter.TenantID
 		}
 		if filter.Category != "" {
 			f["category"] = string(filter.Category)
@@ -287,6 +324,9 @@ func (s *Store) ListInstincts(ctx context.Context, filter *instinct.ListFilter) 
 // ──────────────────────────────────────────────────
 
 func (s *Store) CreateAwareness(ctx context.Context, a *awareness.Awareness) error {
+	if err := claimTenant(ctx, &a.TenantID); err != nil {
+		return err
+	}
 	n := now()
 	a.CreatedAt = n
 	a.UpdatedAt = n
@@ -299,8 +339,12 @@ func (s *Store) CreateAwareness(ctx context.Context, a *awareness.Awareness) err
 }
 
 func (s *Store) GetAwareness(ctx context.Context, aID id.AwarenessID) (*awareness.Awareness, error) {
+	tenant, tenantErr := store.Tenant(ctx, "")
+	if tenantErr != nil {
+		return nil, tenantErr
+	}
 	var m awarenessModel
-	err := s.mdb.NewFind(&m).Filter(bson.M{"_id": aID.String()}).Scan(ctx)
+	err := s.mdb.NewFind(&m).Filter(bson.M{"_id": aID.String(), "tenant_id": tenant}).Scan(ctx)
 	if err != nil {
 		return nil, notFoundOrWrap(err, shield.ErrAwarenessNotFound, "get awareness")
 	}
@@ -308,8 +352,12 @@ func (s *Store) GetAwareness(ctx context.Context, aID id.AwarenessID) (*awarenes
 }
 
 func (s *Store) GetAwarenessByName(ctx context.Context, appID, name string) (*awareness.Awareness, error) {
+	tenant, tenantErr := store.Tenant(ctx, "")
+	if tenantErr != nil {
+		return nil, tenantErr
+	}
 	var m awarenessModel
-	err := s.mdb.NewFind(&m).Filter(bson.M{"app_id": appID, "name": name}).Scan(ctx)
+	err := s.mdb.NewFind(&m).Filter(bson.M{"app_id": appID, "tenant_id": tenant, "name": name}).Scan(ctx)
 	if err != nil {
 		return nil, notFoundOrWrap(err, shield.ErrAwarenessNotFound, "get awareness by name")
 	}
@@ -317,17 +365,27 @@ func (s *Store) GetAwarenessByName(ctx context.Context, appID, name string) (*aw
 }
 
 func (s *Store) UpdateAwareness(ctx context.Context, a *awareness.Awareness) error {
+	if err := claimTenant(ctx, &a.TenantID); err != nil {
+		return err
+	}
 	a.UpdatedAt = now()
 	m := awarenessToModel(a)
-	_, err := s.mdb.NewUpdate(m).Filter(bson.M{"_id": m.ID}).Exec(ctx)
+	res, err := s.mdb.NewUpdate(m).Filter(bson.M{"_id": m.ID, "tenant_id": a.TenantID}).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("shield/mongo: update awareness: %w", err)
+	}
+	if res.MatchedCount() == 0 {
+		return shield.ErrAwarenessNotFound
 	}
 	return nil
 }
 
 func (s *Store) DeleteAwareness(ctx context.Context, aID id.AwarenessID) error {
-	_, err := s.mdb.NewDelete((*awarenessModel)(nil)).Filter(bson.M{"_id": aID.String()}).Exec(ctx)
+	tenant, tenantErr := store.Tenant(ctx, "")
+	if tenantErr != nil {
+		return tenantErr
+	}
+	_, err := s.mdb.NewDelete((*awarenessModel)(nil)).Filter(bson.M{"_id": aID.String(), "tenant_id": tenant}).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("shield/mongo: delete awareness: %w", err)
 	}
@@ -335,14 +393,19 @@ func (s *Store) DeleteAwareness(ctx context.Context, aID id.AwarenessID) error {
 }
 
 func (s *Store) ListAwareness(ctx context.Context, filter *awareness.ListFilter) ([]*awareness.Awareness, error) {
+	var want string
+	if filter != nil {
+		want = filter.TenantID
+	}
+	tenant, tenantErr := store.Tenant(ctx, want)
+	if tenantErr != nil {
+		return nil, tenantErr
+	}
 	var models []awarenessModel
-	f := bson.M{}
+	f := bson.M{"tenant_id": tenant}
 	if filter != nil {
 		if filter.AppID != "" {
 			f["app_id"] = filter.AppID
-		}
-		if filter.TenantID != "" {
-			f["tenant_id"] = filter.TenantID
 		}
 		if filter.Focus != "" {
 			f["focus"] = string(filter.Focus)
@@ -379,6 +442,9 @@ func (s *Store) ListAwareness(ctx context.Context, filter *awareness.ListFilter)
 // ──────────────────────────────────────────────────
 
 func (s *Store) CreateBoundary(ctx context.Context, b *boundary.Boundary) error {
+	if err := claimTenant(ctx, &b.TenantID); err != nil {
+		return err
+	}
 	n := now()
 	b.CreatedAt = n
 	b.UpdatedAt = n
@@ -390,8 +456,12 @@ func (s *Store) CreateBoundary(ctx context.Context, b *boundary.Boundary) error 
 }
 
 func (s *Store) GetBoundary(ctx context.Context, bID id.BoundaryID) (*boundary.Boundary, error) {
+	tenant, tenantErr := store.Tenant(ctx, "")
+	if tenantErr != nil {
+		return nil, tenantErr
+	}
 	var m boundaryModel
-	err := s.mdb.NewFind(&m).Filter(bson.M{"_id": bID.String()}).Scan(ctx)
+	err := s.mdb.NewFind(&m).Filter(bson.M{"_id": bID.String(), "tenant_id": tenant}).Scan(ctx)
 	if err != nil {
 		return nil, notFoundOrWrap(err, shield.ErrBoundaryNotFound, "get boundary")
 	}
@@ -399,8 +469,12 @@ func (s *Store) GetBoundary(ctx context.Context, bID id.BoundaryID) (*boundary.B
 }
 
 func (s *Store) GetBoundaryByName(ctx context.Context, appID, name string) (*boundary.Boundary, error) {
+	tenant, tenantErr := store.Tenant(ctx, "")
+	if tenantErr != nil {
+		return nil, tenantErr
+	}
 	var m boundaryModel
-	err := s.mdb.NewFind(&m).Filter(bson.M{"app_id": appID, "name": name}).Scan(ctx)
+	err := s.mdb.NewFind(&m).Filter(bson.M{"app_id": appID, "tenant_id": tenant, "name": name}).Scan(ctx)
 	if err != nil {
 		return nil, notFoundOrWrap(err, shield.ErrBoundaryNotFound, "get boundary by name")
 	}
@@ -408,17 +482,27 @@ func (s *Store) GetBoundaryByName(ctx context.Context, appID, name string) (*bou
 }
 
 func (s *Store) UpdateBoundary(ctx context.Context, b *boundary.Boundary) error {
+	if err := claimTenant(ctx, &b.TenantID); err != nil {
+		return err
+	}
 	b.UpdatedAt = now()
 	m := boundaryToModel(b)
-	_, err := s.mdb.NewUpdate(m).Filter(bson.M{"_id": m.ID}).Exec(ctx)
+	res, err := s.mdb.NewUpdate(m).Filter(bson.M{"_id": m.ID, "tenant_id": b.TenantID}).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("shield/mongo: update boundary: %w", err)
+	}
+	if res.MatchedCount() == 0 {
+		return shield.ErrBoundaryNotFound
 	}
 	return nil
 }
 
 func (s *Store) DeleteBoundary(ctx context.Context, bID id.BoundaryID) error {
-	_, err := s.mdb.NewDelete((*boundaryModel)(nil)).Filter(bson.M{"_id": bID.String()}).Exec(ctx)
+	tenant, tenantErr := store.Tenant(ctx, "")
+	if tenantErr != nil {
+		return tenantErr
+	}
+	_, err := s.mdb.NewDelete((*boundaryModel)(nil)).Filter(bson.M{"_id": bID.String(), "tenant_id": tenant}).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("shield/mongo: delete boundary: %w", err)
 	}
@@ -426,14 +510,19 @@ func (s *Store) DeleteBoundary(ctx context.Context, bID id.BoundaryID) error {
 }
 
 func (s *Store) ListBoundaries(ctx context.Context, filter *boundary.ListFilter) ([]*boundary.Boundary, error) {
+	var want string
+	if filter != nil {
+		want = filter.TenantID
+	}
+	tenant, tenantErr := store.Tenant(ctx, want)
+	if tenantErr != nil {
+		return nil, tenantErr
+	}
 	var models []boundaryModel
-	f := bson.M{}
+	f := bson.M{"tenant_id": tenant}
 	if filter != nil {
 		if filter.AppID != "" {
 			f["app_id"] = filter.AppID
-		}
-		if filter.TenantID != "" {
-			f["tenant_id"] = filter.TenantID
 		}
 		if filter.Enabled != nil {
 			f["enabled"] = *filter.Enabled
@@ -467,6 +556,9 @@ func (s *Store) ListBoundaries(ctx context.Context, filter *boundary.ListFilter)
 // ──────────────────────────────────────────────────
 
 func (s *Store) CreateValues(ctx context.Context, v *values.Values) error {
+	if err := claimTenant(ctx, &v.TenantID); err != nil {
+		return err
+	}
 	n := now()
 	v.CreatedAt = n
 	v.UpdatedAt = n
@@ -478,8 +570,12 @@ func (s *Store) CreateValues(ctx context.Context, v *values.Values) error {
 }
 
 func (s *Store) GetValues(ctx context.Context, vID id.ValueID) (*values.Values, error) {
+	tenant, tenantErr := store.Tenant(ctx, "")
+	if tenantErr != nil {
+		return nil, tenantErr
+	}
 	var m valuesModel
-	err := s.mdb.NewFind(&m).Filter(bson.M{"_id": vID.String()}).Scan(ctx)
+	err := s.mdb.NewFind(&m).Filter(bson.M{"_id": vID.String(), "tenant_id": tenant}).Scan(ctx)
 	if err != nil {
 		return nil, notFoundOrWrap(err, shield.ErrValueNotFound, "get values")
 	}
@@ -487,8 +583,12 @@ func (s *Store) GetValues(ctx context.Context, vID id.ValueID) (*values.Values, 
 }
 
 func (s *Store) GetValuesByName(ctx context.Context, appID, name string) (*values.Values, error) {
+	tenant, tenantErr := store.Tenant(ctx, "")
+	if tenantErr != nil {
+		return nil, tenantErr
+	}
 	var m valuesModel
-	err := s.mdb.NewFind(&m).Filter(bson.M{"app_id": appID, "name": name}).Scan(ctx)
+	err := s.mdb.NewFind(&m).Filter(bson.M{"app_id": appID, "tenant_id": tenant, "name": name}).Scan(ctx)
 	if err != nil {
 		return nil, notFoundOrWrap(err, shield.ErrValueNotFound, "get values by name")
 	}
@@ -496,17 +596,27 @@ func (s *Store) GetValuesByName(ctx context.Context, appID, name string) (*value
 }
 
 func (s *Store) UpdateValues(ctx context.Context, v *values.Values) error {
+	if err := claimTenant(ctx, &v.TenantID); err != nil {
+		return err
+	}
 	v.UpdatedAt = now()
 	m := valuesToModel(v)
-	_, err := s.mdb.NewUpdate(m).Filter(bson.M{"_id": m.ID}).Exec(ctx)
+	res, err := s.mdb.NewUpdate(m).Filter(bson.M{"_id": m.ID, "tenant_id": v.TenantID}).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("shield/mongo: update values: %w", err)
+	}
+	if res.MatchedCount() == 0 {
+		return shield.ErrValueNotFound
 	}
 	return nil
 }
 
 func (s *Store) DeleteValues(ctx context.Context, vID id.ValueID) error {
-	_, err := s.mdb.NewDelete((*valuesModel)(nil)).Filter(bson.M{"_id": vID.String()}).Exec(ctx)
+	tenant, tenantErr := store.Tenant(ctx, "")
+	if tenantErr != nil {
+		return tenantErr
+	}
+	_, err := s.mdb.NewDelete((*valuesModel)(nil)).Filter(bson.M{"_id": vID.String(), "tenant_id": tenant}).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("shield/mongo: delete values: %w", err)
 	}
@@ -514,14 +624,19 @@ func (s *Store) DeleteValues(ctx context.Context, vID id.ValueID) error {
 }
 
 func (s *Store) ListValues(ctx context.Context, filter *values.ListFilter) ([]*values.Values, error) {
+	var want string
+	if filter != nil {
+		want = filter.TenantID
+	}
+	tenant, tenantErr := store.Tenant(ctx, want)
+	if tenantErr != nil {
+		return nil, tenantErr
+	}
 	var models []valuesModel
-	f := bson.M{}
+	f := bson.M{"tenant_id": tenant}
 	if filter != nil {
 		if filter.AppID != "" {
 			f["app_id"] = filter.AppID
-		}
-		if filter.TenantID != "" {
-			f["tenant_id"] = filter.TenantID
 		}
 		if filter.Enabled != nil {
 			f["enabled"] = *filter.Enabled
@@ -555,6 +670,9 @@ func (s *Store) ListValues(ctx context.Context, filter *values.ListFilter) ([]*v
 // ──────────────────────────────────────────────────
 
 func (s *Store) CreateJudgment(ctx context.Context, j *judgment.Judgment) error {
+	if err := claimTenant(ctx, &j.TenantID); err != nil {
+		return err
+	}
 	n := now()
 	j.CreatedAt = n
 	j.UpdatedAt = n
@@ -566,8 +684,12 @@ func (s *Store) CreateJudgment(ctx context.Context, j *judgment.Judgment) error 
 }
 
 func (s *Store) GetJudgment(ctx context.Context, jID id.JudgmentID) (*judgment.Judgment, error) {
+	tenant, tenantErr := store.Tenant(ctx, "")
+	if tenantErr != nil {
+		return nil, tenantErr
+	}
 	var m judgmentModel
-	err := s.mdb.NewFind(&m).Filter(bson.M{"_id": jID.String()}).Scan(ctx)
+	err := s.mdb.NewFind(&m).Filter(bson.M{"_id": jID.String(), "tenant_id": tenant}).Scan(ctx)
 	if err != nil {
 		return nil, notFoundOrWrap(err, shield.ErrJudgmentNotFound, "get judgment")
 	}
@@ -575,8 +697,12 @@ func (s *Store) GetJudgment(ctx context.Context, jID id.JudgmentID) (*judgment.J
 }
 
 func (s *Store) GetJudgmentByName(ctx context.Context, appID, name string) (*judgment.Judgment, error) {
+	tenant, tenantErr := store.Tenant(ctx, "")
+	if tenantErr != nil {
+		return nil, tenantErr
+	}
 	var m judgmentModel
-	err := s.mdb.NewFind(&m).Filter(bson.M{"app_id": appID, "name": name}).Scan(ctx)
+	err := s.mdb.NewFind(&m).Filter(bson.M{"app_id": appID, "tenant_id": tenant, "name": name}).Scan(ctx)
 	if err != nil {
 		return nil, notFoundOrWrap(err, shield.ErrJudgmentNotFound, "get judgment by name")
 	}
@@ -584,17 +710,27 @@ func (s *Store) GetJudgmentByName(ctx context.Context, appID, name string) (*jud
 }
 
 func (s *Store) UpdateJudgment(ctx context.Context, j *judgment.Judgment) error {
+	if err := claimTenant(ctx, &j.TenantID); err != nil {
+		return err
+	}
 	j.UpdatedAt = now()
 	m := judgmentToModel(j)
-	_, err := s.mdb.NewUpdate(m).Filter(bson.M{"_id": m.ID}).Exec(ctx)
+	res, err := s.mdb.NewUpdate(m).Filter(bson.M{"_id": m.ID, "tenant_id": j.TenantID}).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("shield/mongo: update judgment: %w", err)
+	}
+	if res.MatchedCount() == 0 {
+		return shield.ErrJudgmentNotFound
 	}
 	return nil
 }
 
 func (s *Store) DeleteJudgment(ctx context.Context, jID id.JudgmentID) error {
-	_, err := s.mdb.NewDelete((*judgmentModel)(nil)).Filter(bson.M{"_id": jID.String()}).Exec(ctx)
+	tenant, tenantErr := store.Tenant(ctx, "")
+	if tenantErr != nil {
+		return tenantErr
+	}
+	_, err := s.mdb.NewDelete((*judgmentModel)(nil)).Filter(bson.M{"_id": jID.String(), "tenant_id": tenant}).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("shield/mongo: delete judgment: %w", err)
 	}
@@ -602,14 +738,19 @@ func (s *Store) DeleteJudgment(ctx context.Context, jID id.JudgmentID) error {
 }
 
 func (s *Store) ListJudgments(ctx context.Context, filter *judgment.ListFilter) ([]*judgment.Judgment, error) {
+	var want string
+	if filter != nil {
+		want = filter.TenantID
+	}
+	tenant, tenantErr := store.Tenant(ctx, want)
+	if tenantErr != nil {
+		return nil, tenantErr
+	}
 	var models []judgmentModel
-	f := bson.M{}
+	f := bson.M{"tenant_id": tenant}
 	if filter != nil {
 		if filter.AppID != "" {
 			f["app_id"] = filter.AppID
-		}
-		if filter.TenantID != "" {
-			f["tenant_id"] = filter.TenantID
 		}
 		if filter.Domain != "" {
 			f["domain"] = string(filter.Domain)
@@ -646,6 +787,9 @@ func (s *Store) ListJudgments(ctx context.Context, filter *judgment.ListFilter) 
 // ──────────────────────────────────────────────────
 
 func (s *Store) CreateReflex(ctx context.Context, r *reflex.Reflex) error {
+	if err := claimTenant(ctx, &r.TenantID); err != nil {
+		return err
+	}
 	n := now()
 	r.CreatedAt = n
 	r.UpdatedAt = n
@@ -657,8 +801,12 @@ func (s *Store) CreateReflex(ctx context.Context, r *reflex.Reflex) error {
 }
 
 func (s *Store) GetReflex(ctx context.Context, rID id.ReflexID) (*reflex.Reflex, error) {
+	tenant, tenantErr := store.Tenant(ctx, "")
+	if tenantErr != nil {
+		return nil, tenantErr
+	}
 	var m reflexModel
-	err := s.mdb.NewFind(&m).Filter(bson.M{"_id": rID.String()}).Scan(ctx)
+	err := s.mdb.NewFind(&m).Filter(bson.M{"_id": rID.String(), "tenant_id": tenant}).Scan(ctx)
 	if err != nil {
 		return nil, notFoundOrWrap(err, shield.ErrReflexNotFound, "get reflex")
 	}
@@ -666,8 +814,12 @@ func (s *Store) GetReflex(ctx context.Context, rID id.ReflexID) (*reflex.Reflex,
 }
 
 func (s *Store) GetReflexByName(ctx context.Context, appID, name string) (*reflex.Reflex, error) {
+	tenant, tenantErr := store.Tenant(ctx, "")
+	if tenantErr != nil {
+		return nil, tenantErr
+	}
 	var m reflexModel
-	err := s.mdb.NewFind(&m).Filter(bson.M{"app_id": appID, "name": name}).Scan(ctx)
+	err := s.mdb.NewFind(&m).Filter(bson.M{"app_id": appID, "tenant_id": tenant, "name": name}).Scan(ctx)
 	if err != nil {
 		return nil, notFoundOrWrap(err, shield.ErrReflexNotFound, "get reflex by name")
 	}
@@ -675,17 +827,27 @@ func (s *Store) GetReflexByName(ctx context.Context, appID, name string) (*refle
 }
 
 func (s *Store) UpdateReflex(ctx context.Context, r *reflex.Reflex) error {
+	if err := claimTenant(ctx, &r.TenantID); err != nil {
+		return err
+	}
 	r.UpdatedAt = now()
 	m := reflexToModel(r)
-	_, err := s.mdb.NewUpdate(m).Filter(bson.M{"_id": m.ID}).Exec(ctx)
+	res, err := s.mdb.NewUpdate(m).Filter(bson.M{"_id": m.ID, "tenant_id": r.TenantID}).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("shield/mongo: update reflex: %w", err)
+	}
+	if res.MatchedCount() == 0 {
+		return shield.ErrReflexNotFound
 	}
 	return nil
 }
 
 func (s *Store) DeleteReflex(ctx context.Context, rID id.ReflexID) error {
-	_, err := s.mdb.NewDelete((*reflexModel)(nil)).Filter(bson.M{"_id": rID.String()}).Exec(ctx)
+	tenant, tenantErr := store.Tenant(ctx, "")
+	if tenantErr != nil {
+		return tenantErr
+	}
+	_, err := s.mdb.NewDelete((*reflexModel)(nil)).Filter(bson.M{"_id": rID.String(), "tenant_id": tenant}).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("shield/mongo: delete reflex: %w", err)
 	}
@@ -693,14 +855,19 @@ func (s *Store) DeleteReflex(ctx context.Context, rID id.ReflexID) error {
 }
 
 func (s *Store) ListReflexes(ctx context.Context, filter *reflex.ListFilter) ([]*reflex.Reflex, error) {
+	var want string
+	if filter != nil {
+		want = filter.TenantID
+	}
+	tenant, tenantErr := store.Tenant(ctx, want)
+	if tenantErr != nil {
+		return nil, tenantErr
+	}
 	var models []reflexModel
-	f := bson.M{}
+	f := bson.M{"tenant_id": tenant}
 	if filter != nil {
 		if filter.AppID != "" {
 			f["app_id"] = filter.AppID
-		}
-		if filter.TenantID != "" {
-			f["tenant_id"] = filter.TenantID
 		}
 		if filter.Enabled != nil {
 			f["enabled"] = *filter.Enabled
@@ -734,6 +901,9 @@ func (s *Store) ListReflexes(ctx context.Context, filter *reflex.ListFilter) ([]
 // ──────────────────────────────────────────────────
 
 func (s *Store) CreateProfile(ctx context.Context, p *profile.SafetyProfile) error {
+	if err := claimTenant(ctx, &p.TenantID); err != nil {
+		return err
+	}
 	n := now()
 	p.CreatedAt = n
 	p.UpdatedAt = n
@@ -745,8 +915,12 @@ func (s *Store) CreateProfile(ctx context.Context, p *profile.SafetyProfile) err
 }
 
 func (s *Store) GetProfile(ctx context.Context, pID id.SafetyProfileID) (*profile.SafetyProfile, error) {
+	tenant, tenantErr := store.Tenant(ctx, "")
+	if tenantErr != nil {
+		return nil, tenantErr
+	}
 	var m profileModel
-	err := s.mdb.NewFind(&m).Filter(bson.M{"_id": pID.String()}).Scan(ctx)
+	err := s.mdb.NewFind(&m).Filter(bson.M{"_id": pID.String(), "tenant_id": tenant}).Scan(ctx)
 	if err != nil {
 		return nil, notFoundOrWrap(err, shield.ErrProfileNotFound, "get profile")
 	}
@@ -754,8 +928,12 @@ func (s *Store) GetProfile(ctx context.Context, pID id.SafetyProfileID) (*profil
 }
 
 func (s *Store) GetProfileByName(ctx context.Context, appID, name string) (*profile.SafetyProfile, error) {
+	tenant, tenantErr := store.Tenant(ctx, "")
+	if tenantErr != nil {
+		return nil, tenantErr
+	}
 	var m profileModel
-	err := s.mdb.NewFind(&m).Filter(bson.M{"app_id": appID, "name": name}).Scan(ctx)
+	err := s.mdb.NewFind(&m).Filter(bson.M{"app_id": appID, "tenant_id": tenant, "name": name}).Scan(ctx)
 	if err != nil {
 		return nil, notFoundOrWrap(err, shield.ErrProfileNotFound, "get profile by name")
 	}
@@ -763,17 +941,27 @@ func (s *Store) GetProfileByName(ctx context.Context, appID, name string) (*prof
 }
 
 func (s *Store) UpdateProfile(ctx context.Context, p *profile.SafetyProfile) error {
+	if err := claimTenant(ctx, &p.TenantID); err != nil {
+		return err
+	}
 	p.UpdatedAt = now()
 	m := profileToModel(p)
-	_, err := s.mdb.NewUpdate(m).Filter(bson.M{"_id": m.ID}).Exec(ctx)
+	res, err := s.mdb.NewUpdate(m).Filter(bson.M{"_id": m.ID, "tenant_id": p.TenantID}).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("shield/mongo: update profile: %w", err)
+	}
+	if res.MatchedCount() == 0 {
+		return shield.ErrProfileNotFound
 	}
 	return nil
 }
 
 func (s *Store) DeleteProfile(ctx context.Context, pID id.SafetyProfileID) error {
-	_, err := s.mdb.NewDelete((*profileModel)(nil)).Filter(bson.M{"_id": pID.String()}).Exec(ctx)
+	tenant, tenantErr := store.Tenant(ctx, "")
+	if tenantErr != nil {
+		return tenantErr
+	}
+	_, err := s.mdb.NewDelete((*profileModel)(nil)).Filter(bson.M{"_id": pID.String(), "tenant_id": tenant}).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("shield/mongo: delete profile: %w", err)
 	}
@@ -781,14 +969,19 @@ func (s *Store) DeleteProfile(ctx context.Context, pID id.SafetyProfileID) error
 }
 
 func (s *Store) ListProfiles(ctx context.Context, filter *profile.ListFilter) ([]*profile.SafetyProfile, error) {
+	var want string
+	if filter != nil {
+		want = filter.TenantID
+	}
+	tenant, tenantErr := store.Tenant(ctx, want)
+	if tenantErr != nil {
+		return nil, tenantErr
+	}
 	var models []profileModel
-	f := bson.M{}
+	f := bson.M{"tenant_id": tenant}
 	if filter != nil {
 		if filter.AppID != "" {
 			f["app_id"] = filter.AppID
-		}
-		if filter.TenantID != "" {
-			f["tenant_id"] = filter.TenantID
 		}
 		if filter.Enabled != nil {
 			f["enabled"] = *filter.Enabled
@@ -822,6 +1015,9 @@ func (s *Store) ListProfiles(ctx context.Context, filter *profile.ListFilter) ([
 // ──────────────────────────────────────────────────
 
 func (s *Store) CreateScan(ctx context.Context, result *scan.Result) error {
+	if err := claimTenant(ctx, &result.TenantID); err != nil {
+		return err
+	}
 	n := now()
 	result.CreatedAt = n
 	result.UpdatedAt = n
@@ -833,8 +1029,12 @@ func (s *Store) CreateScan(ctx context.Context, result *scan.Result) error {
 }
 
 func (s *Store) GetScan(ctx context.Context, scanID id.ScanID) (*scan.Result, error) {
+	tenant, tenantErr := store.Tenant(ctx, "")
+	if tenantErr != nil {
+		return nil, tenantErr
+	}
 	var m scanResultModel
-	err := s.mdb.NewFind(&m).Filter(bson.M{"_id": scanID.String()}).Scan(ctx)
+	err := s.mdb.NewFind(&m).Filter(bson.M{"_id": scanID.String(), "tenant_id": tenant}).Scan(ctx)
 	if err != nil {
 		return nil, notFoundOrWrap(err, shield.ErrScanNotFound, "get scan")
 	}
@@ -842,14 +1042,19 @@ func (s *Store) GetScan(ctx context.Context, scanID id.ScanID) (*scan.Result, er
 }
 
 func (s *Store) ListScans(ctx context.Context, filter *scan.ListFilter) ([]*scan.Result, error) {
+	var want string
+	if filter != nil {
+		want = filter.TenantID
+	}
+	tenant, tenantErr := store.Tenant(ctx, want)
+	if tenantErr != nil {
+		return nil, tenantErr
+	}
 	var models []scanResultModel
-	f := bson.M{}
+	f := bson.M{"tenant_id": tenant}
 	if filter != nil {
 		if filter.AppID != "" {
 			f["app_id"] = filter.AppID
-		}
-		if filter.TenantID != "" {
-			f["tenant_id"] = filter.TenantID
 		}
 		if filter.Direction != "" {
 			f["direction"] = string(filter.Direction)
@@ -882,15 +1087,20 @@ func (s *Store) ListScans(ctx context.Context, filter *scan.ListFilter) ([]*scan
 }
 
 func (s *Store) ScanStats(ctx context.Context, filter *scan.StatsFilter) (*scan.Stats, error) {
+	var want string
+	if filter != nil {
+		want = filter.TenantID
+	}
+	tenant, tenantErr := store.Tenant(ctx, want)
+	if tenantErr != nil {
+		return nil, tenantErr
+	}
 	// Fetch all matching scans and aggregate in-memory for simplicity.
 	var models []scanResultModel
-	f := bson.M{}
+	f := bson.M{"tenant_id": tenant}
 	if filter != nil {
 		if filter.AppID != "" {
 			f["app_id"] = filter.AppID
-		}
-		if filter.TenantID != "" {
-			f["tenant_id"] = filter.TenantID
 		}
 	}
 	if err := s.mdb.NewFind(&models).Filter(f).Scan(ctx); err != nil {
@@ -930,6 +1140,9 @@ func emptyScanStats() *scan.Stats {
 // ──────────────────────────────────────────────────
 
 func (s *Store) CreatePolicy(ctx context.Context, pol *policy.Policy) error {
+	if _, err := store.ScopeLevels(ctx, pol.ScopeKey, string(pol.ScopeLevel)); err != nil {
+		return err
+	}
 	n := now()
 	pol.CreatedAt = n
 	pol.UpdatedAt = n
@@ -941,17 +1154,45 @@ func (s *Store) CreatePolicy(ctx context.Context, pol *policy.Policy) error {
 }
 
 func (s *Store) GetPolicy(ctx context.Context, polID id.PolicyID) (*policy.Policy, error) {
+	m, err := s.visiblePolicy(ctx, polID)
+	if err != nil {
+		return nil, err
+	}
+	return policyFromModel(m)
+}
+
+// visiblePolicy loads a policy the context may see. A missing policy and one
+// in a scope the context cannot see both return ErrPolicyNotFound.
+func (s *Store) visiblePolicy(ctx context.Context, polID id.PolicyID) (*policyModel, error) {
 	var m policyModel
 	err := s.mdb.NewFind(&m).Filter(bson.M{"_id": polID.String()}).Scan(ctx)
 	if err != nil {
 		return nil, notFoundOrWrap(err, shield.ErrPolicyNotFound, "get policy")
 	}
-	return policyFromModel(&m)
+	if !store.ScopeVisible(ctx, m.ScopeKey, m.ScopeLevel) {
+		return nil, shield.ErrPolicyNotFound
+	}
+	return &m, nil
+}
+
+// scopeFilter matches scope_key and, when levels is set, one of those levels.
+func scopeFilter(key string, levels []string) bson.M {
+	f := bson.M{"scope_key": key}
+	if levels != nil {
+		f["scope_level"] = bson.M{"$in": levels}
+	}
+	return f
 }
 
 func (s *Store) GetPolicyByName(ctx context.Context, scopeKey, name string) (*policy.Policy, error) {
+	levels, levelErr := store.ScopeLevels(ctx, scopeKey, "")
+	if levelErr != nil {
+		return nil, levelErr
+	}
+	f := scopeFilter(scopeKey, levels)
+	f["name"] = name
 	var m policyModel
-	err := s.mdb.NewFind(&m).Filter(bson.M{"scope_key": scopeKey, "name": name}).Scan(ctx)
+	err := s.mdb.NewFind(&m).Filter(f).Scan(ctx)
 	if err != nil {
 		return nil, notFoundOrWrap(err, shield.ErrPolicyNotFound, "get policy by name")
 	}
@@ -959,17 +1200,40 @@ func (s *Store) GetPolicyByName(ctx context.Context, scopeKey, name string) (*po
 }
 
 func (s *Store) UpdatePolicy(ctx context.Context, pol *policy.Policy) error {
+	current, err := s.visiblePolicy(ctx, pol.ID)
+	if err != nil {
+		return err
+	}
+	if !store.ScopeVisible(ctx, pol.ScopeKey, string(pol.ScopeLevel)) {
+		return shield.ErrTenantMismatch
+	}
 	pol.UpdatedAt = now()
 	m := policyToModel(pol)
-	_, err := s.mdb.NewUpdate(m).Filter(bson.M{"_id": m.ID}).Exec(ctx)
+	res, err := s.mdb.NewUpdate(m).
+		Filter(bson.M{"_id": m.ID, "scope_key": current.ScopeKey, "scope_level": current.ScopeLevel}).
+		Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("shield/mongo: update policy: %w", err)
+	}
+	if res.MatchedCount() == 0 {
+		return shield.ErrPolicyNotFound
 	}
 	return nil
 }
 
+// DeletePolicy is idempotent: a missing policy and one the context cannot see
+// both return nil, and the second is left in place.
 func (s *Store) DeletePolicy(ctx context.Context, polID id.PolicyID) error {
-	_, err := s.mdb.NewDelete((*policyModel)(nil)).Filter(bson.M{"_id": polID.String()}).Exec(ctx)
+	current, err := s.visiblePolicy(ctx, polID)
+	if errors.Is(err, shield.ErrPolicyNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	_, err = s.mdb.NewDelete((*policyModel)(nil)).
+		Filter(bson.M{"_id": polID.String(), "scope_key": current.ScopeKey, "scope_level": current.ScopeLevel}).
+		Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("shield/mongo: delete policy: %w", err)
 	}
@@ -977,27 +1241,27 @@ func (s *Store) DeletePolicy(ctx context.Context, polID id.PolicyID) error {
 }
 
 func (s *Store) ListPolicies(ctx context.Context, filter *policy.ListFilter) ([]*policy.Policy, error) {
+	if filter == nil {
+		return nil, shield.ErrTenantRequired
+	}
+	levels, levelErr := store.ScopeLevels(ctx, filter.ScopeKey, string(filter.ScopeLevel))
+	if levelErr != nil {
+		return nil, levelErr
+	}
 	var models []policyModel
-	f := bson.M{}
-	if filter != nil {
-		if filter.ScopeKey != "" {
-			f["scope_key"] = filter.ScopeKey
-		}
-		if filter.ScopeLevel != "" {
-			f["scope_level"] = string(filter.ScopeLevel)
-		}
-		if filter.Enabled != nil {
-			f["enabled"] = *filter.Enabled
-		}
+	f := scopeFilter(filter.ScopeKey, levels)
+	if filter.ScopeLevel != "" {
+		f["scope_level"] = string(filter.ScopeLevel)
+	}
+	if filter.Enabled != nil {
+		f["enabled"] = *filter.Enabled
 	}
 	q := s.mdb.NewFind(&models).Filter(f).Sort(bson.D{{Key: "created_at", Value: 1}})
-	if filter != nil {
-		if filter.Limit > 0 {
-			q = q.Limit(int64(filter.Limit))
-		}
-		if filter.Offset > 0 {
-			q = q.Skip(int64(filter.Offset))
-		}
+	if filter.Limit > 0 {
+		q = q.Limit(int64(filter.Limit))
+	}
+	if filter.Offset > 0 {
+		q = q.Skip(int64(filter.Offset))
 	}
 	if err := q.Scan(ctx); err != nil {
 		return nil, fmt.Errorf("shield/mongo: list policies: %w", err)
@@ -1014,6 +1278,9 @@ func (s *Store) ListPolicies(ctx context.Context, filter *policy.ListFilter) ([]
 }
 
 func (s *Store) GetPoliciesForScope(ctx context.Context, scopeKey string, level policy.ScopeLevel) ([]*policy.Policy, error) {
+	if _, err := store.ScopeLevels(ctx, scopeKey, string(level)); err != nil {
+		return nil, err
+	}
 	var models []policyModel
 	f := bson.M{
 		"scope_key":   scopeKey,
@@ -1036,10 +1303,14 @@ func (s *Store) GetPoliciesForScope(ctx context.Context, scopeKey string, level 
 }
 
 func (s *Store) AssignToTenant(ctx context.Context, tenantID string, polID id.PolicyID) error {
-	// Use $addToSet to add tenantID to the policy document's tenant_ids array.
-	_, err := s.mdb.Collection(colPolicies).UpdateOne(ctx,
+	tenant, err := store.Tenant(ctx, tenantID)
+	if err != nil {
+		return err
+	}
+	// Use $addToSet to add the tenant to the policy document's tenant_ids array.
+	_, err = s.mdb.Collection(colPolicies).UpdateOne(ctx,
 		bson.M{"_id": polID.String()},
-		bson.M{"$addToSet": bson.M{"tenant_ids": tenantID}},
+		bson.M{"$addToSet": bson.M{"tenant_ids": tenant}},
 	)
 	if err != nil {
 		return fmt.Errorf("shield/mongo: assign policy to tenant: %w", err)
@@ -1048,10 +1319,14 @@ func (s *Store) AssignToTenant(ctx context.Context, tenantID string, polID id.Po
 }
 
 func (s *Store) UnassignFromTenant(ctx context.Context, tenantID string, polID id.PolicyID) error {
-	// Use $pull to remove tenantID from the policy document's tenant_ids array.
-	_, err := s.mdb.Collection(colPolicies).UpdateOne(ctx,
+	tenant, err := store.Tenant(ctx, tenantID)
+	if err != nil {
+		return err
+	}
+	// Use $pull to remove the tenant from the policy document's tenant_ids array.
+	_, err = s.mdb.Collection(colPolicies).UpdateOne(ctx,
 		bson.M{"_id": polID.String()},
-		bson.M{"$pull": bson.M{"tenant_ids": tenantID}},
+		bson.M{"$pull": bson.M{"tenant_ids": tenant}},
 	)
 	if err != nil {
 		return fmt.Errorf("shield/mongo: unassign policy from tenant: %w", err)
@@ -1070,6 +1345,9 @@ func (s *Store) StorePIITokens(ctx context.Context, tokens []*pii.Token) error {
 	n := now()
 	models := make([]piiTokenModel, len(tokens))
 	for i, t := range tokens {
+		if err := claimTenant(ctx, &t.TenantID); err != nil {
+			return err
+		}
 		t.CreatedAt = n
 		t.UpdatedAt = n
 		models[i] = *piiTokenToModel(t)
@@ -1082,6 +1360,10 @@ func (s *Store) StorePIITokens(ctx context.Context, tokens []*pii.Token) error {
 }
 
 func (s *Store) LoadPIITokens(ctx context.Context, tokenIDs []id.PIITokenID) ([]*pii.Token, error) {
+	tenant, tenantErr := store.Tenant(ctx, "")
+	if tenantErr != nil {
+		return nil, tenantErr
+	}
 	if len(tokenIDs) == 0 {
 		return nil, nil
 	}
@@ -1090,7 +1372,7 @@ func (s *Store) LoadPIITokens(ctx context.Context, tokenIDs []id.PIITokenID) ([]
 		ids[i] = tid.String()
 	}
 	var models []piiTokenModel
-	err := s.mdb.NewFind(&models).Filter(bson.M{"_id": bson.M{"$in": ids}}).Scan(ctx)
+	err := s.mdb.NewFind(&models).Filter(bson.M{"_id": bson.M{"$in": ids}, "tenant_id": tenant}).Scan(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("shield/mongo: load pii tokens: %w", err)
 	}
@@ -1106,9 +1388,13 @@ func (s *Store) LoadPIITokens(ctx context.Context, tokenIDs []id.PIITokenID) ([]
 }
 
 func (s *Store) LoadPIITokensByScan(ctx context.Context, scanID id.ScanID) ([]*pii.Token, error) {
+	tenant, tenantErr := store.Tenant(ctx, "")
+	if tenantErr != nil {
+		return nil, tenantErr
+	}
 	var models []piiTokenModel
 	err := s.mdb.NewFind(&models).
-		Filter(bson.M{"scan_id": scanID.String()}).
+		Filter(bson.M{"scan_id": scanID.String(), "tenant_id": tenant}).
 		Sort(bson.D{{Key: "created_at", Value: 1}}).
 		Scan(ctx)
 	if err != nil {
@@ -1126,6 +1412,10 @@ func (s *Store) LoadPIITokensByScan(ctx context.Context, scanID id.ScanID) ([]*p
 }
 
 func (s *Store) DeletePIITokens(ctx context.Context, tokenIDs []id.PIITokenID) error {
+	tenant, tenantErr := store.Tenant(ctx, "")
+	if tenantErr != nil {
+		return tenantErr
+	}
 	if len(tokenIDs) == 0 {
 		return nil
 	}
@@ -1133,7 +1423,7 @@ func (s *Store) DeletePIITokens(ctx context.Context, tokenIDs []id.PIITokenID) e
 	for i, tid := range tokenIDs {
 		ids[i] = tid.String()
 	}
-	_, err := s.mdb.Collection(colPIITokens).DeleteMany(ctx, bson.M{"_id": bson.M{"$in": ids}})
+	_, err := s.mdb.Collection(colPIITokens).DeleteMany(ctx, bson.M{"_id": bson.M{"$in": ids}, "tenant_id": tenant})
 	if err != nil {
 		return fmt.Errorf("shield/mongo: delete pii tokens: %w", err)
 	}
@@ -1141,13 +1431,19 @@ func (s *Store) DeletePIITokens(ctx context.Context, tokenIDs []id.PIITokenID) e
 }
 
 func (s *Store) DeletePIITokensByTenant(ctx context.Context, tenantID string) error {
-	_, err := s.mdb.Collection(colPIITokens).DeleteMany(ctx, bson.M{"tenant_id": tenantID})
+	tenant, err := store.Tenant(ctx, tenantID)
+	if err != nil {
+		return err
+	}
+	_, err = s.mdb.Collection(colPIITokens).DeleteMany(ctx, bson.M{"tenant_id": tenant})
 	if err != nil {
 		return fmt.Errorf("shield/mongo: delete pii tokens by tenant: %w", err)
 	}
 	return nil
 }
 
+// PurgePIITokens is an operator retention sweep: it removes expired tokens in
+// every tenant and so takes no tenant.
 func (s *Store) PurgePIITokens(ctx context.Context, olderThan time.Time) (int64, error) {
 	res, err := s.mdb.Collection(colPIITokens).DeleteMany(ctx, bson.M{
 		"expires_at": bson.M{"$ne": nil, "$lt": olderThan},
@@ -1159,12 +1455,12 @@ func (s *Store) PurgePIITokens(ctx context.Context, olderThan time.Time) (int64,
 }
 
 func (s *Store) PIIStats(ctx context.Context, tenantID string) (*pii.Stats, error) {
-	f := bson.M{}
-	if tenantID != "" {
-		f["tenant_id"] = tenantID
+	tenant, tenantErr := store.Tenant(ctx, tenantID)
+	if tenantErr != nil {
+		return nil, tenantErr
 	}
 	var models []piiTokenModel
-	if err := s.mdb.NewFind(&models).Filter(f).Scan(ctx); err != nil {
+	if err := s.mdb.NewFind(&models).Filter(bson.M{"tenant_id": tenant}).Scan(ctx); err != nil {
 		if isNoDocuments(err) {
 			return &pii.Stats{
 				ByType:   make(map[string]int64),
@@ -1191,6 +1487,9 @@ func (s *Store) PIIStats(ctx context.Context, tenantID string) (*pii.Stats, erro
 // ──────────────────────────────────────────────────
 
 func (s *Store) CreateReport(ctx context.Context, report *compliance.Report) error {
+	if _, err := store.ScopeLevels(ctx, report.ScopeKey, report.ScopeLevel); err != nil {
+		return err
+	}
 	n := now()
 	report.CreatedAt = n
 	report.UpdatedAt = n
@@ -1207,28 +1506,31 @@ func (s *Store) GetReport(ctx context.Context, reportID id.ComplianceReportID) (
 	if err != nil {
 		return nil, notFoundOrWrap(err, shield.ErrComplianceNotFound, "get compliance report")
 	}
+	if !store.ScopeVisible(ctx, m.ScopeKey, m.ScopeLevel) {
+		return nil, shield.ErrComplianceNotFound
+	}
 	return complianceFromModel(&m)
 }
 
 func (s *Store) ListReports(ctx context.Context, filter *compliance.ListFilter) ([]*compliance.Report, error) {
+	if filter == nil {
+		return nil, shield.ErrTenantRequired
+	}
+	levels, levelErr := store.ScopeLevels(ctx, filter.ScopeKey, "")
+	if levelErr != nil {
+		return nil, levelErr
+	}
 	var models []complianceReportModel
-	f := bson.M{}
-	if filter != nil {
-		if filter.ScopeKey != "" {
-			f["scope_key"] = filter.ScopeKey
-		}
-		if filter.Framework != "" {
-			f["framework"] = string(filter.Framework)
-		}
+	f := scopeFilter(filter.ScopeKey, levels)
+	if filter.Framework != "" {
+		f["framework"] = string(filter.Framework)
 	}
 	q := s.mdb.NewFind(&models).Filter(f).Sort(bson.D{{Key: "generated_at", Value: -1}})
-	if filter != nil {
-		if filter.Limit > 0 {
-			q = q.Limit(int64(filter.Limit))
-		}
-		if filter.Offset > 0 {
-			q = q.Skip(int64(filter.Offset))
-		}
+	if filter.Limit > 0 {
+		q = q.Limit(int64(filter.Limit))
+	}
+	if filter.Offset > 0 {
+		q = q.Skip(int64(filter.Offset))
 	}
 	if err := q.Scan(ctx); err != nil {
 		return nil, fmt.Errorf("shield/mongo: list compliance reports: %w", err)
