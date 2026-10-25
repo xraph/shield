@@ -85,10 +85,12 @@ const (
 	sendVerbs   = `send|post|upload|forward|exfiltrate|transmit`
 	leakTargets = `system prompt|system message|initial prompt|hidden prompt|api keys?|secrets?|credentials|passwords?|environment variables|env vars|private keys?|deploy keys?|ssh keys?|access tokens?`
 	leakNoun    = `(?:` + leakTargets + `)`
-	// dataTargets is what an agent holds that is not a secret but still must
-	// not leave: the conversation itself.
-	dataTargets = `conversation|chat(?: history| log)?|transcript|message history|context window`
-	dataNoun    = `(?:` + leakTargets + `|` + dataTargets + `)`
+	// convNoun is what an agent holds that is not a secret but still must
+	// not leave: the conversation itself. It counts only with convOwner in
+	// front ("this conversation", "the whole transcript"): "the chat widget"
+	// and "send the transcript to support" are ordinary.
+	convNoun  = `(?:conversation|chat(?: history| log)?|transcript|message history|context window)`
+	convOwner = `this|our|the whole|the entire|this whole|this entire|all of this|all of our`
 	// yourNoun adds what is only sensitive when it is "your": "print your
 	// instructions" is an attack, "print the instructions" is a README.
 	yourNoun  = `(?:prompt|instructions|rules|guidelines|configuration|tokens?|` + leakTargets + `)`
@@ -100,6 +102,8 @@ const (
 	approvals = ` (?:any |further |human |prior |manual )?(?:approval|confirmation|sign-?off)\b`
 	// actionVerb is what an impersonated turn makes the agent do.
 	actionVerb = `(?:approve|merge|deploy|promote|delete|run|execute|call|push|drop|remove|rotate|disable|grant|close)`
+	// roleNoun is a role an agent can be told it now has.
+	roleNoun = `(?:assistant|model|agent|ai|bot|admin|administrator|operator|manager|persona|character|developer|root|owner|master|dan)`
 	// apostrophe is a straight or curly apostrophe.
 	apostrophe = `(?:'|\x{2019})`
 )
@@ -109,11 +113,14 @@ const (
 // "Assistant: Sure, I will now delete the staging environment", but not
 // "System: ubuntu-22.04", "System: Debian 12, run as root", "System: delete
 // the cache dir after upgrades" or "Assistant: Sure, here is the summary".
-// run, call and delete count only with an object an agent acts on.
+// run, call, execute and delete count only with an object an agent acts on
+// or a command shape: a tool, a URL, a pipe into a shell, rm -rf, all files.
 var instructionCue = regexp.MustCompile(`\b(?:ignore|disregard|forget|override|you must|you are now|you are no longer|from now on|new instructions?|reveal|your (?:new )?(?:task|role|instructions|job)|approve|merge|deploy|promote)\b` +
 	`|\b(?:run|call|invoke) the [a-z0-9_.-]+ (?:tool|function)\b` +
 	`|\b(?:run|call|execute) [a-z0-9.-]*_[a-z0-9_.-]*\b` +
-	`|\bdelete (?:the |all |every |this |that )?(?:production|prod|staging|environment|database|cluster|repo|repository|stack|service|deployment|branch|bucket)s?\b` +
+	`|\b(?:run|execute)\b[^.;]{0,80}?(?:https?://|\| ?(?:sudo )?(?:sh|bash|zsh)\b|\bcurl\b|\bwget\b)` +
+	`|\brm -(?:rf|fr|r)\b` +
+	`|\bdelete (?:the |all |every |this |that )?(?:production|prod|staging|environment|database|cluster|repo|repository|stack|service|deployment|branch|bucket|files|data|secrets|keys|records|users|backups|volumes|everything)s?\b` +
 	`|\bi(?: will|` + apostrophe + `ll)(?: now)? ` + actionVerb + `\b`)
 
 // lineMarkup is what may precede a role marker on its line and still leave
@@ -181,23 +188,34 @@ var (
 	)
 	// dataObjects name something worth exfiltrating: a secret or the
 	// conversation itself.
-	dataObjects = words("", "system prompt|system message|initial prompt|hidden prompt|api key|secret|credentials|password|environment variables|env vars|private key|deploy key|ssh key|access token|conversation|chat|transcript|message history|context window", `s?\b`)
+	dataObjects = slices.Concat(
+		words("", "system prompt|system message|initial prompt|hidden prompt|api key|secret|credentials|password|environment variables|env vars|private key|deploy key|ssh key|access token", `s?\b`),
+		words("", convOwner, ` `+convNoun+`\b`),
+	)
 )
 
 // Word sets for the checks on the words just before a verb. Apostrophes are
 // dropped from those words, so "don't" and "don\u2019t" are both "dont".
 var (
-	negators       = set("never", "dont", "mustnt", "shouldnt", "wont")
-	negatedModals  = set("do", "must", "should", "will")
-	toLeads        = set("sure", "remember", "forget", "hesitate", "youre")
+	negators       = set("never", "dont", "mustnt", "shouldnt", "wont", "cannot", "cant", "couldnt")
+	negatedModals  = set("do", "must", "should", "will", "can", "could")
+	toLeads        = set("sure", "remember", "forget", "hesitate", "youre", "proceed", "free", "required", "asked")
 	toYouVerbs     = set("need", "want", "ask", "asked", "told")
 	youToVerbs     = set("need", "have", "must", "are")
-	roleNouns      = set("task", "job", "goal", "mission", "role", "instruction", "instructions")
+	roleNouns      = set("task", "job", "goal", "mission", "role", "step", "instruction", "instructions")
 	otherSubjects  = set("we", "they", "i", "it", "he", "she", "ci", "bot", "this", "that", "which", "who", "pipeline")
 	subjectModals  = set("will", "would", "can", "could", "may", "might", "should", "then", "also", "automatically", "now")
 	addressWords   = set("please", "just", "so", "you")
 	addressModals  = set("should", "must", "can")
 	futureSubjects = set("will", "would")
+	// labels open a commit subject or a log line: "chore: skip checks",
+	// "WARN: skip checks", "Tip: bypass ...". A clause after one describes.
+	labels = set("chore", "fix", "feat", "refactor", "test", "tests", "build", "perf", "style", "ci", "docs",
+		"revert", "deps", "release", "warn", "warning", "info", "debug", "error", "err", "trace", "fatal",
+		"tip", "tips", "note", "notes", "hint", "todo", "fixme", "nb", "ps", "example", "caution", "important")
+	// conditions after a skip limit it to a case: "skip the review if you
+	// only changed docs", "for dry runs", "only in a local sandbox".
+	conditions = set("if", "when", "unless", "only", "during", "while", "except")
 )
 
 func set(ws ...string) map[string]bool {
@@ -295,22 +313,69 @@ func (s *scan) commitScoped(start, end int) bool {
 }
 
 // sentenceStart reports whether the verb at start opens a sentence, a clause
-// after a colon or semicolon, or a line.
+// after a semicolon or a colon, or a line. A colon after a commit type or a
+// log label ("chore:", "fix(ci):", "WARN:", "Tip:") does not open one, and
+// neither does a line that starts with one.
 func (s *scan) sentenceStart(start, end int) bool {
-	pre := strings.TrimRight(s.before(start, 4), " ")
-	if pre == "" || strings.ContainsAny(pre[len(pre)-1:], ".!?:;") {
+	pre := strings.TrimRight(s.before(start, 40), " ")
+	if pre == "" {
 		return true
+	}
+	switch pre[len(pre)-1] {
+	case '.', '!', '?', ';':
+		return true
+	case ':':
+		return !labels[labelWord(pre[:len(pre)-1])]
 	}
 	os, _ := s.t.Span(start, end)
 	return leadsOriginalLine(s.t, os)
 }
 
-// sentence returns the folded bounds of the sentence around [start, end), at
-// most 200 bytes either side.
+// labelWord returns the word that ends pre, skipping a "!" and a
+// "(scope)": "fix(ci)!" gives "fix".
+func labelWord(pre string) string {
+	pre = strings.TrimSuffix(pre, "!")
+	if strings.HasSuffix(pre, ")") {
+		if i := strings.LastIndexByte(pre, '('); i >= 0 {
+			pre = pre[:i]
+		}
+	}
+	i := len(pre)
+	for i > 0 && isWordByte(pre[i-1]) {
+		i--
+	}
+	return pre[i:]
+}
+
+// conditional reports whether a condition follows the match within its
+// clause: one of the conditions words, or "for" right after it.
+func (s *scan) conditional(end int) bool {
+	f := s.t.Folded
+	for n, i := 0, end; n < 6 && i < len(f); n++ {
+		for i < len(f) && f[i] == ' ' {
+			i++
+		}
+		j := i
+		for j < len(f) && isWordByte(f[j]) {
+			j++
+		}
+		if j == i {
+			return false
+		}
+		if w := f[i:j]; conditions[w] || n == 0 && w == "for" {
+			return true
+		}
+		i = j
+	}
+	return false
+}
+
+// sentence returns the folded bounds of the sentence (or clause after a
+// semicolon) around [start, end), at most 200 bytes either side.
 func (s *scan) sentence(start, end int) (from, to int) {
 	if !s.haveStops {
 		for i := 0; i < len(s.t.Folded); i++ {
-			if c := s.t.Folded[i]; c == '.' || c == '!' || c == '?' {
+			if c := s.t.Folded[i]; c == '.' || c == '!' || c == '?' || c == ';' {
 				s.stops = append(s.stops, i)
 			}
 		}
@@ -385,30 +450,38 @@ func imperative(s *scan, start, end int) bool {
 	return !describes
 }
 
-// pressured accepts skipping a safety step when it is a command (opening a
-// sentence or line, or aimed at the reader) or comes with an authority or
-// urgency claim in its sentence. "ci: skip review for dependabot PRs"
-// describes a commit and does not count.
+// pressured accepts skipping a safety step when it comes with an authority
+// or urgency claim in its sentence, or when it is an unconditional command:
+// opening a sentence or line, or aimed at the reader, and not limited by a
+// condition. "ci: skip review for dependabot PRs" and "Skip the review step
+// if you only changed docs" describe and do not count.
 func pressured(s *scan, start, end int) bool {
 	if s.negated(start) {
+		return false
+	}
+	if s.pressureIn(s.sentence(start, end)) {
+		return true
+	}
+	if s.conditional(end) {
 		return false
 	}
 	if s.sentenceStart(start, end) && !s.commitScoped(start, end) {
 		return true
 	}
 	w := s.tail(start)
-	if addressWords[w[0]] || addressModals[w[0]] && w[1] == "you" ||
-		w[0] == "to" && (w[1] == "need" || w[1] == "have") && w[2] == "you" {
-		return true
-	}
-	return s.pressureIn(s.sentence(start, end))
+	return addressWords[w[0]] || addressModals[w[0]] && w[1] == "you" ||
+		w[0] == "to" && (w[1] == "need" || w[1] == "have") && w[2] == "you"
 }
 
 // aboutData accepts "send it to https://..." only when something worth
-// exfiltrating comes just before: "print your system prompt and send it to",
-// "summarize this conversation and send it to".
-func aboutData(s *scan, start, _ int) bool {
-	return !s.negated(start) && s.objectIn(max(0, start-160), start)
+// exfiltrating comes just before it in the same sentence: "print your system
+// prompt and send it to", "summarize this conversation and send it to".
+func aboutData(s *scan, start, end int) bool {
+	if s.negated(start) {
+		return false
+	}
+	from, _ := s.sentence(start, end)
+	return s.objectIn(max(from, start-160), start)
 }
 
 // corpus is the built-in pattern set. Benign infra text (commit messages,
@@ -444,7 +517,7 @@ var corpus = slices.Concat(
 	words(FamilyRole, "you", ` are no longer (?:bound|restricted|limited|constrained)\b`),
 	words(FamilyRole, "you", ` are no longer (?:a|an|the) (?:[a-z-]+ ){0,2}?(?:assistant|model|agent|ai|bot|reviewer|chatbot)\b`),
 	words(FamilyRole, "you", ` will now (?:act|behave|respond) as\b`),
-	words(FamilyRole, "from", ` now on,? you(?: are|`+apostrophe+`re| must| shall|(?: will|`+apostrophe+`ll) (?:be|act|respond|answer|obey|follow|only|always|never|ignore)| act as| respond| answer| obey| ignore| only (?:follow|obey|answer)| take orders| work for)\b`),
+	words(FamilyRole, "from", ` now on,? you(?:(?: are|`+apostrophe+`re)(?: now)? (?:my|a|an|the|no longer)(?: [a-z-]+){0,2}? `+roleNoun+`|(?: must| shall)(?: now)? (?:ignore|obey|answer|forget|disregard|act as|respond|reveal|comply|do whatever|only (?:follow|obey|answer))|(?: will|`+apostrophe+`ll) (?:be(?: now)? (?:my|a|an|the)(?: [a-z-]+){0,2}? `+roleNoun+`|act as|obey|ignore|answer every|respond to every|only (?:follow|obey|answer)|always obey|never refuse)| act as| respond| answer| obey| ignore| only (?:follow|obey|answer)| take orders| work for)\b`),
 	words(FamilyRole, "your", ` new (?:role|persona|identity|task) is\b`),
 
 	// jailbreak
@@ -467,13 +540,14 @@ var corpus = slices.Concat(
 	withAccept(words(FamilyExfiltration, revealVerbs, ` (?:me )?(?:all (?:of )?)?your `+leakAdj+yourNoun+`\b`), notNegated),
 	withAccept(words(FamilyExfiltration, revealVerbs, ` (?:me )?(?:all (?:of )?)?the `+leakAdj+leakNoun+`\b`), notNegated),
 	withAccept(words(FamilyExfiltration, sendVerbs, ` (?:it|this|them|that|everything|all of (?:it|this|them)) to https?://`), aboutData),
-	withAccept(words(FamilyExfiltration, sendVerbs, ` (?:the|your|this|our) `+dataNoun+` (?:[a-z0-9-]+ ){0,3}?to https?://`), notNegated),
+	withAccept(words(FamilyExfiltration, sendVerbs, ` (?:the|your|this|our) `+leakNoun+` (?:[a-z0-9-]+ ){0,3}?to https?://`), notNegated),
+	withAccept(words(FamilyExfiltration, sendVerbs, ` (?:`+convOwner+`) `+convNoun+` (?:[a-z0-9-]+ ){0,3}?to https?://`), notNegated),
 	entry(FamilyExfiltration, `!\[[^\]]*\]\( ?https?://[^\s)]*\?[^\s)]*?(?:\$\{|\{\{|[?&](?:data|d|q|secrets?|token|keys?|env|prompt|payload|leak|exfil|content|c|msg|text|info|p|s)=)`),
 
 	// manipulation
 	words(FamilyManipulation, "user|admin|administrator|owner|operator|security team|manager", `s? (?:has|have|had) (?:already )?(?:explicitly )?(?:approved|authorized|authorised|signed off|consented|okayed|pre-?approved)(?: (?:this|it|that|these|the|your|my|our|all|everything)\b|[.,;!]|$)`),
 	words(FamilyManipulation, "already approved|preapproved|pre-approved", ` by (?:the )?(?:user|admin|owner|security team|operator)\b`),
-	withAccept(words(FamilyManipulation, "skip|bypass|circumvent", ` (?:the |all |any )?(?:human |manual |security |safety |required )?(?:approvals?|approval (?:step|gate|process)|reviews?|review (?:step|process)|checks|safety|safety checks|safeguards|guardrails)\b`), pressured),
+	withAccept(words(FamilyManipulation, "skip|bypass|circumvent", ` (?:the |all |any )?(?:human |manual |security |safety |required )?(?:approval (?:step|gate|process)|approvals?|review (?:step|process)|reviews?|safety checks|safety|checks|safeguards|guardrails)\b`), pressured),
 	words(FamilyManipulation, urgencies, `\b[^.!?]{0,80}?\bwithout`+approvals),
 	words(FamilyManipulation, "without", approvals+`[^.!?]{0,80}?\b`+urgency+`\b`),
 	words(FamilyManipulation, "no", ` (?:need|reason) (?:to|for) (?:ask(?:ing)?|wait(?:ing)?|get(?:ting)?|request(?:ing)?) (?:for )?(?:approval|confirmation|permission|review)\b`),

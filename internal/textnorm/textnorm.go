@@ -166,16 +166,15 @@ func stripHidden(s string) (string, []removal) {
 			kept = make([]byte, 0, len(s))
 		}
 		kept = append(kept, s[last:i]...)
-		// One legitimate joiner, mark or BOM per run: a second one between
-		// the same two neighbours does no job and counts.
-		exempted := false
+		// Each rune is judged on its own, except that one zero-width joiner
+		// does the job of joining two neighbours: a second ZWJ between the
+		// same two does none and counts.
+		joined := false
 		for k := i; k < j; {
 			rk, sk := utf8.DecodeRuneInString(s[k:])
-			counted := false
-			if k >= flagEnd && !hides(rk, k, prev, base, next) {
-				counted, exempted = exempted, true
-			} else if k >= flagEnd {
-				counted = true
+			counted := k >= flagEnd && hides(rk, k, prev, base, next)
+			if k >= flagEnd && !counted && rk == 0x200D {
+				counted, joined = joined, true
 			}
 			removed = append(removed, removal{at: k, size: sk, kept: len(kept), counted: counted})
 			k += sk
@@ -193,7 +192,7 @@ func stripHidden(s string) (string, []removal) {
 // runes do in ordinary text: a byte order mark that opens a file, a joiner
 // inside an emoji sequence or a non-Latin word, and direction marks and
 // non-joiners in non-Latin text (Persian, Arabic, Hebrew). Fold allows one
-// such exception per run of invisible runes.
+// joiner per run of invisible runes.
 func hides(r rune, i int, prev, base, next rune) bool {
 	switch r {
 	case 0xFEFF:
