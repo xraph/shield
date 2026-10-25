@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/xraph/grove/migrate"
 )
@@ -383,6 +384,13 @@ CREATE INDEX IF NOT EXISTS idx_shield_compliance_scope ON shield_compliance_repo
 			},
 			// Down fails if two tenants now share a name under one app.
 			Down: func(ctx context.Context, exec migrate.Executor) error {
+				names := make([]string, 0, len(tenantUniqueTables))
+				for _, t := range tenantUniqueTables {
+					names = append(names, t.name)
+				}
+				if err := ensureNoSharedNames(ctx, exec, names); err != nil {
+					return err
+				}
 				for _, t := range tenantUniqueTables {
 					if _, err := exec.Exec(ctx, rebuildWithTenantUnique(t.name, t.columns, "app_id, name")); err != nil {
 						return err
@@ -503,10 +511,30 @@ var tenantUniqueTables = []struct{ name, columns string }{
 }
 
 func rebuildWithTenantUnique(table, columns, unique string) string {
-	return "CREATE TABLE " + table + "_new (" + columns + ",\n    UNIQUE(" + unique + ")\n);\n" +
+	return "DROP TABLE IF EXISTS " + table + "_new;\n" +
+		"CREATE TABLE " + table + "_new (" + columns + ",\n    UNIQUE(" + unique + ")\n);\n" +
 		"INSERT INTO " + table + "_new SELECT * FROM " + table + ";\n" +
 		"DROP TABLE " + table + ";\n" +
 		"ALTER TABLE " + table + "_new RENAME TO " + table + ";\n" +
 		"CREATE INDEX IF NOT EXISTS idx_" + table + "_app ON " + table + " (app_id);\n" +
 		"CREATE INDEX IF NOT EXISTS idx_" + table + "_tenant ON " + table + " (app_id, tenant_id);\n"
+}
+
+// ensureNoSharedNames fails, before anything is changed, when two tenants share a
+// name under one app, because the (app_id, name) key cannot be restored then.
+func ensureNoSharedNames(ctx context.Context, exec migrate.Executor, tables []string) error {
+	for _, table := range tables {
+		rows, err := exec.Query(ctx, "SELECT 1 FROM "+table+" GROUP BY app_id, name HAVING COUNT(*) > 1 LIMIT 1")
+		if err != nil {
+			return err
+		}
+		found := rows.Next()
+		if closeErr := rows.Close(); closeErr != nil {
+			return closeErr
+		}
+		if found {
+			return fmt.Errorf("cannot restore unique (app_id, name) on %s: two tenants share a name", table)
+		}
+	}
+	return nil
 }
