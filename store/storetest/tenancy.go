@@ -614,8 +614,10 @@ func testFilterTenantMustMatchContext(t *testing.T, factory func(*testing.T) Bac
 		if err != nil || stats.TotalTokens != 1 {
 			t.Fatalf("filter-only pii stats: %+v (%v)", stats, err)
 		}
+		// App scope is shared by every tenant of the app, so only an operator
+		// call (no context tenant) writes there.
 		pol := newPolicy("assignable", tenantApp, policy.ScopeApp)
-		if err = s.CreatePolicy(a, pol); err != nil {
+		if err = s.CreatePolicy(none, pol); err != nil {
 			t.Fatal(err)
 		}
 		if err = s.AssignToTenant(a, "tenant-b", pol.ID); !errors.Is(err, shield.ErrTenantMismatch) {
@@ -629,6 +631,31 @@ func testFilterTenantMustMatchContext(t *testing.T, factory func(*testing.T) Bac
 		}
 		if err = s.UnassignFromTenant(a, "tenant-a", pol.ID); err != nil {
 			t.Fatalf("unassign from the context tenant: %v", err)
+		}
+	})
+	t.Run("assign-needs-a-visible-policy", func(t *testing.T) {
+		foreign := newPolicy("foreign-org", "tenant-a", policy.ScopeOrg)
+		if err := s.CreatePolicy(a, foreign); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.AssignToTenant(b, "", foreign.ID); !errors.Is(err, shield.ErrPolicyNotFound) {
+			t.Fatalf("assign another org's policy: want ErrPolicyNotFound, got %v", err)
+		}
+		if err := s.UnassignFromTenant(b, "", foreign.ID); err != nil {
+			t.Fatalf("unassign another org's policy: want nil, got %v", err)
+		}
+		missing := id.NewPolicyID()
+		if err := s.AssignToTenant(a, "", missing); !errors.Is(err, shield.ErrPolicyNotFound) {
+			t.Fatalf("assign a missing policy: want ErrPolicyNotFound, got %v", err)
+		}
+		if err := s.UnassignFromTenant(a, "", missing); err != nil {
+			t.Fatalf("unassign a missing policy: want nil, got %v", err)
+		}
+		if err := s.AssignToTenant(a, "", foreign.ID); err != nil {
+			t.Fatalf("assign own org policy: %v", err)
+		}
+		if err := s.UnassignFromTenant(a, "", foreign.ID); err != nil {
+			t.Fatalf("unassign own org policy: %v", err)
 		}
 	})
 }
@@ -665,15 +692,23 @@ func testPolicyScopes(t *testing.T, factory func(*testing.T) Backend) {
 	otherApp := tenantCtx("tenant-a", "app-b")
 	none := context.Background()
 
+	operator := shield.WithApp(context.Background(), tenantApp)
+
 	org := newPolicy("org", "tenant-a", policy.ScopeOrg)
+	if err := s.CreatePolicy(a, org); err != nil {
+		t.Fatal(err)
+	}
+	// App scope is shared by every tenant of the app: only an operator call
+	// (no context tenant) may write there.
 	app := newPolicy("app", tenantApp, policy.ScopeApp)
-	for _, pol := range []*policy.Policy{org, app} {
-		if err := s.CreatePolicy(a, pol); err != nil {
-			t.Fatal(err)
-		}
+	if err := s.CreatePolicy(none, app); err != nil {
+		t.Fatal(err)
 	}
 	if err := s.CreatePolicy(b, newPolicy("planted", "tenant-a", policy.ScopeOrg)); !errors.Is(err, shield.ErrTenantMismatch) {
 		t.Fatalf("policy in a foreign org: want ErrTenantMismatch, got %v", err)
+	}
+	if err := s.CreatePolicy(a, newPolicy("shared", tenantApp, policy.ScopeApp)); !errors.Is(err, shield.ErrTenantMismatch) {
+		t.Fatalf("app-level policy from a tenant: want ErrTenantMismatch, got %v", err)
 	}
 
 	t.Run("get", func(t *testing.T) {
@@ -703,11 +738,34 @@ func testPolicyScopes(t *testing.T, factory func(*testing.T) Backend) {
 		if err := s.UpdatePolicy(a, &moved); !errors.Is(err, shield.ErrTenantMismatch) {
 			t.Fatalf("policy moved into a foreign org: want ErrTenantMismatch, got %v", err)
 		}
+		movedApp := *org
+		movedApp.ScopeKey, movedApp.ScopeLevel = tenantApp, policy.ScopeApp
+		if err := s.UpdatePolicy(a, &movedApp); !errors.Is(err, shield.ErrTenantMismatch) {
+			t.Fatalf("org policy moved into the shared app scope: want ErrTenantMismatch, got %v", err)
+		}
+		for name, ctx := range map[string]context.Context{"tenant-a": a, "tenant-b": b} {
+			changed := *app
+			changed.Description = "changed by " + name
+			if err := s.UpdatePolicy(ctx, &changed); !errors.Is(err, shield.ErrTenantMismatch) {
+				t.Fatalf("%s updated the shared app policy: want ErrTenantMismatch, got %v", name, err)
+			}
+			if err := s.DeletePolicy(ctx, app.ID); !errors.Is(err, shield.ErrTenantMismatch) {
+				t.Fatalf("%s deleted the shared app policy: want ErrTenantMismatch, got %v", name, err)
+			}
+		}
+		got, err := s.GetPolicy(a, app.ID)
+		if err != nil || got.Description != "" {
+			t.Fatalf("shared app policy changed or removed by a tenant: %+v (%v)", got, err)
+		}
+		app.Description = "operator"
+		if err = s.UpdatePolicy(operator, app); err != nil {
+			t.Fatalf("operator update of the app policy: %v", err)
+		}
 		org.Description = "updated"
-		if err := s.UpdatePolicy(a, org); err != nil {
+		if err = s.UpdatePolicy(a, org); err != nil {
 			t.Fatalf("owner update: %v", err)
 		}
-		got, err := s.GetPolicy(a, org.ID)
+		got, err = s.GetPolicy(a, org.ID)
 		if err != nil || got.Description != "updated" || got.ScopeKey != "tenant-a" {
 			t.Fatalf("owner update lost: %+v (%v)", got, err)
 		}
@@ -756,6 +814,11 @@ func testPolicyScopes(t *testing.T, factory func(*testing.T) Backend) {
 		}
 		if err := s.CreateReport(b, newReport("tenant-a")); !errors.Is(err, shield.ErrTenantMismatch) {
 			t.Fatalf("report in a foreign org: want ErrTenantMismatch, got %v", err)
+		}
+		shared := newReport(tenantApp)
+		shared.ScopeLevel = "app"
+		if err := s.CreateReport(a, shared); !errors.Is(err, shield.ErrTenantMismatch) {
+			t.Fatalf("app-level report from a tenant: want ErrTenantMismatch, got %v", err)
 		}
 		if _, err := s.ListReports(b, &compliance.ListFilter{ScopeKey: "tenant-a"}); !errors.Is(err, shield.ErrTenantMismatch) {
 			t.Fatalf("reports of another org: want ErrTenantMismatch, got %v", err)

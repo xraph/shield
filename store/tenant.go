@@ -75,3 +75,26 @@ func ScopeLevels(ctx context.Context, key, level string) ([]string, error) {
 	}
 	return levels, nil
 }
+
+// ScopeWritable checks that ctx may create, change or delete a policy or
+// compliance report in the scope (key, level).
+//
+// With a tenant on ctx, only that tenant's org scope is writable. App scope is
+// shared by every tenant of the app (Loomplane gives all workspaces one app
+// ID), so a tenant writing there would change every other tenant's safety
+// configuration: app-level writes return ErrTenantMismatch, as does an org key
+// that is not the context tenant. With no tenant on ctx the call is an
+// operator call and any scope is writable. An empty key is ErrTenantRequired.
+func ScopeWritable(ctx context.Context, key, level string) error {
+	if key == "" {
+		return shield.ErrTenantRequired
+	}
+	tenant := shield.TenantFromContext(ctx)
+	if tenant == "" {
+		return nil
+	}
+	if level != levelOrg || key != tenant {
+		return shield.ErrTenantMismatch
+	}
+	return nil
+}

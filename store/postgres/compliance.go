@@ -11,7 +11,7 @@ import (
 )
 
 func (s *Store) CreateReport(ctx context.Context, report *compliance.Report) error {
-	if _, err := store.ScopeLevels(ctx, report.ScopeKey, report.ScopeLevel); err != nil {
+	if err := store.ScopeWritable(ctx, report.ScopeKey, report.ScopeLevel); err != nil {
 		return err
 	}
 	n := now()

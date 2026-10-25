@@ -103,3 +103,31 @@ func TestScopeLevels(t *testing.T) {
 		})
 	}
 }
+
+func TestScopeWritable(t *testing.T) {
+	tenant := shield.WithApp(shield.WithTenant(context.Background(), "tenant-a"), "app-a")
+	operator := shield.WithApp(context.Background(), "app-a")
+	cases := []struct {
+		name    string
+		ctx     context.Context
+		key     string
+		level   string
+		wantErr error
+	}{
+		{name: "empty key", ctx: tenant, level: "org", wantErr: shield.ErrTenantRequired},
+		{name: "own org", ctx: tenant, key: "tenant-a", level: "org"},
+		{name: "foreign org", ctx: tenant, key: "tenant-b", level: "org", wantErr: shield.ErrTenantMismatch},
+		{name: "shared app scope under a tenant", ctx: tenant, key: "app-a", level: "app", wantErr: shield.ErrTenantMismatch},
+		{name: "tenant key at the app level", ctx: tenant, key: "tenant-a", level: "app", wantErr: shield.ErrTenantMismatch},
+		{name: "operator app scope", ctx: operator, key: "app-a", level: "app"},
+		{name: "operator org scope", ctx: context.Background(), key: "tenant-b", level: "org"},
+		{name: "operator empty key", ctx: context.Background(), level: "app", wantErr: shield.ErrTenantRequired},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := ScopeWritable(tc.ctx, tc.key, tc.level); !errors.Is(err, tc.wantErr) {
+				t.Fatalf("err = %v, want %v", err, tc.wantErr)
+			}
+		})
+	}
+}

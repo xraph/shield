@@ -1101,7 +1101,7 @@ func emptyScanStats() *scan.Stats {
 // ──────────────────────────────────────────────────
 
 func (s *Store) CreatePolicy(ctx context.Context, pol *policy.Policy) error {
-	if _, err := store.ScopeLevels(ctx, pol.ScopeKey, string(pol.ScopeLevel)); err != nil {
+	if err := store.ScopeWritable(ctx, pol.ScopeKey, string(pol.ScopeLevel)); err != nil {
 		return err
 	}
 	n := now()
@@ -1164,8 +1164,13 @@ func (s *Store) UpdatePolicy(ctx context.Context, pol *policy.Policy) error {
 	if err != nil {
 		return err
 	}
-	if !store.ScopeVisible(ctx, pol.ScopeKey, string(pol.ScopeLevel)) {
-		return shield.ErrTenantMismatch
+	// A tenant may only write its own org scope, both where the policy is now
+	// and where the update would put it (store.ScopeWritable).
+	if writeErr := store.ScopeWritable(ctx, current.ScopeKey, current.ScopeLevel); writeErr != nil {
+		return writeErr
+	}
+	if writeErr := store.ScopeWritable(ctx, pol.ScopeKey, string(pol.ScopeLevel)); writeErr != nil {
+		return writeErr
 	}
 	pol.UpdatedAt = now()
 	m, err := policyToModel(pol)
@@ -1183,7 +1188,9 @@ func (s *Store) UpdatePolicy(ctx context.Context, pol *policy.Policy) error {
 }
 
 // DeletePolicy is idempotent: a missing policy and one the context cannot see
-// both return nil, and the second is left in place.
+// both return nil, and the second is left in place. A visible policy the
+// context may not write (an app-level policy under a tenant) is refused with
+// ErrTenantMismatch rather than skipped.
 func (s *Store) DeletePolicy(ctx context.Context, polID id.PolicyID) error {
 	current, err := s.visiblePolicy(ctx, polID)
 	if errors.Is(err, shield.ErrPolicyNotFound) {
@@ -1191,6 +1198,9 @@ func (s *Store) DeletePolicy(ctx context.Context, polID id.PolicyID) error {
 	}
 	if err != nil {
 		return err
+	}
+	if writeErr := store.ScopeWritable(ctx, current.ScopeKey, current.ScopeLevel); writeErr != nil {
+		return writeErr
 	}
 	_, err = s.sdb.NewDelete((*policyModel)(nil)).
 		Where("id = ?", polID.String()).
@@ -1273,6 +1283,11 @@ func (s *Store) AssignToTenant(ctx context.Context, tenantID string, polID id.Po
 	if err != nil {
 		return err
 	}
+	// The policy must be one the tenant can see; a foreign or missing policy
+	// is ErrPolicyNotFound.
+	if _, visibleErr := s.visiblePolicy(shield.WithTenant(ctx, tenant), polID); visibleErr != nil {
+		return visibleErr
+	}
 	m := &policyTenantModel{
 		TenantID:  tenant,
 		PolicyID:  polID.String(),
@@ -1289,6 +1304,14 @@ func (s *Store) UnassignFromTenant(ctx context.Context, tenantID string, polID i
 	tenant, err := store.Tenant(ctx, tenantID)
 	if err != nil {
 		return err
+	}
+	// A foreign or missing policy has nothing to unassign: nil, and no write.
+	_, visibleErr := s.visiblePolicy(shield.WithTenant(ctx, tenant), polID)
+	if errors.Is(visibleErr, shield.ErrPolicyNotFound) {
+		return nil
+	}
+	if visibleErr != nil {
+		return visibleErr
 	}
 	_, err = s.sdb.NewDelete((*policyTenantModel)(nil)).
 		Where("tenant_id = ?", tenant).
@@ -1461,7 +1484,7 @@ func (s *Store) PIIStats(ctx context.Context, tenantID string) (*pii.Stats, erro
 // ──────────────────────────────────────────────────
 
 func (s *Store) CreateReport(ctx context.Context, report *compliance.Report) error {
-	if _, err := store.ScopeLevels(ctx, report.ScopeKey, report.ScopeLevel); err != nil {
+	if err := store.ScopeWritable(ctx, report.ScopeKey, report.ScopeLevel); err != nil {
 		return err
 	}
 	n := now()
