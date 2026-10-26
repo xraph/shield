@@ -114,16 +114,17 @@ func (e *Engine) runPolicies(ctx context.Context, ev *evaluation) {
 		}
 		// Only redact forces a redaction; another redacting action set
 		// through the store (vault, quote, rewrite) blocks, as does a redact
-		// with nothing to redact.
+		// with nothing to redact on text. Nothing is redacted out of a tool
+		// call, so there a redact asks a person whatever it matched.
 		action := applicable(r.action, "redact")
-		if action == "redact" && !ev.forceRedaction(matched) {
+		if action == "redact" && !ev.forceRedaction(matched) && ev.call == nil {
 			action = actionBlock
 		}
 		ev.add(&scan.Finding{
 			Layer: layerPolicy, Source: r.policy, Message: r.message, Action: action,
 			Details: map[string]any{"check_type": r.checkType, "condition": r.condition.Kind},
 		})
-		decisions[r.policy] = scan.Stricter(decisions[r.policy], scan.ActionDecision(action))
+		decisions[r.policy] = scan.Stricter(decisions[r.policy], ev.decisionOf(action))
 	}
 	for _, name := range ev.profile.policies {
 		e.registry.EmitPolicyEvaluated(ctx, ev.scanID, name, string(decisions[name]))

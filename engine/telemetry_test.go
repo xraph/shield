@@ -272,3 +272,28 @@ func TestProfileAndLayersRunUnderTheScanSpan(t *testing.T) {
 	}
 	assertNoSecret(t, rec)
 }
+
+func TestToolCallSpanCarriesNoToolOrArguments(t *testing.T) {
+	rec := recordSpans(t)
+	e, _ := New(WithStore(profiledStore(t, "tenant-a", "app-a")))
+	res, err := e.ScanToolCall(shieldtest.Ctx("tenant-a", "app-a"), &scan.ToolCallInput{
+		Tool: secret, RiskClass: secret, Profile: "p",
+		Arguments: []byte(`{"to":"` + secret + `"}`),
+		Metadata:  map[string]string{secret: secret},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Decision != scan.DecisionRequireApproval {
+		t.Fatalf("decision = %s", res.Decision)
+	}
+	scans := spansNamed(rec, "scan content")
+	if len(scans) != 1 {
+		t.Fatalf("want one scan span, got %d", len(scans))
+	}
+	a := attrs(scans[0])
+	if a["shield.scan.direction"].AsString() != "tool_call" || a["shield.scan.decision"].AsString() != "require_approval" {
+		t.Errorf("attributes = %v", a)
+	}
+	assertNoSecret(t, rec)
+}

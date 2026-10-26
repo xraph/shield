@@ -217,7 +217,8 @@ func (ev *evaluation) triggerMatches(t compiledTrigger) bool {
 
 // contextValues are the string values of the input context plus the
 // direction, source and untrusted flag of the scan, which win over context
-// keys of the same name.
+// keys of the same name. A tool call's context holds its metadata, tool and
+// risk class, and it has no untrusted flag.
 func (ev *evaluation) contextValues() map[string]string {
 	if ev.context != nil {
 		return ev.context
@@ -230,7 +231,9 @@ func (ev *evaluation) contextValues() map[string]string {
 	}
 	out["direction"] = string(ev.input.Direction)
 	out["source"] = ev.input.Source
-	out["untrusted"] = strconv.FormatBool(ev.input.Untrusted)
+	if ev.call == nil {
+		out["untrusted"] = strconv.FormatBool(ev.input.Untrusted)
+	}
 	ev.context = out
 	return out
 }

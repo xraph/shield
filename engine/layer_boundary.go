@@ -23,7 +23,7 @@ type compiledBoundary struct {
 // compiledLimit is one limit of a boundary.
 type compiledLimit struct {
 	scope    boundary.Scope
-	deny     []string // folded, empty entries dropped
+	deny     []string // folded, empty entries dropped; action globs trimmed, not folded
 	allow    []string
 	useAllow bool
 }
@@ -33,8 +33,12 @@ func compileBoundary(b *boundary.Boundary) *compiledBoundary {
 	for _, l := range b.Limits {
 		cl := compiledLimit{scope: l.Scope, allow: l.Allow, useAllow: l.UseAllow}
 		for _, d := range l.Deny {
-			if folded := strings.TrimSpace(detection.Fold(d).Folded); folded != "" {
-				cl.deny = append(cl.deny, folded)
+			entry := d
+			if l.Scope != boundary.ScopeAction {
+				entry = detection.Fold(d).Folded
+			}
+			if entry = strings.TrimSpace(entry); entry != "" {
+				cl.deny = append(cl.deny, entry)
 			}
 		}
 		cb.limits = append(cb.limits, cl)
@@ -47,15 +51,21 @@ func compileBoundary(b *boundary.Boundary) *compiledBoundary {
 // whole words or phrases, data and output entries anywhere. A topic
 // allowlist blocks any awareness topic label it does not list; no label, no
 // block. Output limits apply to output scans only, and action limits to
-// tool calls only. A crossed boundary blocks with its canned response.
+// tool calls only, where they match the tool and its risk class (see
+// compiledLimit.actionCrossed). A crossed boundary blocks with its canned
+// response.
 func (e *Engine) runBoundaries(ctx context.Context, ev *evaluation) {
 	for _, b := range ev.profile.boundaries {
 		scope, crossed := ev.crossed(b)
 		if !crossed {
 			continue
 		}
+		message := "content crosses a " + string(scope) + " boundary"
+		if scope == boundary.ScopeAction {
+			message = "tool call crosses an action boundary"
+		}
 		ev.add(&scan.Finding{
-			Layer: layerBoundary, Source: b.name, Message: "content crosses a " + string(scope) + " boundary",
+			Layer: layerBoundary, Source: b.name, Message: message,
 			Score: 1, Action: actionBlock,
 			Details: map[string]any{"scope": string(scope), "response": b.response},
 		})
@@ -108,7 +118,13 @@ func (ev *evaluation) crossed(b *compiledBoundary) (boundary.Scope, bool) {
 				}
 			}
 		case boundary.ScopeAction:
-			ev.info(layerBoundary, b.name, "action limits apply to tool calls only")
+			if ev.call == nil {
+				ev.info(layerBoundary, b.name, "action limits apply to tool calls only")
+				continue
+			}
+			if hit == "" && l.actionCrossed(ev.call) {
+				cross(l.scope)
+			}
 		default:
 			ev.info(layerBoundary, b.name, "unsupported boundary scope "+string(l.scope))
 		}

@@ -45,6 +45,7 @@ type evaluation struct {
 	tenant  string
 	app     string
 	input   *scan.Input
+	call    *toolCall // set on a tool call; input then holds its flattened arguments
 	profile *compiledProfile
 
 	folded     detection.Text
@@ -115,9 +116,18 @@ func (ev *evaluation) add(f *scan.Finding) {
 	f.ID = id.NewFindingID()
 	f.Severity = severity(f.Action)
 	ev.findings = append(ev.findings, f)
-	if scan.ActionDecision(f.Action) == scan.DecisionBlock {
+	if ev.decisionOf(f.Action) == scan.DecisionBlock {
 		ev.blocked = true
 	}
+}
+
+// decisionOf returns the decision an action asks for on this scan: through
+// scan.ToolCallActionDecision on a tool call, scan.ActionDecision otherwise.
+func (ev *evaluation) decisionOf(action string) scan.Decision {
+	if ev.call != nil {
+		return scan.ToolCallActionDecision(action)
+	}
+	return scan.ActionDecision(action)
 }
 
 // detections returns the findings so far that report a detection, leaving
@@ -156,17 +166,18 @@ func severity(action string) string {
 // Blocked follows a block, and Redacted is the text with every redaction
 // applied (or a reflex's rewrite), quoted when the input is untrusted or an
 // instinct asked for it. A blocked result carries no text, and trusted text
-// that was not redacted carries none either.
+// that was not redacted carries none either. A tool call never carries
+// text: nothing can be redacted out of a call.
 func (ev *evaluation) decide(r *scan.Result) {
 	decision := scan.DecisionAllow
 	for _, f := range ev.findings {
-		decision = scan.Stricter(decision, scan.ActionDecision(f.Action))
+		decision = scan.Stricter(decision, ev.decisionOf(f.Action))
 	}
 	r.Decision = decision
 	r.Blocked = decision == scan.DecisionBlock
 	r.Findings = ev.findings
 	r.Redacted = ""
-	if r.Blocked {
+	if r.Blocked || ev.call != nil {
 		return
 	}
 	var text string
@@ -234,13 +245,17 @@ func (ev *evaluation) redactedText() string {
 
 // metadata is a copy of the input metadata plus the source, whether the
 // text is untrusted and, when there were any, the number of secrets found.
+// A tool call's input metadata already holds its tool and risk class, and
+// it has no untrusted flag.
 func (ev *evaluation) metadata() map[string]any {
 	md := make(map[string]any, len(ev.input.Metadata)+3)
 	maps.Copy(md, ev.input.Metadata)
 	if ev.input.Source != "" {
 		md["source"] = ev.input.Source
 	}
-	md["untrusted"] = ev.input.Untrusted
+	if ev.call == nil {
+		md["untrusted"] = ev.input.Untrusted
+	}
 	if n := countSpans(ev.secretsFound); n > 0 {
 		md["secret_count"] = n
 	}

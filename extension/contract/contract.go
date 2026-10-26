@@ -161,7 +161,7 @@ func handler(deps Deps, intent string) dispatcher.Handler {
 			err = a.Check(false)
 		case "scans.stats":
 			counts := map[string]int64{}
-			for _, decision := range []string{"allow", "block", "flag", "redact"} {
+			for _, decision := range []string{"allow", "block", "flag", "redact", "require_approval"} {
 				page, e := s.List(ctx, a, "scans", store.Filter{Limit: 1, Field: "decision", Value: decision})
 				if e != nil {
 					err = e

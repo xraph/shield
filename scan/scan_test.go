@@ -97,3 +97,27 @@ func TestActionDecisionOnText(t *testing.T) {
 		}
 	}
 }
+
+func TestToolCallActionDecision(t *testing.T) {
+	for action, want := range map[string]Decision{
+		"block": DecisionBlock, "throttle": DecisionBlock,
+		"redact": DecisionRequireApproval, "vault": DecisionRequireApproval, "quote": DecisionRequireApproval, "rewrite": DecisionRequireApproval,
+		"flag": DecisionRequireApproval, "alert": DecisionRequireApproval, "warn": DecisionRequireApproval, "escalate": DecisionRequireApproval,
+		"log": DecisionAllow, "info": DecisionAllow,
+		"future": DecisionBlock, "": DecisionBlock,
+	} {
+		if got := ToolCallActionDecision(action); got != want {
+			t.Errorf("ToolCallActionDecision(%q) = %s, want %s", action, got, want)
+		}
+	}
+}
+
+func TestReasonOnAToolCall(t *testing.T) {
+	r := &Result{Direction: DirectionToolCall, Decision: DecisionRequireApproval, Findings: []*Finding{
+		{Action: "log", Message: "logged"},
+		{Action: "escalate", Message: "escalated"},
+	}}
+	if r.Reason() != "escalated" {
+		t.Fatalf("reason = %q", r.Reason())
+	}
+}

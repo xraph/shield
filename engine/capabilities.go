@@ -35,6 +35,7 @@ func (e *Engine) Capabilities() Capabilities {
 	return Capabilities{
 		Persistence: e.store != nil,
 		Evaluation:  true,
+		ToolCalls:   true,
 		Layers:      []string{},
 		Supported: map[string][]string{
 			"instinct_strategies": {strategyCanary, strategyHeuristics, strategyPatterns},

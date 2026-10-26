@@ -37,8 +37,8 @@ import (
 
 // The metrics the engine records when WithMetrics is set. A Forge app scrapes
 // them with a forge_ prefix: forge_shield_scans_completed_total and
-// forge_shield_scan_duration_seconds. Both carry direction (input, output)
-// and decision (allow, block, flag, redact).
+// forge_shield_scan_duration_seconds. Both carry direction (input, output,
+// tool_call) and decision (allow, block, flag, redact, require_approval).
 const (
 	ScansCompletedMetric = "shield_scans_completed_total"
 	ScanDurationMetric   = "shield_scan_duration_seconds"
@@ -129,7 +129,7 @@ func (e *Engine) ScanInput(ctx context.Context, input *scan.Input) (*scan.Result
 		return nil, shield.ErrInvalidInput
 	}
 	input.Direction = scan.DirectionInput
-	return e.executeScan(ctx, input)
+	return e.executeScan(ctx, input, nil)
 }
 
 // ScanOutput runs a safety scan on output content (agent→user).
@@ -138,7 +138,7 @@ func (e *Engine) ScanOutput(ctx context.Context, input *scan.Input) (*scan.Resul
 		return nil, shield.ErrInvalidInput
 	}
 	input.Direction = scan.DirectionOutput
-	return e.executeScan(ctx, input)
+	return e.executeScan(ctx, input, nil)
 }
 
 // executeScan runs the layered safety evaluation.
@@ -146,13 +146,15 @@ func (e *Engine) ScanOutput(ctx context.Context, input *scan.Input) (*scan.Resul
 // It checks, in order, the context tenant, the size limit and the store,
 // then resolves the profile named by the input (or Config.DefaultProfile)
 // and runs the layers. Any error fires the ScanFailed hook, marks the scan
-// span failed and persists nothing.
+// span failed and persists nothing. A tool call (call set) is checked and
+// flattened into input first, so ScanStarted sees the text the layers scan
+// and a call that fails those checks fires ScanFailed alone.
 //
 // The scan runs under a "scan content" span. Its attributes are counts,
 // enums and the scan ID; the scanned text, findings, tenant and profile name
 // never go on it. Profile resolution, each layer, plugin hooks and the
 // store write nest under it.
-func (e *Engine) executeScan(ctx context.Context, input *scan.Input) (*scan.Result, error) {
+func (e *Engine) executeScan(ctx context.Context, input *scan.Input, call *scan.ToolCallInput) (*scan.Result, error) {
 	start := time.Now()
 	scanID := id.NewScanID()
 
@@ -161,14 +163,25 @@ func (e *Engine) executeScan(ctx context.Context, input *scan.Input) (*scan.Resu
 		attribute.String("shield.scan.direction", string(input.Direction)),
 	))
 	defer span.End()
+	fail := func(err error) error {
+		e.registry.EmitScanFailed(ctx, scanID, err)
+		telemetry.Fail(span, "scan_failed", err)
+		return err
+	}
+
+	var tc *toolCall
+	if call != nil {
+		var prepErr error
+		if tc, prepErr = e.prepareToolCall(ctx, call, input); prepErr != nil {
+			return nil, fail(prepErr)
+		}
+	}
 
 	e.registry.EmitScanStarted(ctx, scanID, string(input.Direction), input.Text)
 
-	result, err := e.evaluate(ctx, scanID, input)
+	result, err := e.evaluate(ctx, scanID, input, tc)
 	if err != nil {
-		e.registry.EmitScanFailed(ctx, scanID, err)
-		telemetry.Fail(span, "scan_failed", err)
-		return nil, err
+		return nil, fail(err)
 	}
 	result.Duration = time.Since(start)
 
@@ -200,7 +213,7 @@ func (e *Engine) executeScan(ctx context.Context, input *scan.Input) (*scan.Resu
 
 // evaluate checks the scan's preconditions, resolves its profile and runs
 // the layers.
-func (e *Engine) evaluate(ctx context.Context, scanID id.ScanID, input *scan.Input) (*scan.Result, error) {
+func (e *Engine) evaluate(ctx context.Context, scanID id.ScanID, input *scan.Input, call *toolCall) (*scan.Result, error) {
 	tenant, err := store.Tenant(ctx, "")
 	if err != nil {
 		return nil, err
@@ -226,7 +239,7 @@ func (e *Engine) evaluate(ctx context.Context, scanID id.ScanID, input *scan.Inp
 	e.registry.EmitSafetyProfileResolved(ctx, scanID, compiled.name)
 
 	ev := &evaluation{
-		scanID: scanID, tenant: tenant, app: app, input: input, profile: compiled,
+		scanID: scanID, tenant: tenant, app: app, input: input, call: call, profile: compiled,
 		hits: map[*scan.Finding]*awarenessHit{},
 	}
 	for _, layer := range []struct {
@@ -258,7 +271,7 @@ func (e *Engine) evaluate(ctx context.Context, scanID id.ScanID, input *scan.Inp
 		Metadata:     ev.metadata(),
 	}
 	ev.decide(result)
-	if !result.Blocked {
+	if !result.Blocked && call == nil {
 		for _, t := range ev.piiRedacted {
 			e.registry.EmitPIIRedacted(ctx, scanID, t.typ, t.count)
 		}

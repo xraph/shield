@@ -115,7 +115,7 @@ func Stricter(a, b Decision) Decision {
 }
 
 // ActionDecision returns the decision a finding's action asks for on a text
-// scan: block and throttle block; redact, vault, quote and rewrite redact;
+// scan (ToolCallActionDecision maps a tool call's): block and throttle block; redact, vault, quote and rewrite redact;
 // flag, alert, warn and escalate flag; log and info allow. Any other action
 // blocks, so an unknown action fails closed.
 func ActionDecision(action string) Decision {
@@ -134,13 +134,14 @@ func ActionDecision(action string) Decision {
 }
 
 // Reason returns the message of the first finding whose action produced the
-// final decision, or "" when the scan allowed the text.
+// final decision, or "" when the scan allowed the text or call. Findings of
+// a tool call map through ToolCallActionDecision.
 func (r *Result) Reason() string {
 	if r.Decision == DecisionAllow {
 		return ""
 	}
 	for _, f := range r.Findings {
-		if f != nil && ActionDecision(f.Action) == r.Decision {
+		if f != nil && actionDecision(r.Direction, f.Action) == r.Decision {
 			return f.Message
 		}
 	}

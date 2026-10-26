@@ -71,8 +71,11 @@ func TestAuthenticatedHTTPReadsCommandsAndReplay(t *testing.T) {
 			t.Fatalf("%s does not report evaluation: %s", q, body)
 		}
 	}
-	if body := send("capabilities", dash.KindQuery, `{}`, "", "", user).Body.String(); !strings.Contains(body, `"unavailable_layers":[]`) {
-		t.Fatalf("capabilities still list unavailable layers: %s", body)
+	if body := send("capabilities", dash.KindQuery, `{}`, "", "", user).Body.String(); !strings.Contains(body, `"unavailable_layers":[]`) || !strings.Contains(body, `"tool_calls":true`) {
+		t.Fatalf("capabilities list unavailable layers or no tool calls: %s", body)
+	}
+	if body := send("scans.stats", dash.KindQuery, `{}`, "", "", user).Body.String(); !strings.Contains(body, `"require_approval":0`) {
+		t.Fatalf("scans.stats does not count require_approval: %s", body)
 	}
 	w := send("instincts.create", dash.KindCommand, `{"row":{"name":"guard","category":"injection","sensitivity":"balanced","action":"block"}}`, "create-guard", "bad", user)
 	if !strings.Contains(w.Body.String(), "UNAUTHENTICATED") {

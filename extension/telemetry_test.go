@@ -18,6 +18,7 @@ import (
 	"github.com/xraph/shield/id"
 	"github.com/xraph/shield/internal/shieldtest"
 	"github.com/xraph/shield/profile"
+	"github.com/xraph/shield/reflex"
 	"github.com/xraph/shield/scan"
 	"github.com/xraph/shield/store/sqlite"
 )
@@ -140,5 +141,41 @@ func TestEngineOptionCanTurnMetricsOff(t *testing.T) {
 	}
 	if strings.Contains(scrape(t, app), "forge_shield_") {
 		t.Error("shield recorded metrics after WithMetrics(nil)")
+	}
+}
+
+func TestScanMetricsLabelToolCalls(t *testing.T) {
+	app := forge.New(forge.WithAppName("shield-tool-call-metrics"), forge.WithAppLogger(forge.NewNoopLogger()),
+		forge.WithEnableConfigAutoDiscovery(false))
+	st, ctx := scanCtx(t)
+	if err := st.CreateReflex(ctx, &reflex.Reflex{ID: id.NewReflexID(), Name: "hold", AppID: "app-a", Enabled: true,
+		Triggers: []reflex.Trigger{{Type: reflex.TriggerAlways}}, Actions: []reflex.Action{{Type: reflex.ActionEscalate}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateProfile(ctx, &profile.SafetyProfile{ID: id.NewSafetyProfileID(), Name: "tools", AppID: "app-a", Enabled: true, Reflexes: []string{"hold"}}); err != nil {
+		t.Fatal(err)
+	}
+	e := New(WithStore(st))
+	if err := e.Register(app); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.Engine().ScanToolCall(ctx, &scan.ToolCallInput{Tool: "deploy", RiskClass: "change", Profile: "tools"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.Engine().ScanToolCall(ctx, &scan.ToolCallInput{Tool: "deploy", RiskClass: "change", Profile: "p"}); err != nil {
+		t.Fatal(err)
+	}
+	body := scrape(t, app)
+	for _, want := range []string{
+		`forge_shield_scans_completed_total{decision="require_approval",direction="tool_call"} 1`,
+		`forge_shield_scans_completed_total{decision="allow",direction="tool_call"} 1`,
+		`forge_shield_scan_duration_seconds_count{decision="require_approval",direction="tool_call"} 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("scrape is missing %q", want)
+		}
+	}
+	if strings.Contains(body, "deploy") {
+		t.Error("the tool name reached a metric label")
 	}
 }
