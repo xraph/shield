@@ -112,7 +112,7 @@ func (e *Extension) Register(fapp forge.App) error {
 			DefaultProfile: e.config.DefaultProfile, ShutdownTimeout: e.config.ShutdownTimeout,
 			ScanConcurrency: e.config.ScanConcurrency, EnableShortCircuit: e.config.EnableShortCircuit,
 			MaxScanBytes: e.config.MaxScanBytes, ProfileCacheTTL: e.config.ProfileCacheTTL,
-			StoreRedacted: e.config.StoreRedacted,
+			StoreRedacted: e.config.StoreRedacted, ModelJudge: e.config.ModelJudge, JudgeTimeout: e.config.JudgeTimeout,
 		}),
 		engine.WithLogger(e.Logger()),
 		engine.WithMetrics(e.Metrics()),
@@ -251,6 +251,9 @@ func (e *Extension) mergeWithDefaults(cfg Config) Config {
 	if cfg.ProfileCacheTTL == 0 {
 		cfg.ProfileCacheTTL = defaults.ProfileCacheTTL
 	}
+	if cfg.JudgeTimeout == 0 {
+		cfg.JudgeTimeout = defaults.JudgeTimeout
+	}
 	return cfg
 }
 
@@ -269,6 +272,9 @@ func (e *Extension) mergeConfigurations(yamlConfig, programmaticConfig Config) C
 	}
 	if programmaticConfig.StoreRedacted {
 		yamlConfig.StoreRedacted = true
+	}
+	if programmaticConfig.ModelJudge {
+		yamlConfig.ModelJudge = true
 	}
 
 	// String fields: YAML takes precedence.
@@ -294,6 +300,9 @@ func (e *Extension) mergeConfigurations(yamlConfig, programmaticConfig Config) C
 	}
 	if yamlConfig.ProfileCacheTTL == 0 && programmaticConfig.ProfileCacheTTL != 0 {
 		yamlConfig.ProfileCacheTTL = programmaticConfig.ProfileCacheTTL
+	}
+	if yamlConfig.JudgeTimeout == 0 && programmaticConfig.JudgeTimeout != 0 {
+		yamlConfig.JudgeTimeout = programmaticConfig.JudgeTimeout
 	}
 
 	// Fill remaining zeros with defaults.

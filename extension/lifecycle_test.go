@@ -121,3 +121,32 @@ func TestExtensionDefaultsScanLimits(t *testing.T) {
 		t.Fatalf("default scan limits = %+v", cfg)
 	}
 }
+
+func TestExtensionPassesJudgeConfig(t *testing.T) {
+	dir := t.TempDir()
+	yaml := "extensions:\n  shield:\n    model_judge: true\n    judge_timeout: 2s\n"
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(yaml), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	app := forge.New(forge.WithAppName("shield-judge"), forge.WithConfigSearchPaths(dir))
+	e := New()
+	if err := e.Register(app); err != nil {
+		t.Fatal(err)
+	}
+	cfg := e.Engine().Config()
+	if !cfg.ModelJudge || cfg.JudgeTimeout != 2*time.Second {
+		t.Fatalf("judge config lost: %+v", cfg)
+	}
+}
+
+func TestExtensionJudgeDefaults(t *testing.T) {
+	app := forge.New(forge.WithEnableConfigAutoDiscovery(false))
+	e := New()
+	if err := e.Register(app); err != nil {
+		t.Fatal(err)
+	}
+	cfg := e.Engine().Config()
+	if cfg.ModelJudge || cfg.JudgeTimeout != 5*time.Second {
+		t.Fatalf("judge defaults = %+v", cfg)
+	}
+}

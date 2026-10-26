@@ -26,6 +26,7 @@ const defaultSaturate = 3
 // assessors parsed.
 type compiledJudgment struct {
 	name      string
+	domain    judgment.Domain
 	action    string
 	threshold float64
 	assessors []compiledAssessor
@@ -43,7 +44,7 @@ type compiledAssessor struct {
 // compileJudgment resolves the threshold (the profile's override, else the
 // judgment's, else 0.7) and parses the assessors' config.
 func compileJudgment(j *judgment.Judgment, override float64) (*compiledJudgment, error) {
-	cj := &compiledJudgment{name: j.Name, action: applicable(j.Action), threshold: j.Threshold}
+	cj := &compiledJudgment{name: j.Name, domain: j.Domain, action: applicable(j.Action), threshold: j.Threshold}
 	if override > 0 {
 		cj.threshold = override
 	}
@@ -85,13 +86,19 @@ func compileJudgment(j *judgment.Judgment, override float64) (*compiledJudgment,
 // runJudgments is layer 5. A judgment's risk is the weighted mean of its
 // deterministic assessors over the findings so far: layer_score is the
 // highest finding score in its layers, finding_count is the number of
-// findings in its layer over saturate, capped at 1. The model assessor is
-// not available yet and is skipped with an info finding, as is any unknown
-// assessor. Every judgment reports its risk level; it fires when the risk
-// reaches its threshold.
+// findings in its layer over saturate, capped at 1. The model assessor asks
+// the model judge when Config.ModelJudge is on and a judge is registered,
+// once per judgment; otherwise it is skipped with an info finding, as is any
+// unknown assessor. The judge is untrusted and only max() joins its score to
+// the deterministic risk, so it can raise a risk and never lower it. A judge
+// that fails, times out or answers outside [0,1] gives an info finding and
+// the deterministic risk stands. Every judgment reports its risk level; it
+// fires when the risk reaches its threshold.
 func (e *Engine) runJudgments(ctx context.Context, ev *evaluation) {
 	for _, j := range ev.profile.judgments {
 		sum, weights := 0.0, 0.0
+		var verdict *judgment.JudgeVerdict
+		asked := false
 		for _, a := range j.assessors {
 			var s float64
 			switch a.name {
@@ -110,7 +117,19 @@ func (e *Engine) runJudgments(ctx context.Context, ev *evaluation) {
 				}
 				s = min(float64(count)/float64(a.saturate), 1)
 			case assessorModel:
-				ev.info(layerJudgment, j.name, "model assessor unavailable")
+				switch {
+				case !e.modelJudgeEnabled():
+					ev.info(layerJudgment, j.name, "model assessor unavailable")
+				case !asked:
+					asked = true
+					var cause string
+					if verdict, cause = e.askJudge(ctx, ev, j); verdict == nil {
+						ev.add(&scan.Finding{
+							Layer: layerJudgment, Source: j.name, Message: "model judge unavailable", Action: actionInfo,
+							Details: map[string]any{"cause": cause},
+						})
+					}
+				}
 				continue
 			default:
 				ev.info(layerJudgment, j.name, "unsupported assessor "+a.name)
@@ -123,11 +142,21 @@ func (e *Engine) runJudgments(ctx context.Context, ev *evaluation) {
 		if weights > 0 {
 			risk = sum / weights
 		}
+		if verdict != nil {
+			risk = max(risk, verdict.Score)
+		}
 		level := riskLevel(risk)
-		if weights > 0 && risk >= j.threshold-scoreTolerance {
+		if (weights > 0 || verdict != nil) && risk >= j.threshold-scoreTolerance {
+			details := map[string]any{"risk_level": string(level), "threshold": j.threshold}
+			if verdict != nil {
+				details["judge_score"] = verdict.Score
+				if reason := cleanReason(verdict.Reason); reason != "" {
+					details["judge_reason"] = reason
+				}
+			}
 			ev.add(&scan.Finding{
 				Layer: layerJudgment, Source: j.name, Message: "risk reached the judgment threshold", Score: risk, Action: j.action,
-				Details: map[string]any{"risk_level": string(level), "threshold": j.threshold},
+				Details: details,
 			})
 		}
 		e.registry.EmitJudgmentAssessed(ctx, ev.scanID, j.name, string(level), risk)

@@ -42,6 +42,13 @@ type Config struct {
 	// StoreRedacted keeps the redacted text on persisted scans.
 	StoreRedacted bool `json:"store_redacted" mapstructure:"store_redacted" yaml:"store_redacted"`
 
+	// ModelJudge lets the model assessor call a judge registered through
+	// WithEngineOption(engine.WithJudge(...)). Off by default.
+	ModelJudge bool `json:"model_judge" mapstructure:"model_judge" yaml:"model_judge"`
+
+	// JudgeTimeout bounds one judge call (default 5s).
+	JudgeTimeout time.Duration `json:"judge_timeout" mapstructure:"judge_timeout" yaml:"judge_timeout"`
+
 	// GroveDatabase is the name of a grove.DB registered in the DI container.
 	// When set, the extension resolves this named database and auto-constructs
 	// the appropriate store based on the driver type (pg/sqlite/mongo).
@@ -61,5 +68,6 @@ func DefaultConfig() Config {
 		EnableShortCircuit: true,
 		MaxScanBytes:       shield.DefaultMaxScanBytes,
 		ProfileCacheTTL:    shield.DefaultProfileCacheTTL,
+		JudgeTimeout:       shield.DefaultJudgeTimeout,
 	}
 }

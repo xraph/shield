@@ -29,12 +29,21 @@ type Config struct {
 	// StoreRedacted keeps Result.Redacted on persisted scans. By default the
 	// stored row drops it.
 	StoreRedacted bool `json:"store_redacted,omitempty"`
+
+	// ModelJudge lets a judgment's model assessor call the judge registered
+	// with engine.WithJudge. It is off by default, and a decision never
+	// needs it: the judge can only raise a judgment's risk.
+	ModelJudge bool `json:"model_judge,omitempty"`
+
+	// JudgeTimeout bounds one judge call. Zero means 5 seconds.
+	JudgeTimeout time.Duration `json:"judge_timeout,omitempty"`
 }
 
 // Defaults for the scan limits.
 const (
 	DefaultMaxScanBytes    = 1 << 20
 	DefaultProfileCacheTTL = 30 * time.Second
+	DefaultJudgeTimeout    = 5 * time.Second
 )
 
 // DefaultConfig returns a Config with sensible defaults.
@@ -45,5 +54,6 @@ func DefaultConfig() Config {
 		EnableShortCircuit: true,
 		MaxScanBytes:       DefaultMaxScanBytes,
 		ProfileCacheTTL:    DefaultProfileCacheTTL,
+		JudgeTimeout:       DefaultJudgeTimeout,
 	}
 }

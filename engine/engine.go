@@ -30,6 +30,7 @@ import (
 	"github.com/xraph/shield"
 	"github.com/xraph/shield/id"
 	"github.com/xraph/shield/internal/telemetry"
+	"github.com/xraph/shield/judgment"
 	"github.com/xraph/shield/plugin"
 	"github.com/xraph/shield/scan"
 	"github.com/xraph/shield/store"
@@ -58,6 +59,7 @@ type Engine struct {
 	metrics  gometrics.Metrics
 	profiles *profileCache
 	rates    *rateCounter
+	judge    judgment.Judge
 
 	scansCompleted *telemetry.CounterVec
 	scanDuration   *telemetry.HistogramVec
@@ -79,6 +81,12 @@ func WithPlugin(p plugin.Plugin) Option {
 // WithConfig sets the engine configuration.
 func WithConfig(cfg shield.Config) Option {
 	return func(e *Engine) { e.config = cfg }
+}
+
+// WithJudge registers the model judge. It is called only when
+// Config.ModelJudge is true, and it can only raise a judgment's risk.
+func WithJudge(j judgment.Judge) Option {
+	return func(e *Engine) { e.judge = j }
 }
 
 // WithLogger sets a custom logger. The plugin registry reports hook errors
@@ -112,6 +120,9 @@ func New(opts ...Option) (*Engine, error) {
 	}
 	if e.config.ProfileCacheTTL == 0 {
 		e.config.ProfileCacheTTL = shield.DefaultProfileCacheTTL
+	}
+	if e.config.JudgeTimeout <= 0 {
+		e.config.JudgeTimeout = shield.DefaultJudgeTimeout
 	}
 	e.registry.SetLogger(e.logger)
 	e.registry.SetMetrics(e.metrics)
