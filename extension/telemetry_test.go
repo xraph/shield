@@ -16,7 +16,10 @@ import (
 
 	"github.com/xraph/shield/engine"
 	"github.com/xraph/shield/id"
+	"github.com/xraph/shield/internal/shieldtest"
+	"github.com/xraph/shield/profile"
 	"github.com/xraph/shield/scan"
+	"github.com/xraph/shield/store/sqlite"
 )
 
 type failingStart struct{}
@@ -51,6 +54,18 @@ func series(body, prefix string) []string {
 	return out
 }
 
+// scanCtx returns a store holding an empty profile "p" for tenant-a and the
+// context to scan it with.
+func scanCtx(t *testing.T) (*sqlite.Store, context.Context) {
+	t.Helper()
+	st := shieldtest.Store(t)
+	ctx := shieldtest.Ctx("tenant-a", "app-a")
+	if err := st.CreateProfile(ctx, &profile.SafetyProfile{ID: id.NewSafetyProfileID(), Name: "p", AppID: "app-a", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	return st, ctx
+}
+
 func TestRegisterWiresAppMetricsAndTracing(t *testing.T) {
 	prevTP, prevProp := otel.GetTracerProvider(), otel.GetTextMapPropagator()
 	t.Cleanup(func() {
@@ -64,18 +79,18 @@ func TestRegisterWiresAppMetricsAndTracing(t *testing.T) {
 	if err := forge.RegisterSpanProcessor(app, rec); err != nil {
 		t.Fatal(err)
 	}
-	e := New(WithPlugin(failingStart{}))
+	st, ctx := scanCtx(t)
+	e := New(WithPlugin(failingStart{}), WithStore(st))
 	if err := e.Register(app); err != nil {
 		t.Fatal(err)
 	}
 
-	ctx := context.Background()
 	for range 2 {
-		if _, err := e.Engine().ScanInput(ctx, &scan.Input{Text: "hello"}); err != nil {
+		if _, err := e.Engine().ScanInput(ctx, &scan.Input{Text: "hello", Profile: "p"}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if _, err := e.Engine().ScanOutput(ctx, &scan.Input{Text: "hello"}); err != nil {
+	if _, err := e.Engine().ScanOutput(ctx, &scan.Input{Text: "hello", Profile: "p"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -115,11 +130,12 @@ func TestRegisterWiresAppMetricsAndTracing(t *testing.T) {
 func TestEngineOptionCanTurnMetricsOff(t *testing.T) {
 	app := forge.New(forge.WithAppName("shield-metrics-off"), forge.WithAppLogger(forge.NewNoopLogger()),
 		forge.WithEnableConfigAutoDiscovery(false))
-	e := New(WithEngineOption(engine.WithMetrics(nil)))
+	st, ctx := scanCtx(t)
+	e := New(WithEngineOption(engine.WithMetrics(nil)), WithStore(st))
 	if err := e.Register(app); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.Engine().ScanInput(context.Background(), &scan.Input{Text: "hello"}); err != nil {
+	if _, err := e.Engine().ScanInput(ctx, &scan.Input{Text: "hello", Profile: "p"}); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(scrape(t, app), "forge_shield_") {

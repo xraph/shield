@@ -15,9 +15,13 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/xraph/shield"
+	"github.com/xraph/shield/awareness"
 	"github.com/xraph/shield/id"
+	"github.com/xraph/shield/internal/shieldtest"
+	"github.com/xraph/shield/profile"
 	"github.com/xraph/shield/scan"
 	"github.com/xraph/shield/store"
+	"github.com/xraph/shield/store/sqlite"
 )
 
 // secret stands in for anything that must never reach a span: scanned text,
@@ -85,6 +89,8 @@ func (hookPlugin) OnScanCompleted(context.Context, id.ScanID, string, int, time.
 	return nil
 }
 
+// scanStore is a SQLite store whose scan writes return err instead of
+// storing anything.
 type scanStore struct {
 	store.Store
 	err error
@@ -92,13 +98,30 @@ type scanStore struct {
 
 func (s scanStore) CreateScan(context.Context, *scan.Result) error { return s.err }
 
+// profiledStore returns a store holding profile "p" for tenant and app, with
+// a PII awareness detector that redacts.
+func profiledStore(t *testing.T, tenant, app string) *sqlite.Store {
+	t.Helper()
+	st := shieldtest.Store(t)
+	ctx := shieldtest.Ctx(tenant, app)
+	if err := st.CreateAwareness(ctx, &awareness.Awareness{ID: id.NewAwarenessID(), Name: "pii", AppID: app, Focus: awareness.FocusPII, Action: "redact", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	p := &profile.SafetyProfile{ID: id.NewSafetyProfileID(), Name: "p", AppID: app, Enabled: true,
+		Awareness: []profile.AwarenessAssignment{{AwarenessName: "pii"}}}
+	if err := st.CreateProfile(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	return st
+}
+
 func TestScanRunsUnderOneSpanWithPluginHooksNested(t *testing.T) {
 	rec := recordSpans(t)
-	e, _ := New(WithPlugin(hookPlugin{startErr: errors.New("plugin rejected " + secret)}), WithStore(scanStore{}))
+	e, _ := New(WithPlugin(hookPlugin{startErr: errors.New("plugin rejected " + secret)}), WithStore(scanStore{Store: profiledStore(t, secret, secret)}))
 
 	ctx, parent := otel.Tracer("test").Start(context.Background(), "handle request")
 	ctx = shield.WithTenant(shield.WithApp(ctx, secret), secret)
-	res, err := e.ScanInput(ctx, &scan.Input{Text: "my email is " + secret})
+	res, err := e.ScanInput(ctx, &scan.Input{Text: "my email is " + secret, Profile: "p"})
 	parent.End()
 	if err != nil {
 		t.Fatal(err)
@@ -119,9 +142,9 @@ func TestScanRunsUnderOneSpanWithPluginHooksNested(t *testing.T) {
 	want := map[attribute.Key]any{
 		"shield.scan.id":        res.ID.String(),
 		"shield.scan.direction": "input",
-		"shield.scan.decision":  "allow",
+		"shield.scan.decision":  "redact",
 		"shield.scan.blocked":   false,
-		"shield.scan.findings":  int64(0),
+		"shield.scan.findings":  int64(1),
 		"shield.scan.persisted": true,
 	}
 	for k, v := range want {
@@ -171,8 +194,9 @@ func TestScanRunsUnderOneSpanWithPluginHooksNested(t *testing.T) {
 
 func TestScanSpanMarksAFailedStoreWrite(t *testing.T) {
 	rec := recordSpans(t)
-	e, _ := New(WithStore(scanStore{err: errors.New("insert failed for " + secret)}))
-	if _, err := e.ScanOutput(context.Background(), &scan.Input{Text: secret}); err != nil {
+	st := profiledStore(t, "tenant-a", "app-a")
+	e, _ := New(WithStore(scanStore{Store: st, err: errors.New("insert failed for " + secret)}))
+	if _, err := e.ScanOutput(shieldtest.Ctx("tenant-a", "app-a"), &scan.Input{Text: secret, Profile: "p"}); err != nil {
 		t.Fatal("a failed store write must not fail the scan:", err)
 	}
 	scans := spansNamed(rec, "scan content")
@@ -196,13 +220,55 @@ func TestScanSpanMarksAFailedStoreWrite(t *testing.T) {
 	assertNoSecret(t, rec)
 }
 
-func TestScanWithoutStoreLeavesPersistedUnset(t *testing.T) {
+func TestFailedScanMarksTheSpanAndPersistsNothing(t *testing.T) {
 	rec := recordSpans(t)
 	e, _ := New()
-	if _, err := e.ScanInput(context.Background(), &scan.Input{Text: "hello"}); err != nil {
-		t.Fatal(err)
+	_, err := e.ScanInput(shieldtest.Ctx(secret, secret), &scan.Input{Text: "hello " + secret, Profile: "p"})
+	if !errors.Is(err, shield.ErrNoStore) {
+		t.Fatalf("err = %v", err)
 	}
-	if _, ok := attrs(spansNamed(rec, "scan content")[0])["shield.scan.persisted"]; ok {
-		t.Error("persisted set with no store configured")
+	sp := spansNamed(rec, "scan content")[0]
+	if sp.Status().Code != codes.Error || sp.Status().Description != "scan_failed" {
+		t.Errorf("status = %v", sp.Status())
 	}
+	if _, ok := attrs(sp)["shield.scan.persisted"]; ok {
+		t.Error("persisted set on a failed scan")
+	}
+	assertNoSecret(t, rec)
+}
+
+func TestProfileAndLayersRunUnderTheScanSpan(t *testing.T) {
+	rec := recordSpans(t)
+	e, _ := New(WithStore(profiledStore(t, secret, secret)))
+	ctx := shieldtest.Ctx(secret, secret)
+	for range 2 {
+		if _, err := e.ScanInput(ctx, &scan.Input{Text: "mail " + secret, Profile: "p", Source: secret, Untrusted: true}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	scans := spansNamed(rec, "scan content")
+	resolves := spansNamed(rec, "resolve profile")
+	if len(scans) != 2 || len(resolves) != 2 {
+		t.Fatalf("scan spans %d, resolve spans %d", len(scans), len(resolves))
+	}
+	for i, want := range []bool{false, true} {
+		if got := attrs(resolves[i])["shield.profile.cached"].AsBool(); got != want {
+			t.Errorf("scan %d cached = %v, want %v", i, got, want)
+		}
+		if resolves[i].Parent().SpanID() != scans[i].SpanContext().SpanID() {
+			t.Errorf("resolve span %d is not a child of its scan span", i)
+		}
+	}
+	var layers []string
+	for _, l := range spansNamed(rec, "evaluate layer") {
+		if l.Parent().SpanID() != scans[0].SpanContext().SpanID() {
+			continue
+		}
+		layers = append(layers, attrs(l)["shield.scan.layer"].AsString())
+	}
+	want := []string{"instinct", "awareness", "boundary", "values", "judgment", "reflex"}
+	if strings.Join(layers, ",") != strings.Join(want, ",") {
+		t.Errorf("layers = %v, want %v", layers, want)
+	}
+	assertNoSecret(t, rec)
 }

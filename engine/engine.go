@@ -10,8 +10,8 @@
 //	Layer 5: JUDGMENT     (contextual, <500ms) — Grounding, Relevance, Compliance
 //	Layer 6: REFLEXES     (policy, <10ms)      — Custom condition→action rules
 //
-// Each layer can short-circuit: if instincts detect a prompt injection
-// with high confidence, the engine skips deeper layers.
+// Every scan runs inside a tenant and evaluates one safety profile of that
+// tenant, compiled from the store and cached (see Config.ProfileCacheTTL).
 package engine
 
 import (
@@ -54,6 +54,7 @@ type Engine struct {
 	config   shield.Config
 	logger   log.Logger
 	metrics  gometrics.Metrics
+	profiles *profileCache
 
 	scansCompleted *telemetry.CounterVec
 	scanDuration   *telemetry.HistogramVec
@@ -97,9 +98,16 @@ func New(opts ...Option) (*Engine, error) {
 		registry: plugin.NewRegistry(log.NewNoopLogger()),
 		config:   shield.DefaultConfig(),
 		logger:   log.NewNoopLogger(),
+		profiles: newProfileCache(),
 	}
 	for _, opt := range opts {
 		opt(e)
+	}
+	if e.config.MaxScanBytes <= 0 {
+		e.config.MaxScanBytes = shield.DefaultMaxScanBytes
+	}
+	if e.config.ProfileCacheTTL == 0 {
+		e.config.ProfileCacheTTL = shield.DefaultProfileCacheTTL
 	}
 	e.registry.SetLogger(e.logger)
 	e.registry.SetMetrics(e.metrics)
@@ -113,22 +121,33 @@ func New(opts ...Option) (*Engine, error) {
 
 // ScanInput runs a safety scan on input content (user→agent).
 func (e *Engine) ScanInput(ctx context.Context, input *scan.Input) (*scan.Result, error) {
+	if input == nil {
+		return nil, shield.ErrInvalidInput
+	}
 	input.Direction = scan.DirectionInput
 	return e.executeScan(ctx, input)
 }
 
 // ScanOutput runs a safety scan on output content (agent→user).
 func (e *Engine) ScanOutput(ctx context.Context, input *scan.Input) (*scan.Result, error) {
+	if input == nil {
+		return nil, shield.ErrInvalidInput
+	}
 	input.Direction = scan.DirectionOutput
 	return e.executeScan(ctx, input)
 }
 
 // executeScan runs the layered safety evaluation.
 //
+// It checks, in order, the context tenant, the size limit and the store,
+// then resolves the profile named by the input (or Config.DefaultProfile)
+// and runs the layers. Any error fires the ScanFailed hook, marks the scan
+// span failed and persists nothing.
+//
 // The scan runs under a "scan content" span. Its attributes are counts,
-// enums and the scan ID; the scanned text, findings and tenant never go on
-// it. Plugin hooks and the store write nest under it, and so will each
-// layer once it exists.
+// enums and the scan ID; the scanned text, findings, tenant and profile name
+// never go on it. Profile resolution, each layer, plugin hooks and the
+// store write nest under it.
 func (e *Engine) executeScan(ctx context.Context, input *scan.Input) (*scan.Result, error) {
 	start := time.Now()
 	scanID := id.NewScanID()
@@ -139,58 +158,29 @@ func (e *Engine) executeScan(ctx context.Context, input *scan.Input) (*scan.Resu
 	))
 	defer span.End()
 
-	result := &scan.Result{
-		ID:        scanID,
-		Direction: input.Direction,
-		Decision:  scan.DecisionAllow,
-		TenantID:  shield.TenantFromContext(ctx),
-		AppID:     shield.AppFromContext(ctx),
-	}
-
-	// Emit scan started
 	e.registry.EmitScanStarted(ctx, scanID, string(input.Direction), input.Text)
 
-	// Each layer below, once implemented, gets a child span of ctx with a
-	// shield.scan.layer attribute naming it (instincts, awareness,
-	// boundaries, values, judgments, reflexes).
-
-	// Layer 1: INSTINCTS — fastest, pre-conscious threat detection
-	// TODO: Execute registered instincts
-
-	// Layer 2: AWARENESS — perception, what you notice
-	// TODO: Execute registered awareness detectors
-
-	// Layer 3: BOUNDARIES — hard limits, binary check
-	// TODO: Execute registered boundaries
-
-	// Layer 4: VALUES — ethical evaluation
-	// TODO: Execute registered values
-
-	// Layer 5: JUDGMENT — contextual assessment
-	// TODO: Execute registered judgments
-
-	// Layer 6: REFLEXES — policy-driven condition→action
-	// TODO: Execute registered reflexes
-
+	result, err := e.evaluate(ctx, scanID, input)
+	if err != nil {
+		e.registry.EmitScanFailed(ctx, scanID, err)
+		telemetry.Fail(span, "scan_failed", err)
+		return nil, err
+	}
 	result.Duration = time.Since(start)
 
-	// Emit scan completed
 	e.registry.EmitScanCompleted(ctx, scanID, string(result.Decision), len(result.Findings), result.Duration)
-
 	if result.Blocked {
-		e.registry.EmitScanBlocked(ctx, scanID, string(result.Decision))
+		e.registry.EmitScanBlocked(ctx, scanID, result.Reason())
 	}
 
 	// Persist result. A failed write doesn't fail the scan, but the span
 	// says so: the dashboard will never show this scan.
-	if e.store != nil {
-		persistErr := e.store.CreateScan(ctx, result)
-		if persistErr != nil {
-			e.logger.Warn("engine: failed to persist scan result", log.String("scan_id", scanID.String()), log.Error(persistErr))
-			telemetry.Fail(span, "persist_failed", persistErr)
-		}
-		span.SetAttributes(attribute.Bool("shield.scan.persisted", persistErr == nil))
+	persistErr := e.persist(ctx, result)
+	if persistErr != nil {
+		e.logger.Warn("engine: failed to persist scan result", log.String("scan_id", scanID.String()), log.Error(persistErr))
+		telemetry.Fail(span, "persist_failed", persistErr)
 	}
+	span.SetAttributes(attribute.Bool("shield.scan.persisted", persistErr == nil))
 
 	span.SetAttributes(
 		attribute.String("shield.scan.decision", string(result.Decision)),
@@ -202,6 +192,101 @@ func (e *Engine) executeScan(ctx context.Context, input *scan.Input) (*scan.Resu
 	e.scanDuration.Observe(time.Since(start).Seconds(), direction, decision)
 
 	return result, nil
+}
+
+// evaluate checks the scan's preconditions, resolves its profile and runs
+// the layers.
+func (e *Engine) evaluate(ctx context.Context, scanID id.ScanID, input *scan.Input) (*scan.Result, error) {
+	tenant, err := store.Tenant(ctx, "")
+	if err != nil {
+		return nil, err
+	}
+	if len(input.Text) > e.config.MaxScanBytes {
+		return nil, shield.ErrInputTooLarge
+	}
+	if e.store == nil {
+		return nil, shield.ErrNoStore
+	}
+	name := input.Profile
+	if name == "" {
+		name = e.config.DefaultProfile
+	}
+	if name == "" {
+		return nil, shield.ErrNoProfile
+	}
+	app := shield.AppFromContext(ctx)
+	compiled, err := e.resolveProfile(ctx, tenant, app, name)
+	if err != nil {
+		return nil, err
+	}
+	e.registry.EmitSafetyProfileResolved(ctx, scanID, compiled.name)
+
+	ev := &evaluation{scanID: scanID, input: input, profile: compiled}
+	for _, layer := range []struct {
+		name string
+		run  func(context.Context, *evaluation)
+	}{
+		{layerInstinct, e.runInstincts},
+		{layerAwareness, e.runAwareness},
+		{layerBoundary, e.runBoundaries},
+		{layerValues, e.runValues},
+		{layerJudgment, e.runJudgments},
+		{layerReflex, e.runReflexes},
+	} {
+		e.evaluateLayer(ctx, ev, layer.name, layer.run)
+	}
+
+	result := &scan.Result{
+		ID:           scanID,
+		Direction:    input.Direction,
+		TenantID:     tenant,
+		AppID:        app,
+		ProfileUsed:  compiled.name,
+		PoliciesUsed: []string{},
+		PIICount:     ev.piiCount(),
+		Metadata:     ev.metadata(),
+	}
+	ev.decide(result)
+	if !result.Blocked {
+		for _, t := range ev.piiRedacted {
+			e.registry.EmitPIIRedacted(ctx, scanID, t.typ, t.count)
+		}
+	}
+	return result, nil
+}
+
+// evaluateLayer runs one layer under an "evaluate layer" span.
+func (*Engine) evaluateLayer(ctx context.Context, ev *evaluation, name string, run func(context.Context, *evaluation)) {
+	ctx, span := telemetry.Tracer().Start(ctx, "evaluate layer", trace.WithAttributes(
+		attribute.String("shield.scan.layer", name),
+	))
+	defer span.End()
+	before := len(ev.findings)
+	run(ctx, ev)
+	span.SetAttributes(attribute.Int("shield.scan.findings", len(ev.findings)-before))
+}
+
+// persist stores the result. Unless Config.StoreRedacted is set the stored
+// row drops Redacted, and nil collections are stored empty.
+func (e *Engine) persist(ctx context.Context, result *scan.Result) error {
+	stored := *result
+	if !e.config.StoreRedacted {
+		stored.Redacted = ""
+	}
+	if stored.Findings == nil {
+		stored.Findings = []*scan.Finding{}
+	}
+	if stored.PoliciesUsed == nil {
+		stored.PoliciesUsed = []string{}
+	}
+	if stored.Metadata == nil {
+		stored.Metadata = map[string]any{}
+	}
+	if err := e.store.CreateScan(ctx, &stored); err != nil {
+		return err
+	}
+	result.Entity = stored.Entity
+	return nil
 }
 
 // Health checks the health of the engine by pinging its store.

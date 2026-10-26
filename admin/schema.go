@@ -55,9 +55,9 @@ func list(key string, children ...Field) Field {
 
 var sensitivity = []string{"paranoid", "cautious", "balanced", "relaxed", "permissive"}
 var domains = []string{"grounding", "relevance", "consistency", "compliance", "custom"}
-var focus = []string{"pii", "topic", "sentiment", "intent", "language", "custom"}
+var focus = []string{"pii", "secrets", "topic", "sentiment", "intent", "language", "custom"}
 var Schemas = map[string][]Field{
-	"instincts":  {required("category", "injection", "exfiltration", "manipulation", "jailbreak"), required("sensitivity", sensitivity...), required("action", "block", "flag", "alert"), list("strategies", field("name", "text"), field("weight", "number"), field("config", "json"))},
+	"instincts":  {required("category", "injection", "exfiltration", "manipulation", "jailbreak"), required("sensitivity", sensitivity...), required("action", "block", "flag", "alert", "redact", "quote"), list("strategies", field("name", "text"), field("weight", "number"), field("config", "json"))},
 	"awareness":  {required("focus", focus...), required("action", "redact", "flag", "block", "vault"), list("detectors", field("name", "text"), required("focus", focus...), field("patterns", "tags"), field("config", "json"))},
 	"boundaries": {field("response", "textarea"), list("limits", required("scope", "topic", "action", "data", "output", "custom"), field("deny", "tags"), field("allow", "tags"), field("use_allow", "boolean"))},
 	"values":     {required("severity", "info", "warning", "error", "critical"), required("action", "block", "flag", "warn"), list("rules", required("principle", "toxicity", "brand_safety", "honesty", "respect", "safety", "privacy", "custom"), field("threshold", "number"), field("categories", "tags"), field("guidelines", "tags"), field("config", "json"))},
@@ -236,9 +236,9 @@ func validateFilter(kind, field, value string) error {
 		return nil
 	}
 	if kind == "scans" {
-		opts := []string{"allow", "block", "flag", "redact"}
+		opts := []string{"allow", "block", "flag", "redact", "require_approval"}
 		if field == "direction" {
-			opts = []string{"input", "output"}
+			opts = []string{"input", "output", "tool_call"}
 		}
 		for _, v := range opts {
 			if v == value {

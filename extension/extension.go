@@ -111,6 +111,8 @@ func (e *Extension) Register(fapp forge.App) error {
 		engine.WithConfig(shield.Config{
 			DefaultProfile: e.config.DefaultProfile, ShutdownTimeout: e.config.ShutdownTimeout,
 			ScanConcurrency: e.config.ScanConcurrency, EnableShortCircuit: e.config.EnableShortCircuit,
+			MaxScanBytes: e.config.MaxScanBytes, ProfileCacheTTL: e.config.ProfileCacheTTL,
+			StoreRedacted: e.config.StoreRedacted,
 		}),
 		engine.WithLogger(e.Logger()),
 		engine.WithMetrics(e.Metrics()),
@@ -243,6 +245,12 @@ func (e *Extension) mergeWithDefaults(cfg Config) Config {
 	if cfg.ScanConcurrency == 0 {
 		cfg.ScanConcurrency = defaults.ScanConcurrency
 	}
+	if cfg.MaxScanBytes == 0 {
+		cfg.MaxScanBytes = defaults.MaxScanBytes
+	}
+	if cfg.ProfileCacheTTL == 0 {
+		cfg.ProfileCacheTTL = defaults.ProfileCacheTTL
+	}
 	return cfg
 }
 
@@ -258,6 +266,9 @@ func (e *Extension) mergeConfigurations(yamlConfig, programmaticConfig Config) C
 	}
 	if programmaticConfig.EnableShortCircuit {
 		yamlConfig.EnableShortCircuit = true
+	}
+	if programmaticConfig.StoreRedacted {
+		yamlConfig.StoreRedacted = true
 	}
 
 	// String fields: YAML takes precedence.
@@ -277,6 +288,12 @@ func (e *Extension) mergeConfigurations(yamlConfig, programmaticConfig Config) C
 	}
 	if yamlConfig.ScanConcurrency == 0 && programmaticConfig.ScanConcurrency != 0 {
 		yamlConfig.ScanConcurrency = programmaticConfig.ScanConcurrency
+	}
+	if yamlConfig.MaxScanBytes == 0 && programmaticConfig.MaxScanBytes != 0 {
+		yamlConfig.MaxScanBytes = programmaticConfig.MaxScanBytes
+	}
+	if yamlConfig.ProfileCacheTTL == 0 && programmaticConfig.ProfileCacheTTL != 0 {
+		yamlConfig.ProfileCacheTTL = programmaticConfig.ProfileCacheTTL
 	}
 
 	// Fill remaining zeros with defaults.

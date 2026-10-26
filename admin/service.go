@@ -160,7 +160,20 @@ func (s *Service) Create(ctx context.Context, a Actor, kind string, raw json.Raw
 	if err != nil {
 		return nil, err
 	}
-	return s.db.DashboardCreate(ctx, a.Scope, kind, b)
+	created, err := s.db.DashboardCreate(ctx, a.Scope, kind, b)
+	if err != nil {
+		return nil, err
+	}
+	s.invalidate(a)
+	return created, nil
+}
+
+// invalidate drops the actor tenant's cached safety profiles after a
+// successful write, so the next scan evaluates the new rows.
+func (s *Service) invalidate(a Actor) {
+	if s.engine != nil {
+		s.engine.InvalidateProfiles(a.Scope.TenantID)
+	}
 }
 func (s *Service) Update(ctx context.Context, a Actor, kind, key string, raw json.RawMessage, expectedRevision ...string) (json.RawMessage, error) {
 	s.mu.Lock()
@@ -209,7 +222,12 @@ func (s *Service) Update(ctx context.Context, a Actor, kind, key string, raw jso
 	if err != nil {
 		return nil, err
 	}
-	return s.db.DashboardUpdate(ctx, a.Scope, kind, key, b)
+	updated, err := s.db.DashboardUpdate(ctx, a.Scope, kind, key, b)
+	if err != nil {
+		return nil, err
+	}
+	s.invalidate(a)
+	return updated, nil
 }
 func (s *Service) Delete(ctx context.Context, a Actor, kind, key string) error {
 	s.mu.Lock()
@@ -234,7 +252,11 @@ func (s *Service) Delete(ctx context.Context, a Actor, kind, key string) error {
 			return &Error{Code: "CONFLICT", Message: "Update referencing profiles before deleting this configuration", Fields: map[string]string{"references": strings.Join(refs, ", ")}}
 		}
 	}
-	return s.db.DashboardDelete(ctx, a.Scope, kind, key)
+	if deleteErr := s.db.DashboardDelete(ctx, a.Scope, kind, key); deleteErr != nil {
+		return deleteErr
+	}
+	s.invalidate(a)
+	return nil
 }
 func (s *Service) References(ctx context.Context, a Actor, kind, name string) ([]string, error) {
 	if err := a.Check(false); err != nil {

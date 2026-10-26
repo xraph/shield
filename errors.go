@@ -37,6 +37,11 @@ var (
 	ErrNoProfile     = errors.New("shield: no safety profile configured")
 	ErrInvalidConfig = errors.New("shield: invalid configuration")
 
+	// Evaluation errors.
+	ErrProfileInvalid = errors.New("shield: safety profile is invalid")
+	ErrInputTooLarge  = errors.New("shield: input exceeds the scan size limit")
+	ErrInvalidInput   = errors.New("shield: invalid scan input")
+
 	// PII errors.
 	ErrEncryptionKeyMissing = errors.New("shield: pii encryption key not configured")
 

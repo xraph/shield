@@ -143,10 +143,11 @@ func handler(deps Deps, intent string) dispatcher.Handler {
 			data = s.Engine().Config()
 			err = a.Check(false)
 		case "overview", "layers.summary":
+			evaluation := s.Engine().Capabilities().Evaluation
 			sections := []map[string]any{}
 			for _, kind := range []string{"instincts", "awareness", "boundaries", "values", "judgments", "reflexes", "profiles", "policies", "scans", "compliance"} {
 				page, e := s.List(ctx, a, kind, store.Filter{Limit: 1})
-				section := map[string]any{"collection": kind, "available": e == nil, "evaluation_available": false, "refreshed_at": time.Now().UTC()}
+				section := map[string]any{"collection": kind, "available": e == nil, "evaluation_available": evaluation, "refreshed_at": time.Now().UTC()}
 				if e == nil {
 					section["total"] = page.Total
 				} else {
@@ -154,7 +155,7 @@ func handler(deps Deps, intent string) dispatcher.Handler {
 				}
 				sections = append(sections, section)
 			}
-			data = map[string]any{"sections": sections, "evaluation_available": false, "refreshed_at": time.Now().UTC()}
+			data = map[string]any{"sections": sections, "evaluation_available": evaluation, "refreshed_at": time.Now().UTC()}
 			err = a.Check(false)
 		case "scans.stats":
 			counts := map[string]int64{}

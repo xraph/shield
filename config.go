@@ -16,7 +16,26 @@ type Config struct {
 	// EnableShortCircuit allows layers to stop execution when a block decision
 	// is reached, skipping deeper layers. Enabled by default.
 	EnableShortCircuit bool `json:"enable_short_circuit,omitempty"`
+
+	// MaxScanBytes is the largest text a scan accepts. A longer text fails
+	// with ErrInputTooLarge before any layer runs. Zero means 1 MiB.
+	MaxScanBytes int `json:"max_scan_bytes,omitempty"`
+
+	// ProfileCacheTTL is how long a compiled safety profile is reused before
+	// it is loaded again. Zero means 30 seconds; a negative value disables
+	// the cache, so every scan loads its profile.
+	ProfileCacheTTL time.Duration `json:"profile_cache_ttl,omitempty"`
+
+	// StoreRedacted keeps Result.Redacted on persisted scans. By default the
+	// stored row drops it.
+	StoreRedacted bool `json:"store_redacted,omitempty"`
 }
+
+// Defaults for the scan limits.
+const (
+	DefaultMaxScanBytes    = 1 << 20
+	DefaultProfileCacheTTL = 30 * time.Second
+)
 
 // DefaultConfig returns a Config with sensible defaults.
 func DefaultConfig() Config {
@@ -24,5 +43,7 @@ func DefaultConfig() Config {
 		ShutdownTimeout:    30 * time.Second,
 		ScanConcurrency:    10,
 		EnableShortCircuit: true,
+		MaxScanBytes:       DefaultMaxScanBytes,
+		ProfileCacheTTL:    DefaultProfileCacheTTL,
 	}
 }
