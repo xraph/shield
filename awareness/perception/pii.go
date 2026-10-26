@@ -344,7 +344,7 @@ func countDigits(s string) int {
 
 // creditCards finds card numbers in the numeric span s[from:to]: 13 to 19
 // digits in whole groups of a digit run, Luhn-valid, not one repeated digit,
-// and starting like a card issuer (2, 3, 4, 5 or 6). Groups glued to a
+// with an issuer prefix and a length that issuer uses. Groups glued to a
 // letter never start or end a number, so the digits of an identifier are
 // not read as a card.
 func creditCards(c *collector, from, to, digits int) {
@@ -427,12 +427,35 @@ func cardEnd(s string, groups [][2]int, g, last int) int {
 	return -1
 }
 
-// validCard checks a card number's issuer digit, Luhn sum and that it is
-// not one repeated digit.
+// issuerLength reports whether d starts like a card issuer's numbers and has
+// a length that issuer uses: Visa 4 (13, 16, 19), Mastercard 51 to 55 and
+// 2221 to 2720 (16), Amex 34 and 37 (15), Discover 6011, 644 to 649 and 65,
+// UnionPay 62 and JCB 3528 to 3589 (16 to 19), Diners 300 to 305, 36, 38 and
+// 39 (14 to 19). Decimal IDs such as trace IDs rarely fit.
+func issuerLength(d []byte) bool {
+	n := len(d)
+	p2 := int(d[0]-'0')*10 + int(d[1]-'0')
+	p3 := p2*10 + int(d[2]-'0')
+	p4 := p3*10 + int(d[3]-'0')
+	switch {
+	case d[0] == '4':
+		return n == 13 || n == 16 || n == 19
+	case p2 >= 51 && p2 <= 55, p4 >= 2221 && p4 <= 2720:
+		return n == 16
+	case p2 == 34, p2 == 37:
+		return n == 15
+	case p4 == 6011, p3 >= 644 && p3 <= 649, p2 == 65, p2 == 62, p4 >= 3528 && p4 <= 3589:
+		return n >= 16 && n <= 19
+	case p3 >= 300 && p3 <= 305, p2 == 36, p2 == 38, p2 == 39:
+		return n >= 14 && n <= 19
+	}
+	return false
+}
+
+// validCard checks a card number's issuer prefix and length, Luhn sum and
+// that it is not one repeated digit.
 func validCard(d []byte) bool {
-	switch d[0] {
-	case '2', '3', '4', '5', '6':
-	default:
+	if !issuerLength(d) {
 		return false
 	}
 	repeated := true

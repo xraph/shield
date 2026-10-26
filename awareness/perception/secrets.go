@@ -1,12 +1,9 @@
 package perception
 
 import (
-	"encoding/base64"
 	"regexp"
 	"slices"
 	"strings"
-	"unicode"
-	"unicode/utf8"
 )
 
 // Built-in secret detector names. The names avoid the words gosec reads as
@@ -68,9 +65,10 @@ func scanSecrets(c *collector, detectors []string, entropy bool) {
 	}
 	if enabled(detectors, detConnection) {
 		connectionStrings(c)
+		mysqlDSNs(c)
 	}
-	if enabled(detectors, detAssignment) {
-		assignments(c)
+	if aws, generic := enabled(detectors, detAWSSecret), enabled(detectors, detAssignment); aws || generic {
+		assignments(c, aws, generic)
 	}
 	if entropy && enabled(detectors, detHighEntropy) {
 		highEntropy(c)
@@ -97,9 +95,6 @@ type format struct {
 var formats = []format{
 	{name: detAWSAccess, typ: "AWS_ACCESS_KEY", hints: []string{"AKIA", "ASIA", "ABIA", "ACCA", "A3T"},
 		re: regexp.MustCompile(`(?:AKIA|ASIA|ABIA|ACCA|A3T[A-Z0-9])[A-Z0-9]{16}`), glued: true, exact: true},
-	{name: detAWSSecret, typ: "AWS_SECRET_KEY", hints: []string{"aws", "AWS", "Aws"},
-		re:    regexp.MustCompile(`(?i:aws)[A-Za-z0-9_.\-]{0,20}(?i:secret)[A-Za-z0-9_.\-]{0,20}["']?[ \t]*(?::=|=>|[:=])[ \t]*["']?(?P<secret>[A-Za-z0-9/+]{40})`),
-		exact: true, tail: "/+="},
 	{name: detGitHub, typ: "GITHUB_TOKEN", hints: []string{"ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_"},
 		re: regexp.MustCompile(`gh[pousr]_[A-Za-z0-9]{36,251}|github_pat_[A-Za-z0-9_]{82,}`), glued: true},
 	{name: detGitLab, typ: "GITLAB_TOKEN", hints: []string{"glpat-", "gldt-", "glrt-", "glptt-", "glsoat-", "glcbt-"},
@@ -192,19 +187,28 @@ func privateKeys(c *collector) {
 }
 
 // pemBodyEnd returns where the body of a PEM block that starts at from ends:
-// after its last armor header or base64 line.
+// after its last armor header or base64 line. Lines break at a newline, or
+// at a literal "\n" when the key sits escaped in a JSON or YAML string. A
+// cut-off last line still counts when it opens with 16 or more base64
+// characters, or with any before the closing quote or backslash of an
+// escaped string.
 func pemBodyEnd(s string, from int) int {
 	end, i := from, from
-	if at(s, i) == '\r' {
+	sep := "\n"
+	switch {
+	case strings.HasPrefix(s[i:], "\r\n"):
+		i += 2
+	case at(s, i) == '\n':
 		i++
-	}
-	if at(s, i) != '\n' {
+	case strings.HasPrefix(s[i:], `\n`):
+		sep = `\n`
+		i += 2
+	default:
 		return end
 	}
-	i++
 	body := false
 	for i < len(s) {
-		lineEnd := strings.IndexByte(s[i:], '\n')
+		lineEnd := strings.Index(s[i:], sep)
 		if lineEnd < 0 {
 			lineEnd = len(s)
 		} else {
@@ -220,9 +224,16 @@ func pemBodyEnd(s string, from int) int {
 			body = true
 			end = i + len(line)
 		default:
+			n := 0
+			for n < len(line) && isBase64Byte(line[n]) {
+				n++
+			}
+			if n >= 16 || n > 0 && (at(line, n) == '"' || at(line, n) == '\\') {
+				end = i + n
+			}
 			return end
 		}
-		i = lineEnd + 1
+		i = lineEnd + len(sep)
 	}
 	return end
 }
@@ -288,6 +299,33 @@ func connectionStrings(c *collector) {
 	}
 }
 
+// dsnHosts follow the password of a Go MySQL DSN such as
+// app:PASSWORD@tcp(db:3306)/app, which has no scheme.
+var dsnHosts = []string{"@tcp(", "@unix("}
+
+// mysqlDSNs records the password of every Go MySQL DSN.
+func mysqlDSNs(c *collector) {
+	s := c.s
+	for _, host := range dsnHosts {
+		for from := 0; from < len(s); {
+			i := strings.Index(s[from:], host)
+			if i < 0 {
+				break
+			}
+			i += from
+			from = i + len(host)
+			pw := i
+			for pw > 0 && i-pw < 256 && !isSpaceOrQuote(s[pw-1]) && strings.IndexByte(":@/", s[pw-1]) < 0 {
+				pw--
+			}
+			if pw == i || at(s, pw-1) != ':' || !isKeyByte(at(s, pw-2)) || isPlaceholder(s[pw:i]) {
+				continue
+			}
+			c.add(detConnection, "CONNECTION_STRING", scoreKnown, pw, i)
+		}
+	}
+}
+
 // scanUntil returns the offset of the first byte from i on that is a space,
 // a quote or in stops, looking at most 256 bytes ahead.
 func scanUntil(s string, i int, stops string) int {
@@ -335,7 +373,10 @@ var keyEndings = []string{
 // a key holding a key word, ':' or '=' (or ":=", "=>", "=="), optional
 // quotes, then a value of eight or more non-space characters with entropy
 // of at least 3. Placeholders, numbers, code and paths are not values.
-func assignments(c *collector) {
+// With aws set it also records an AWS secret access key: an assignment to a
+// key holding "aws" then "secret" of exactly 40 base64 characters, scored as
+// a known format.
+func assignments(c *collector, aws, generic bool) {
 	s := c.s
 	for i := 0; i < len(s); {
 		k := strings.IndexAny(s[i:], ":=")
@@ -351,20 +392,59 @@ func assignments(c *collector) {
 		case s[op] == ':' && at(s, op+1) == '=', s[op] == '=' && (at(s, op+1) == '>' || at(s, op+1) == '='):
 			opEnd++
 		}
-		if !credentialKey(keyBefore(s, op)) {
+		key, keyStart := keyBefore(s, op)
+		awsKey := aws && isAWSSecretKey(key)
+		// In "arn:aws:secretsmanager:...:secret:name" the ':' joins
+		// segments; it is not an assignment.
+		credential := generic && credentialKey(key) && (s[op] != ':' || at(s, keyStart-1) != ':')
+		if !awsKey && !credential {
 			continue
 		}
 		start, end := valueAfter(s, opEnd)
 		i = max(i, end)
-		if v := s[start:end]; isCredentialValue(v) {
+		v := s[start:end]
+		if awsKey && len(v) == 40 && isStdBase64(v) {
+			c.add(detAWSSecret, "AWS_SECRET_KEY", scoreKnown, start, end)
+		}
+		if credential && isCredentialValue(v) {
 			c.add(detAssignment, "GENERIC_ASSIGNMENT", scoreAssignment, start, end)
 		}
 	}
 }
 
-// keyBefore returns the key that ends just before the operator at op,
-// skipping blanks and a closing quote, at most 64 bytes long.
-func keyBefore(s string, op int) string {
+// isAWSSecretKey reports whether key names an AWS secret access key: "aws",
+// then "secret" at most 20 bytes later, then at most 20 more bytes, in any
+// case, as in AWS_SECRET_ACCESS_KEY or aws_secret_key.
+func isAWSSecretKey(key string) bool {
+	lower := strings.ToLower(key)
+	for from := 0; ; {
+		i := strings.Index(lower[from:], "aws")
+		if i < 0 {
+			return false
+		}
+		i += from + 3
+		from = i
+		if j := strings.Index(lower[i:min(len(lower), i+20+6)], "secret"); j >= 0 && len(lower)-(i+j+6) <= 20 {
+			return true
+		}
+	}
+}
+
+// isStdBase64 reports whether v is all standard base64 letters, digits, '+'
+// and '/'.
+func isStdBase64(v string) bool {
+	for i := range len(v) {
+		if b := v[i]; !isAlnum(b) && b != '+' && b != '/' {
+			return false
+		}
+	}
+	return true
+}
+
+// keyBefore returns the key that ends just before the operator at op and
+// where it starts, skipping blanks and a closing quote, at most 64 bytes
+// long.
+func keyBefore(s string, op int) (key string, start int) {
 	j := op
 	for j > 0 && (s[j-1] == ' ' || s[j-1] == '\t') {
 		j--
@@ -376,7 +456,7 @@ func keyBefore(s string, op int) string {
 	for k > 0 && j-k < 64 && isKeyByte(s[k-1]) {
 		k--
 	}
-	return s[k:j]
+	return s[k:j], k
 }
 
 // isKeyByte reports whether b may appear in an assignment key.
@@ -522,22 +602,45 @@ var placeholderName = regexp.MustCompile(`^\[?[A-Z][A-Z0-9_]*_\d+\]?$`)
 var envReference = regexp.MustCompile(`^(?:\$[A-Za-z_][A-Za-z0-9_]*|%[A-Za-z_][A-Za-z0-9_]*%)$`)
 
 // isPlaceholder reports whether v stands in for a value rather than being
-// one: "${...}", "{{...}}", "$(...)", "<...>", all '*', "xxx...",
-// "changeme", "example", "[REDACTED]", "your...", "$NAME", "%NAME%" and
-// placeholders like "[EMAIL_1]".
+// one: "${...}", "{{...}}", "$(...)", "<...>", all '*', "xxx...", "$NAME",
+// "%NAME%", placeholders like "[EMAIL_1]", or a value made only of
+// placeholder words with at least one marker, such as "changeme",
+// "example-password", "[REDACTED]" or "your_api_key_here". A real value that
+// merely contains such a word, like "Example!2026xyz", is not one.
 func isPlaceholder(v string) bool {
 	lower := strings.ToLower(v)
 	switch {
 	case strings.HasPrefix(v, "${"), strings.HasPrefix(v, "{{"), strings.HasPrefix(v, "$("),
 		strings.HasPrefix(v, "<") && strings.HasSuffix(v, ">"),
 		strings.Trim(v, "*") == "",
-		strings.HasPrefix(lower, "xxx"), strings.HasPrefix(lower, "your"),
-		strings.Contains(lower, "changeme"), strings.Contains(lower, "example"),
-		strings.Contains(lower, "redacted"), strings.Contains(lower, "placeholder"),
+		strings.HasPrefix(lower, "xxx"),
 		envReference.MatchString(v), placeholderName.MatchString(v):
 		return true
 	}
-	return false
+	parts := strings.FieldsFunc(lower, func(r rune) bool { return strings.ContainsRune("-_. []<>", r) })
+	marked := false
+	for _, part := range parts {
+		switch {
+		case slices.Contains(placeholderMarkers, part):
+			marked = true
+		case !slices.Contains(placeholderWords, part):
+			return false
+		}
+	}
+	return marked
+}
+
+// placeholderMarkers are the words that make a value a placeholder.
+var placeholderMarkers = []string{
+	"example", "examples", "changeme", "redacted", "placeholder", "your", "dummy", "sample", "fake",
+	"insert", "replace", "todo",
+}
+
+// placeholderWords may sit next to a marker in a placeholder value.
+var placeholderWords = []string{
+	"my", "here", "value", "secret", "password", "passwd", "pass", "pwd", "token", "key", "api", "access",
+	"auth", "client", "user", "username", "name", "db", "database", "test", "goes", "with", "this", "a", "an",
+	"the", "me", "change",
 }
 
 // isNumber reports whether v is all digits.
@@ -571,237 +674,4 @@ func looksLikePath(v string) bool {
 		}
 	}
 	return true
-}
-
-// digestPrefixes come right before a hash that is not a secret, as in
-// "sha256:<hex>" or go.sum's "h1:<base64>".
-var digestPrefixes = []string{"sha1:", "sha256:", "sha384:", "sha512:", "h1:"}
-
-// sriPrefixes start a subresource-integrity or Nix hash token.
-var sriPrefixes = []string{"sha1-", "sha256-", "sha384-", "sha512-"}
-
-// highEntropy records standalone tokens of 32 or more characters from
-// [A-Za-z0-9+/_\-=.] that mix at least three of lower case, upper case,
-// digits and symbols and carry at least 4.5 bits of entropy per character.
-// Hashes after a digest prefix, SRI hashes, pure hex, UUIDs, numbers and
-// tokens made of words (identifiers, import paths) and SSH public keys are
-// never flagged. A base64 token that decodes to text is flagged only when
-// the decoded text holds a secret, so encoded test vectors pass.
-func highEntropy(c *collector) {
-	s := c.s
-	for i := 0; i < len(s); {
-		if !isTokenByte(s[i]) {
-			i++
-			continue
-		}
-		j := i + 1
-		for j < len(s) && isTokenByte(s[j]) {
-			j++
-		}
-		if j-i >= 32 {
-			entropyToken(c, i, j)
-		}
-		i = j
-	}
-}
-
-// entropyToken checks one token of c.s.
-func entropyToken(c *collector, start, end int) {
-	s := c.s
-	for _, p := range sriPrefixes {
-		if hasPrefixFold(s[start:end], p) {
-			return
-		}
-	}
-	// NAME=value: only the value can be the secret.
-	for k := end - 1; k > start; k-- {
-		if s[k] == '=' && at(s, k+1) != '=' && k+1 < end {
-			start = k + 1
-			break
-		}
-	}
-	for start < end && s[start] == '.' {
-		start++
-	}
-	for end > start && s[end-1] == '.' {
-		end--
-	}
-	tok := s[start:end]
-	if len(tok) < 32 || afterDigestPrefix(s, start) || afterSSHKeyType(s, start) || isHex(tok) || isNumber(tok) || isUUID(tok) {
-		return
-	}
-	if text, ok := decodeText(tok); ok {
-		inner := newCollector(text)
-		scanSecrets(inner, nil, false)
-		if len(inner.matches) > 0 {
-			c.add(detHighEntropy, "HIGH_ENTROPY", scoreEntropy, start, end)
-		}
-		return
-	}
-	if charClasses(tok) < 3 || Entropy(tok) < 4.5 || madeOfWords(tok) {
-		return
-	}
-	c.add(detHighEntropy, "HIGH_ENTROPY", scoreEntropy, start, end)
-}
-
-// isTokenByte reports whether b may appear in a high-entropy token.
-func isTokenByte(b byte) bool {
-	return isAlnum(b) || strings.IndexByte("+/_-=.", b) >= 0
-}
-
-// hasPrefixFold reports whether s starts with the lower-case prefix,
-// ignoring ASCII case.
-func hasPrefixFold(s, prefix string) bool {
-	return len(s) >= len(prefix) && strings.EqualFold(s[:len(prefix)], prefix)
-}
-
-// afterDigestPrefix reports whether s[:i] ends with a digest prefix.
-func afterDigestPrefix(s string, i int) bool {
-	for _, p := range digestPrefixes {
-		if i >= len(p) && strings.EqualFold(s[i-len(p):i], p) {
-			return true
-		}
-	}
-	return false
-}
-
-// sshKeyTypes start the key type word of an SSH public key line, as in
-// "ssh-ed25519 AAAA... user@host".
-var sshKeyTypes = []string{"ssh-", "ecdsa-", "sk-ssh-", "sk-ecdsa-"}
-
-// afterSSHKeyType reports whether the word before the space ahead of s[i]
-// is an SSH public key type.
-func afterSSHKeyType(s string, i int) bool {
-	if at(s, i-1) != ' ' {
-		return false
-	}
-	j := i - 1
-	k := j
-	for k > 0 && j-k < 64 && !isSpaceOrQuote(s[k-1]) {
-		k--
-	}
-	for _, p := range sshKeyTypes {
-		if strings.HasPrefix(s[k:j], p) {
-			return true
-		}
-	}
-	return false
-}
-
-// isHex reports whether v is all hex digits.
-func isHex(v string) bool {
-	for i := range len(v) {
-		b := v[i]
-		if !isDigit(b) && (b < 'a' || b > 'f') && (b < 'A' || b > 'F') {
-			return false
-		}
-	}
-	return true
-}
-
-// isUUID reports whether v is a UUID in 8-4-4-4-12 hex form.
-func isUUID(v string) bool {
-	if len(v) != 36 {
-		return false
-	}
-	for i := range len(v) {
-		if i == 8 || i == 13 || i == 18 || i == 23 {
-			if v[i] != '-' {
-				return false
-			}
-		} else if !isHex(v[i : i+1]) {
-			return false
-		}
-	}
-	return true
-}
-
-// charClasses counts which of lower case, upper case, digits and symbols v
-// holds.
-func charClasses(v string) int {
-	var lower, upper, digit, symbol int
-	for i := range len(v) {
-		switch b := v[i]; {
-		case b >= 'a' && b <= 'z':
-			lower = 1
-		case b >= 'A' && b <= 'Z':
-			upper = 1
-		case isDigit(b):
-			digit = 1
-		default:
-			symbol = 1
-		}
-	}
-	return lower + upper + digit + symbol
-}
-
-// madeOfWords reports whether tok reads as words, such as a camelCase
-// identifier or an import path: at least half of it sits in runs of three or
-// more letters of one case, and at least 30% of its letters are vowels.
-// Fewer than 1% of random 32-character tokens pass both.
-func madeOfWords(tok string) bool {
-	inRuns, letters, vowels := 0, 0, 0
-	for i := 0; i < len(tok); {
-		j := i + 1
-		for j < len(tok) && letterCase(tok[j]) == letterCase(tok[i]) {
-			j++
-		}
-		if letterCase(tok[i]) != 0 && j-i >= 3 {
-			inRuns += j - i
-		}
-		i = j
-	}
-	for i := range len(tok) {
-		if !isLetter(tok[i]) {
-			continue
-		}
-		letters++
-		if strings.IndexByte("aeiouAEIOU", tok[i]) >= 0 {
-			vowels++
-		}
-	}
-	return 2*inRuns >= len(tok) && 10*vowels >= 3*letters
-}
-
-// letterCase returns 1 for a lower-case ASCII letter, 2 for an upper-case
-// one and 0 otherwise.
-func letterCase(b byte) int {
-	switch {
-	case b >= 'a' && b <= 'z':
-		return 1
-	case b >= 'A' && b <= 'Z':
-		return 2
-	}
-	return 0
-}
-
-// decodeText decodes a base64 token and returns the result when it is
-// printable text of eight or more bytes.
-func decodeText(tok string) (string, bool) {
-	enc := base64.StdEncoding
-	if strings.ContainsAny(tok, "-_") {
-		if strings.ContainsAny(tok, "+/") {
-			return "", false
-		}
-		enc = base64.URLEncoding
-	}
-	if !strings.HasSuffix(tok, "=") {
-		enc = enc.WithPadding(base64.NoPadding)
-	}
-	for i := range len(tok) {
-		if b := tok[i]; !isAlnum(b) && strings.IndexByte("+/-_=", b) < 0 {
-			return "", false
-		}
-	}
-	raw, err := enc.DecodeString(tok)
-	if err != nil || len(raw) < 8 || !utf8.Valid(raw) {
-		return "", false
-	}
-	text := string(raw)
-	for _, r := range text {
-		if !unicode.IsPrint(r) && r != '\n' && r != '\r' && r != '\t' {
-			return "", false
-		}
-	}
-	return text, true
 }

@@ -11,6 +11,7 @@
 package perception
 
 import (
+	"fmt"
 	"hash/maphash"
 	"regexp"
 	"slices"
@@ -32,6 +33,17 @@ type Match struct {
 	// value fingerprints the matched text with a per-process seed, so equal
 	// values can share a placeholder. Zero means unknown.
 	value uint64
+}
+
+// String formats the exported fields only, so the value fingerprint never
+// reaches a log.
+func (m Match) String() string {
+	return fmt.Sprintf("{Detector:%s Type:%s Start:%d End:%d Score:%v}", m.Detector, m.Type, m.Start, m.End, m.Score)
+}
+
+// GoString formats the exported fields only, for %#v.
+func (m Match) GoString() string {
+	return fmt.Sprintf("perception.Match{Detector:%q, Type:%q, Start:%d, End:%d, Score:%v}", m.Detector, m.Type, m.Start, m.End, m.Score)
 }
 
 // seed keys the value fingerprints. It is random per process and never

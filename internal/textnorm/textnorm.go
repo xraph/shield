@@ -506,7 +506,7 @@ func (t Text) HiddenAt() []int {
 // offset narrows a byte offset for the per-byte maps, which halves their
 // memory. Scans are capped far below 2 GiB, so it cannot overflow.
 func offset(i int) int32 {
-	return int32(i) //nolint:gosec // G115: scan input is capped far below 2 GiB
+	return int32(i) // #nosec G115 -- scan input is capped far below 2 GiB
 }
 
 // Visible is a string with its invisible runes (see IsHidden) removed and a

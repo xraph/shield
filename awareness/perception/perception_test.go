@@ -90,6 +90,7 @@ func TestKnownSecretFormats(t *testing.T) {
 		{"github_token", "GITHUB_TOKEN", "pat github_pat_" + fake(4, 82, alnum+"_") + ".", "github_pat_" + fake(4, 82, alnum+"_"), 1},
 		{"gitlab_token", "GITLAB_TOKEN", "use glpat-" + fake(5, 20, urlB64) + " now", "glpat-" + fake(5, 20, urlB64), 1},
 		{"slack_token", "SLACK_TOKEN", "bot xoxb-" + fake(6, 12, digits) + "-" + fake(7, 13, digits) + "-" + fake(8, 24, alnum), "xoxb-" + fake(6, 12, digits) + "-" + fake(7, 13, digits) + "-" + fake(8, 24, alnum), 1},
+		{"slack_token", "SLACK_TOKEN", "hook https://hooks.slack.com/services/T" + fake(30, 10, upperDigits) + "/B" + fake(31, 10, upperDigits) + "/" + fake(32, 24, alnum) + " ok", "T" + fake(30, 10, upperDigits) + "/B" + fake(31, 10, upperDigits) + "/" + fake(32, 24, alnum), 1},
 		{"stripe_key", "STRIPE_KEY", "STRIPE=sk_live_" + fake(9, 24, alnum), "sk_live_" + fake(9, 24, alnum), 1},
 		{"google_api_key", "GOOGLE_API_KEY", "maps AIza" + fake(10, 35, urlB64) + ";", "AIza" + fake(10, 35, urlB64), 1},
 		{"anthropic_key", "ANTHROPIC_KEY", "x sk-ant-api03-" + fake(11, 93, urlB64), "sk-ant-api03-" + fake(11, 93, urlB64), 1},
@@ -152,6 +153,10 @@ func TestConnectionStringRedactsOnlyThePassword(t *testing.T) {
 			t.Errorf("Secrets(%q) = %+v, want none", benign, got)
 		}
 	}
+	text = "dsn app:" + fake(19, 16, alnum) + "@tcp(db:3306)/app?parseTime=true"
+	if got := redact(text, perception.Secrets(text, nil)); got != "dsn app:[CONNECTION_STRING_1]@tcp(db:3306)/app?parseTime=true" {
+		t.Fatalf("redacted = %q", got)
+	}
 	text = "push to https://deploy:" + fake(18, 24, alnum) + "@git.example.com/acme/api.git"
 	if got := redact(text, perception.Secrets(text, nil)); got != "push to https://deploy:[CONNECTION_STRING_1]@git.example.com/acme/api.git" {
 		t.Fatalf("redacted = %q", got)
@@ -178,6 +183,12 @@ func TestPrivateKeyBlockIsOneSpan(t *testing.T) {
 	escaped := `{"private_key": "-----BEGIN PRIVATE KEY-----\n` + fake(43, 64, stdB64) + `\n-----END PRIVATE KEY-----\n"}`
 	if out := redact(escaped, perception.Secrets(escaped, nil)); out != `{"private_key": "[PRIVATE_KEY_1]\n"}` {
 		t.Fatalf("escaped key redacted = %q", out)
+	}
+
+	// An escaped key cut off before its END line loses its partial last line.
+	escapedCut := `{"private_key": "-----BEGIN PRIVATE KEY-----\n` + fake(47, 64, stdB64) + `\n` + fake(48, 20, stdB64) + `"}`
+	if out := redact(escapedCut, perception.Secrets(escapedCut, nil)); out != `{"private_key": "[PRIVATE_KEY_1]"}` {
+		t.Fatalf("escaped truncated key redacted = %q", out)
 	}
 
 	// A block cut off before its END line still loses its body.
@@ -313,6 +324,16 @@ func TestBenignInfraTokensAreNotSecrets(t *testing.T) {
 		"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI" + fake(27, 43, stdB64) + " dev@laptop",
 		"ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBB" + fake(28, 88, stdB64) + "=",
 		"TestBenignInfraTokensAreNotSecretsOrPersonalData_WithSuffix2026",
+		"see https://github.com/acme/api/pull/4821/commits/" + sha,
+		"https://github.com/acme/api/commit/" + sha + "#diff-" + digest,
+		"mount /var/lib/kubelet/pods/5f0c1c3e-8b1a-4f53-9a51-2b8e3c4d5e6f/volumes/kubernetes.io~projected/kube-api-access-x2k4p",
+		"run https://github.com/acme/api/actions/runs/11873204567/job/33089123456",
+		"image 123456789012.dkr.ecr.us-east-1.amazonaws.com/billing-api:v1.42.7-" + sha[:7],
+		"pod billing-service-worker-7d9f8b6c5d-x2k4p restarted",
+		"vector: " + base64.StdEncoding.EncodeToString([]byte("We deploy the release candidate to staging every Tuesday")),
+		"ca.crt: " + base64.StdEncoding.EncodeToString([]byte("-----BEGIN CERTIFICATE-----\n"+fake(33, 64, stdB64)+"\n-----END CERTIFICATE-----\n")),
+		"arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/db-AbCdEf",
+		"request_id=2026102412304503 dd.trace_id=7382910456172839407",
 		"import github.com/aws/aws-sdk-go-v2/service/s3/types.NoSuchKey",
 	}
 	for _, text := range benign {
@@ -330,6 +351,33 @@ func TestEncodedSecretIsStillFlagged(t *testing.T) {
 	got := perception.Secrets("data: "+encoded, nil)
 	if len(got) != 1 || got[0].Detector != "high_entropy" {
 		t.Fatalf("encoded token = %+v, want one high_entropy match", got)
+	}
+}
+
+func TestEncodedCredentialsAreFlagged(t *testing.T) {
+	b64 := base64.StdEncoding.EncodeToString
+	docker := `{"auths":{"ghcr.io":{"auth":"` + b64([]byte("deploy:"+fake(34, 20, alnum))) + `"}}}`
+	for _, text := range []string{
+		"data:\n  session: " + b64([]byte(fake(35, 32, alnum))),
+		"data:\n  signing: " + b64([]byte(fake(36, 64, hexDigits))),
+		docker,
+		".dockerconfigjson: " + b64([]byte(docker)),
+		"Authorization: Basic " + b64([]byte("admin:"+fake(37, 24, alnum))),
+		"authorization: basic " + b64([]byte("ci:"+fake(38, 8, alnum))),
+	} {
+		got := perception.Secrets(text, nil)
+		if len(got) != 1 || got[0].Detector != "high_entropy" {
+			t.Errorf("Secrets(%q) = %v, want one high_entropy match", text, got)
+		}
+	}
+}
+
+func TestPathSegmentSecretIsFlagged(t *testing.T) {
+	segment := fake(39, 40, urlB64)
+	text := "POST https://hooks.example.com/notify/" + segment + "/send"
+	got := perception.Secrets(text, nil)
+	if out := redact(text, got); out != "POST https://hooks.example.com/notify/[HIGH_ENTROPY_1]/send" {
+		t.Fatalf("redacted = %q", out)
 	}
 }
 
@@ -353,6 +401,7 @@ func TestGenericAssignmentNeedsEntropy(t *testing.T) {
 		"Secret := \"Zq8!pL2#vX9$mK4w\"":      "Secret := \"[GENERIC_ASSIGNMENT_1]\"",
 		"privateKey => 'Zq8!pL2#vX9$mK4w'":    "privateKey => '[GENERIC_ASSIGNMENT_1]'",
 		"(credentials=Zq8pL2vX9mK4w)":         "(credentials=[GENERIC_ASSIGNMENT_1])",
+		"password: Example!2026xyz":           "password: [GENERIC_ASSIGNMENT_1]",
 	} {
 		if out := redact(text, perception.Secrets(text, nil)); out != want {
 			t.Errorf("redact(%q) = %q, want %q", text, out, want)
@@ -484,7 +533,12 @@ func TestFindingsNeverCarryMatchedText(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dumps := []string{string(encoded), fmt.Sprintf("%#v %#v", matches, spans), fmt.Sprintf("%+v %+v", matches, spans)}
+	dumps := []string{string(encoded), fmt.Sprintf("%#v %#v", matches, spans), fmt.Sprintf("%+v %+v", matches, spans), fmt.Sprint(matches)}
+	for _, dump := range dumps[1:] {
+		if strings.Contains(dump, "value") {
+			t.Fatalf("formatted match shows its fingerprint: %s", dump)
+		}
+	}
 	for _, dump := range dumps {
 		for _, value := range []string{token, password, "ops@example.com", "ops", token[4:20]} {
 			if strings.Contains(dump, value) {
@@ -529,7 +583,8 @@ func TestUnknownDetectorNamesAreIgnored(t *testing.T) {
 	}
 }
 
-// Adversarial shapes finish in linear time; the benchmarks below report it.
+// Adversarial shapes run to completion without a hang. The linear-time
+// evidence is BenchmarkAdversarial, which CI does not run.
 func TestAdversarialInputsFinish(t *testing.T) {
 	for i, text := range adversarial(1 << 16) {
 		perception.Secrets(text, nil)
@@ -562,6 +617,12 @@ func adversarial(n int) []string {
 		"token=" + rep("}"),
 		"token=" + rep("("),
 		rep("a::"),
+		rep("aws_secret_"),
+		rep("awsSECRETx"),
+		rep("Basic dXNlcjpw "),
+		rep("/" + fake(49, 40, urlB64)),
+		rep(`\n` + fake(50, 64, stdB64)),
+		rep("a:b@tcp("),
 	}
 }
 
