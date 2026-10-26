@@ -55,7 +55,7 @@ func (p *MyPlugin) OnInstinctTriggered(
 
 | Interface | Method | Called when |
 |-----------|--------|------------|
-| `plugin.ScanStarted` | `OnScanStarted(ctx, scanID, direction, text)` | A scan begins, before the tenant, size and profile checks (a tool call's arguments are checked first) |
+| `plugin.ScanStarted` | `OnScanStarted(ctx, scanID, direction, text)` | A scan begins, after the tenant, size and store checks and before the profile is resolved (a tool call's arguments are checked first). A scan that fails those checks fires `OnScanFailed` only |
 | `plugin.ScanCompleted` | `OnScanCompleted(ctx, scanID, decision, findingCount, elapsed)` | A scan finishes with a verdict |
 | `plugin.ScanBlocked` | `OnScanBlocked(ctx, scanID, reason)` | The verdict is `block`. `reason` is `Result.Reason()`, a fixed message |
 | `plugin.ScanFailed` | `OnScanFailed(ctx, scanID, err)` | A scan returns an error, such as `shield.ErrTenantRequired` or `shield.ErrNoProfile` |

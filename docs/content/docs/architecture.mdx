@@ -58,8 +58,8 @@ eng, err := engine.New(
 What `ScanInput`, `ScanOutput` and `ScanToolCall` do:
 
 1. Set the direction (`input`, `output` or `tool_call`) and create a `scan_` ID. A tool call's arguments are checked and split into units first.
-2. Emit `OnScanStarted`.
-3. Check the tenant on the context, the size limit and the store, then resolve the profile named by the input or by `Config.DefaultProfile`. A failure here returns an error, emits `OnScanFailed` and stores nothing.
+2. Check the tenant on the context, the size limit and the store.
+3. Emit `OnScanStarted`, then resolve the profile named by the input or by `Config.DefaultProfile`. A failure in this step or the one before returns an error, emits `OnScanFailed` and stores nothing. A scan that fails a check in step 2 never reaches `OnScanStarted`, so no plugin sees its text.
 4. Emit `OnSafetyProfileResolved`, then run the six layers and the tenant's policies, each under its own `evaluate layer` span. Each layer emits its own hooks as it finds things. With `EnableShortCircuit` a block stops the run after its layer.
 5. Fold the findings into one decision, the strictest, and build `Redacted`.
 6. Emit `OnScanCompleted`, and `OnScanBlocked` if the result is blocked.

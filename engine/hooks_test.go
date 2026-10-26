@@ -2,11 +2,15 @@ package engine_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
+	"github.com/xraph/shield"
 	"github.com/xraph/shield/awareness"
 	"github.com/xraph/shield/boundary"
+	"github.com/xraph/shield/engine"
 	"github.com/xraph/shield/id"
 	"github.com/xraph/shield/instinct"
 	"github.com/xraph/shield/judgment"
@@ -90,5 +94,44 @@ func TestEveryHookFires(t *testing.T) {
 		if r.rec.count(hook) == 0 {
 			t.Errorf("%s never fired", hook)
 		}
+	}
+}
+
+// ScanStarted, the one hook that gets the text, fires only once the tenant,
+// size and store checks pass. A scan that fails them fires ScanFailed alone.
+func TestScanStartedFiresAfterTheChecks(t *testing.T) {
+	r := newRig(t, func(c *shield.Config) { c.MaxScanBytes = 16 })
+	ctx := tenantCtx("tenant-a")
+	r.safetyProfile(ctx, t, &profile.SafetyProfile{Name: "p"})
+	noTenant := shield.WithApp(context.Background(), testApp)
+	if _, err := r.eng.ScanInput(noTenant, &scan.Input{Text: "hello", Profile: "p"}); !errors.Is(err, shield.ErrTenantRequired) {
+		t.Fatalf("no tenant: %v", err)
+	}
+	if _, err := r.eng.ScanInput(ctx, &scan.Input{Text: strings.Repeat("x", 17), Profile: "p"}); !errors.Is(err, shield.ErrInputTooLarge) {
+		t.Fatalf("too large: %v", err)
+	}
+	if _, err := r.eng.ScanToolCall(noTenant, &scan.ToolCallInput{Tool: "t", Profile: "p"}); !errors.Is(err, shield.ErrTenantRequired) {
+		t.Fatalf("tool call without a tenant: %v", err)
+	}
+	noStore, err := engine.New(engine.WithPlugin(r.rec))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = noStore.ScanInput(ctx, &scan.Input{Text: "hello", Profile: "p"}); !errors.Is(err, shield.ErrNoStore) {
+		t.Fatalf("no store: %v", err)
+	}
+	if n := r.rec.count("scan_started"); n != 0 {
+		t.Fatalf("ScanStarted fired %d times for scans that failed their checks", n)
+	}
+	if n := r.rec.count("scan_failed"); n != 4 {
+		t.Fatalf("ScanFailed fired %d times, want 4", n)
+	}
+	// A scan past the checks fires it, even when its profile then fails.
+	if _, err = r.eng.ScanInput(ctx, &scan.Input{Text: "hello", Profile: "missing"}); !errors.Is(err, shield.ErrNoProfile) {
+		t.Fatalf("missing profile: %v", err)
+	}
+	scanText(ctx, t, r, &scan.Input{Text: "hello", Profile: "p"})
+	if n := r.rec.count("scan_started"); n != 2 {
+		t.Fatalf("ScanStarted fired %d times, want 2", n)
 	}
 }

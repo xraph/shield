@@ -162,11 +162,13 @@ func (e *Engine) ScanOutput(ctx context.Context, input *scan.Input) (*scan.Resul
 // executeScan runs the layered safety evaluation.
 //
 // It checks, in order, the context tenant, the size limit and the store,
-// then resolves the profile named by the input (or Config.DefaultProfile)
-// and runs the layers. Any error fires the ScanFailed hook, marks the scan
-// span failed and persists nothing. A tool call (call set) is checked and
-// flattened into input first, so ScanStarted sees the text the layers scan
-// and a call that fails those checks fires ScanFailed alone.
+// fires ScanStarted, then resolves the profile named by the input (or
+// Config.DefaultProfile) and runs the layers. Any error fires the ScanFailed
+// hook, marks the scan span failed and persists nothing. A scan that fails
+// a check before ScanStarted fires ScanFailed alone, so no plugin sees the
+// text of a scan without a tenant or over the size limit. A tool call (call
+// set) is checked and flattened into input first, so ScanStarted sees the
+// text the layers scan.
 //
 // The scan runs under a "scan content" span. Its attributes are counts,
 // enums and the scan ID; the scanned text, findings, tenant and profile name
@@ -195,9 +197,14 @@ func (e *Engine) executeScan(ctx context.Context, input *scan.Input, call *scan.
 		}
 	}
 
+	tenant, checkErr := e.checkScan(ctx, input)
+	if checkErr != nil {
+		return nil, fail(checkErr)
+	}
+
 	e.registry.EmitScanStarted(ctx, scanID, string(input.Direction), input.Text)
 
-	result, err := e.evaluate(ctx, scanID, input, tc)
+	result, err := e.evaluate(ctx, scanID, tenant, input, tc)
 	if err != nil {
 		return nil, fail(err)
 	}
@@ -229,19 +236,25 @@ func (e *Engine) executeScan(ctx context.Context, input *scan.Input, call *scan.
 	return result, nil
 }
 
-// evaluate checks the scan's preconditions, resolves its profile and runs
-// the layers.
-func (e *Engine) evaluate(ctx context.Context, scanID id.ScanID, input *scan.Input, call *toolCall) (*scan.Result, error) {
+// checkScan checks the scan's preconditions: a tenant on the context, the
+// size limit and a store. It returns the tenant.
+func (e *Engine) checkScan(ctx context.Context, input *scan.Input) (string, error) {
 	tenant, err := store.Tenant(ctx, "")
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	if inputSize(input) > e.config.MaxScanBytes {
-		return nil, shield.ErrInputTooLarge
+		return "", shield.ErrInputTooLarge
 	}
 	if e.store == nil {
-		return nil, shield.ErrNoStore
+		return "", shield.ErrNoStore
 	}
+	return tenant, nil
+}
+
+// evaluate resolves the scan's profile and runs the layers, once checkScan
+// has passed.
+func (e *Engine) evaluate(ctx context.Context, scanID id.ScanID, tenant string, input *scan.Input, call *toolCall) (*scan.Result, error) {
 	name := input.Profile
 	if name == "" {
 		name = e.config.DefaultProfile
