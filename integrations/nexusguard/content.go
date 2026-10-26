@@ -15,8 +15,10 @@ const maxPartDepth = 4
 var errUnreadableContent = errors.New("nexusguard: message content has a shape the guard cannot read")
 
 // Part types the guard understands. Text parts carry their text under the
-// key of the same name. Media parts carry no text the guard can read and
-// pass unchanged; they may not hold a "text" or "content" key.
+// key of the same name or under "content", and both are scanned. A
+// tool_result carries text or parts under "content", and may carry text
+// under "text" too. Media parts carry no text the guard can read and pass
+// unchanged; they may not hold a "text" or "content" key.
 var (
 	textPartTypes  = []string{"text", "refusal", "thinking"}
 	mediaPartTypes = []string{"image_url", "image", "image_base64", "input_audio", "audio", "file", "redacted_thinking", "tool_use"}
@@ -140,16 +142,17 @@ func (cc *contentCopy) readMap(m map[string]any, depth int) (map[string]any, err
 	out := maps.Clone(m)
 	switch {
 	case slices.Contains(textPartTypes, typ):
-		v, present := m[typ]
-		if !present || v == nil {
-			return out, nil
+		// Some clients put a text part's text under "content", so both
+		// keys are scanned.
+		for _, key := range []string{typ, "content"} {
+			if err := cc.textKey(out, typ, key); err != nil {
+				return nil, err
+			}
 		}
-		s, isString := v.(string)
-		if !isString {
-			return nil, fmt.Errorf("%w: a %s part whose text is not a string", errUnreadableContent, typ)
-		}
-		cc.slot(out, typ, s)
 	case typ == "tool_result":
+		if err := cc.textKey(out, typ, "text"); err != nil {
+			return nil, err
+		}
 		switch c := m["content"].(type) {
 		case nil:
 		case string:
@@ -177,6 +180,22 @@ func (cc *contentCopy) readMap(m map[string]any, depth int) (map[string]any, err
 		return nil, fmt.Errorf("%w: a part of an unknown type", errUnreadableContent)
 	}
 	return out, nil
+}
+
+// textKey records the text under key of the part copy m, a part of type
+// typ. A missing or null key holds no text; any value but a string is an
+// error, so a text the guard cannot read never passes unscanned.
+func (cc *contentCopy) textKey(m map[string]any, typ, key string) error {
+	v, present := m[key]
+	if !present || v == nil {
+		return nil
+	}
+	s, isString := v.(string)
+	if !isString {
+		return fmt.Errorf("%w: a %s part whose %s is not a string", errUnreadableContent, typ, key)
+	}
+	cc.slot(m, key, s)
+	return nil
 }
 
 // slot records the string under key of the part copy m.

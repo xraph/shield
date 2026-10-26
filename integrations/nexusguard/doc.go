@@ -13,7 +13,10 @@
 //
 // The input guard scans the messages of the roles WithRoles lists ("user"
 // and "tool" by default) plus those WithUntrustedRoles lists ("tool" by
-// default). It never scans "system". A message of an untrusted role is
+// default). It never scans "system". A message with an empty role is
+// scanned as "user". A message whose role neither option names passes
+// unscanned, so list every role that carries text the model reads, such as
+// the legacy "function" role. A message of an untrusted role is
 // scanned with scan.Input.Untrusted set and Source "<role>_message", and
 // always comes back as shield's quoted text, so the model sees it as data.
 // Other roles change only when the scan redacts. The output guard scans
@@ -32,15 +35,17 @@
 // JSON parts a decoded HTTP body holds. They know these part types:
 //
 //   - text parts "text", "refusal" and "thinking", whose text sits under
-//     the key of the same name and must be a string;
+//     the key of the same name or under "content", both scanned, and must
+//     be a string;
 //   - "tool_result", whose "content" is a string or parts, nested at most
-//     four deep;
+//     four deep, and whose "text", if it has one, is scanned too;
 //   - media parts "image_url", "image", "image_base64", "input_audio",
 //     "audio", "file", "redacted_thinking" and "tool_use", which pass
 //     unchanged and may hold no "text" or "content" key. Text inside media,
 //     such as the words in an image or a PDF, is not scanned.
 //
-// Any other part type, a text part whose text is not a string, and any
+// Any other part type, a text part whose text is not a string, a
+// tool_result whose "text" is not a string, and any
 // other content shape fail the request in a scanned role, so text the
 // guard cannot read never reaches the model unscanned. Each text is
 // scanned on its own and its replacement is written back into the part it

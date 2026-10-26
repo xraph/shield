@@ -697,3 +697,102 @@ func TestGuardInsideNexusGuardrailMiddlewareBlocks(t *testing.T) {
 		t.Error("the provider was called")
 	}
 }
+
+// A text part that carries its text under "content", and a tool_result
+// that also carries "text", are scanned and redacted in place.
+func TestGuardScansTextUnderEitherKey(t *testing.T) {
+	r := newRig(t)
+	parts := []any{
+		map[string]any{"type": "text", "content": "deploy with " + githubToken()},
+		map[string]any{"type": "text", "text": "hello", "content": "and " + awsAccessKey()},
+		map[string]any{"type": "tool_result", "tool_use_id": "t1", "text": "key " + githubToken(), "content": "ok"},
+	}
+	res, err := inputGuard(r, nexusguard.WithUntrustedRoles()).Check(context.Background(), &guard.CheckInput{
+		Messages: []provider.Message{{Role: "user", Content: parts}}, TenantID: testTenant,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := res.Messages[0].Content.([]any)
+	if !res.Modified || !ok || len(got) != 3 {
+		t.Fatalf("result %+v", res)
+	}
+	first, _ := got[0].(map[string]any)
+	second, _ := got[1].(map[string]any)
+	third, _ := got[2].(map[string]any)
+	if first["content"] != "deploy with [GITHUB_TOKEN_1]" {
+		t.Errorf("text part content %q", first["content"])
+	}
+	if second["text"] != "hello" || second["content"] != "and [AWS_ACCESS_KEY_1]" {
+		t.Errorf("text part with both keys %+v", second)
+	}
+	if third["text"] != "key [GITHUB_TOKEN_1]" || third["content"] != "ok" || third["tool_use_id"] != "t1" {
+		t.Errorf("tool_result %+v", third)
+	}
+	if parts[0].(map[string]any)["content"] != "deploy with "+githubToken() {
+		t.Error("the guard edited the caller's parts in place")
+	}
+
+	r.instinctProfile(t, "blocking", instinct.ActionBlock)
+	g := inputGuard(r, nexusguard.WithProfile("blocking"))
+	for name, content := range map[string]any{
+		"text part":   []any{map[string]any{"type": "text", "content": injectionLine}},
+		"tool_result": []any{map[string]any{"type": "tool_result", "text": injectionLine}},
+	} {
+		res, err = g.Check(context.Background(), &guard.CheckInput{
+			Messages: []provider.Message{{Role: "user", Content: content}}, TenantID: testTenant,
+		})
+		if err != nil || !res.Blocked {
+			t.Errorf("%s: result %+v, err %v", name, res, err)
+		}
+	}
+	for name, content := range map[string]any{
+		"text part":   []any{map[string]any{"type": "text", "content": []any{injectionLine}}},
+		"tool_result": []any{map[string]any{"type": "tool_result", "text": 7}},
+	} {
+		if _, err = g.Check(context.Background(), &guard.CheckInput{
+			Messages: []provider.Message{{Role: "user", Content: content}}, TenantID: testTenant,
+		}); err == nil || !strings.Contains(err.Error(), "cannot read") {
+			t.Errorf("%s with a non-string text: err %v", name, err)
+		}
+	}
+}
+
+// An input message with no role is scanned as a user message. A role the
+// options don't name, such as the legacy "function", passes unscanned
+// unless it is listed.
+func TestGuardScansAnEmptyRoleAsUser(t *testing.T) {
+	r := newRig(t)
+	msgs := []provider.Message{
+		{Role: "", Content: "push with " + githubToken()},
+		{Role: " ", Content: "and " + githubToken()},
+		{Role: "function", Content: githubToken()},
+	}
+	res, err := inputGuard(r).Check(context.Background(), &guard.CheckInput{Messages: msgs, TenantID: testTenant})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Modified || res.Messages[0].Content != "push with [GITHUB_TOKEN_1]" || res.Messages[1].Content != "and [GITHUB_TOKEN_1]" {
+		t.Fatalf("result %+v", res)
+	}
+	if res.Messages[2].Content != githubToken() {
+		t.Errorf("an unlisted role was scanned: %q", res.Messages[2].Content)
+	}
+	if n := len(r.scans(t)); n != 2 {
+		t.Errorf("%d scans stored, want 2", n)
+	}
+	// Scanned as user: untrusted when user is.
+	res, err = inputGuard(r, nexusguard.WithUntrustedRoles("user")).Check(context.Background(), &guard.CheckInput{
+		Messages: []provider.Message{{Content: "hello"}}, TenantID: testTenant,
+	})
+	if err != nil || res.Messages[0].Content != scan.Quote("user_message", "hello") {
+		t.Fatalf("untrusted empty role: %+v, %v", res, err)
+	}
+	// Listed, the legacy role is scanned.
+	res, err = inputGuard(r, nexusguard.WithUntrustedRoles("tool", "function")).Check(context.Background(), &guard.CheckInput{
+		Messages: msgs[2:], TenantID: testTenant,
+	})
+	if err != nil || res.Messages[0].Content == githubToken() {
+		t.Fatalf("listed function role: %+v, %v", res, err)
+	}
+}

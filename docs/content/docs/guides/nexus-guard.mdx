@@ -60,7 +60,9 @@ What each guard does with a scan:
 
 ## Which messages are scanned
 
-The input guard scans the messages of the roles `WithRoles` lists, `user` and `tool` by default, plus every role `WithUntrustedRoles` lists, `tool` by default. It never scans `system`. Roles match without regard to case.
+The input guard scans the messages of the roles `WithRoles` lists, `user` and `tool` by default, plus every role `WithUntrustedRoles` lists, `tool` by default. It never scans `system`. Roles match without regard to case, and a message with an empty role is scanned as `user`.
+
+A message whose role neither option names passes unscanned. That's how a role you didn't list behaves, including nexus's legacy `function` role for tool results, so if your provider sends one, add it: `WithUntrustedRoles("tool", "function")`.
 
 A message of an untrusted role is scanned with `scan.Input.Untrusted` set and `Source` `<role>_message` (so `tool_message`), and always comes back as Shield's quoted text, so the model sees a tool's output as data. Other roles change only when the scan redacts. `WithUntrustedRoles()` with no roles leaves every role trusted.
 
@@ -74,8 +76,8 @@ The guards read string content, `[]provider.ContentPart`, and the `[]any` of JSO
 
 | Part type | Guard |
 |---|---|
-| `text`, `refusal`, `thinking` | Scanned. The text sits under the key of the same name and must be a string |
-| `tool_result` | Scanned. Its `content` is a string or parts, nested at most four deep |
+| `text`, `refusal`, `thinking` | Scanned. The text sits under the key of the same name or under `content`. Both are scanned, and each must be a string |
+| `tool_result` | Scanned. Its `content` is a string or parts, nested at most four deep. A `text` key, if it has one, is scanned too |
 | `image_url`, `image`, `image_base64`, `input_audio`, `audio`, `file`, `redacted_thinking`, `tool_use` | Passed unchanged. They may hold no `text` or `content` key. Text inside media, such as the words in an image or a PDF, isn't scanned |
 | Anything else | Fails the request |
 

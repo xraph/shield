@@ -46,7 +46,10 @@ func WithApp(appID string) Option {
 // WithRoles sets the roles whose messages the input guard scans, replacing
 // the default "user" and "tool". Roles match without regard to case, and
 // "system" is never scanned. Untrusted roles are scanned whatever this
-// lists. The output guard ignores it.
+// lists. A message with an empty role is scanned as "user". A message whose
+// role neither this nor WithUntrustedRoles names passes unscanned, so name
+// every role that carries text the model reads, such as the legacy
+// "function" role for tool results. The output guard ignores it.
 func WithRoles(roles ...string) Option {
 	return func(o *options) { o.roles = roleSet(roles) }
 }

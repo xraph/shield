@@ -100,7 +100,7 @@ func (g *shieldGuard) Check(ctx context.Context, in *guard.CheckInput) (*guard.C
 		decision = scan.DecisionAllow
 	)
 	for i, msg := range in.Messages {
-		role := strings.ToLower(msg.Role)
+		role := g.roleOf(msg.Role)
 		if !g.covers(role) {
 			continue
 		}
@@ -158,6 +158,18 @@ func (g *shieldGuard) Check(ctx context.Context, in *guard.CheckInput) (*guard.C
 type checkRun struct {
 	tenant, app string
 	metadata    map[string]any
+}
+
+// roleOf is the role a message is scanned as: its role in lower case. An
+// input message with an empty role is read as "user", which is how
+// providers treat it, so it is never skipped for having no role. A role
+// the options do not name is left as it is, and covers skips it.
+func (g *shieldGuard) roleOf(role string) string {
+	role = strings.ToLower(strings.TrimSpace(role))
+	if role == "" && g.phase == guard.PhaseInput {
+		return "user"
+	}
+	return role
 }
 
 // covers reports whether the guard scans a message of role (lower case).
