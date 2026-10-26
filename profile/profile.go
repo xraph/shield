@@ -32,7 +32,7 @@ type AwarenessAssignment struct {
 }
 
 // SafetyProfile represents a complete safety identity composed from primitives.
-// It is the primary composition unit for Shield — the recommended way to
+// It is the primary composition unit for Shield, and the recommended way to
 // configure safety for an agent or application.
 type SafetyProfile struct {
 	shield.Entity

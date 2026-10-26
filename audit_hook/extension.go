@@ -37,7 +37,7 @@ var (
 
 // Recorder is the interface that audit backends must implement.
 // This matches chronicle.Emitter but is defined locally so that the
-// audit_hook package does not import Chronicle directly — callers inject
+// audit_hook package does not import Chronicle directly. Callers inject
 // the concrete *chronicle.Chronicle at wiring time.
 type Recorder interface {
 	Record(ctx context.Context, event *AuditEvent) error

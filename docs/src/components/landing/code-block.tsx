@@ -90,7 +90,7 @@ function highlightGo(code: string): string {
         /^[A-Z]/.test(word) &&
         code.slice(last).trimStart().startsWith("(")
       ) {
-        // Uppercase word followed by '(' — function/method call
+        // Uppercase word followed by '(': a function or method call
         out += `<span class="text-blue-400">${esc(word)}</span>`;
       } else {
         out += esc(word);
@@ -184,7 +184,7 @@ function highlightTSX(code: string): string {
         out += esc(word);
       }
     } else if (m[9] != null) {
-      // Curly block {…} — highlight inner content
+      // Curly block {…}: highlight the inner content
       const block = m[9];
       const inner = block.slice(1, -1);
       out += `{<span class="text-amber-300">${esc(inner)}</span>}`;

@@ -44,7 +44,7 @@ type Rule struct {
 }
 
 // Values represents the moral compass and ethical guidelines.
-// Values are the fourth layer of the safety engine — they evaluate
+// Values are the fourth layer of the safety engine. They evaluate
 // content against ethical principles with configurable thresholds.
 type Values struct {
 	shield.Entity

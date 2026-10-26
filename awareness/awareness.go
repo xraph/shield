@@ -1,6 +1,6 @@
 // Package awareness models what an agent pays attention to in content.
 //
-// Awareness is about perception — what you notice. PII detection is
+// Awareness is about perception: what you notice. PII detection is
 // awareness: you notice an email address in text. Topic classification
 // is awareness: you recognize what a conversation is about. Intent
 // detection is awareness: you understand what someone is trying to do.

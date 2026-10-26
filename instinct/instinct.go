@@ -1,6 +1,6 @@
 // Package instinct models hardwired, automatic safety responses.
 //
-// Instincts are the fastest safety layer — pre-conscious, immediate
+// Instincts are the fastest safety layer: pre-conscious, immediate
 // threat detection. Like a human flinching from danger, instincts fire
 // before any deliberation. Prompt injection detection, jailbreak detection,
 // and exfiltration detection are instincts.
@@ -85,7 +85,7 @@ type Strategy struct {
 }
 
 // Instinct represents a hardwired, automatic safety response.
-// Instincts are the first layer of the safety engine — fast, pre-conscious,
+// Instincts are the first layer of the safety engine: fast, pre-conscious,
 // and non-negotiable. They run before any other safety evaluation.
 type Instinct struct {
 	shield.Entity

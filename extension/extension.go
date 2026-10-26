@@ -184,7 +184,7 @@ func (e *Extension) loadConfiguration() error {
 		// Use programmatic config merged with defaults.
 		e.config = e.mergeWithDefaults(programmaticConfig)
 	} else {
-		// Config loaded from YAML — merge with programmatic options.
+		// Config loaded from YAML: merge with programmatic options.
 		e.config = e.mergeConfigurations(fileConfig, programmaticConfig)
 	}
 

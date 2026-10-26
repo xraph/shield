@@ -1,6 +1,6 @@
 // Package reflex models condition-triggered safety responses.
 //
-// Reflexes are trained responses — condition→action pairs that fire
+// Reflexes are trained responses: condition→action pairs that fire
 // when specific conditions are met. Policy rules are reflexes.
 // Rate limiting is a reflex. Escalation logic is a reflex. They
 // are the Shield equivalent of Cortex's Behaviors.
@@ -68,7 +68,7 @@ type Action struct {
 }
 
 // Reflex represents a condition-triggered safety response.
-// Reflexes are the sixth layer of the safety engine — they evaluate
+// Reflexes are the sixth layer of the safety engine. They evaluate
 // policy rules and custom conditions to produce actions.
 type Reflex struct {
 	shield.Entity
