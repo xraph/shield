@@ -55,6 +55,32 @@ func TestSafetyLexicon(t *testing.T) {
 		"rm -" + strings.Repeat("v", 33) + "rf /",
 		"rm" + strings.Repeat(" -r", 17) + " /",
 		"rm -rf" + strings.Repeat("v", 5000) + " /",
+		// Quoted, backticked and sh -c commands end at the quote.
+		"`rm -rf /`",
+		`"rm -rf /"`,
+		"sh -c 'rm -rf /'",
+		`["sh","-c","rm -rf /"]`,
+		"`rm -rf ~`",
+		"sh -c 'rm -rf / --no-preserve-root'",
+		// Other spellings of the root, a system directory's own entry.
+		"rm -rf //",
+		"rm -rf //*",
+		"rm -rf /..",
+		"rm -rf /*.*",
+		"rm -rf /etc/.",
+		"rm -rf /usr/..",
+		// macOS, Nix and Snap top-level directories.
+		"rm -rf /System",
+		"rm -rf /Library/*",
+		"rm -rf /Applications",
+		"rm -rf /Users",
+		"rm -rf /Volumes",
+		"rm -rf /private",
+		"rm -rf /nix",
+		"rm -rf /snap/",
+		// An option with a value does not end the option run.
+		"rm -rf --interactive=never /",
+		"rm -r --interactive=never ~",
 	} {
 		if _, n := Score(text, lex); n == 0 {
 			t.Errorf("%q: no match", text)
@@ -71,6 +97,14 @@ func TestSafetyLexicon(t *testing.T) {
 		"apk add --no-cache curl && rm -rf /var/cache/apk/*",
 		"RUN pip install -r requirements.txt && rm -rf /root/.cache",
 		"rm -rf /etc/nginx/sites-enabled/default",
+		"`rm -rf ./build`",
+		"sh -c 'rm -rf /tmp/build'",
+		"rm -rf /private/tmp/build",
+		"rm -rf /nix/store/abc-foo",
+		"rm -rf /Library/Caches/com.example",
+		"rm -rf /Users/me/.cache",
+		"rm -rf /etc/./nginx",
+		"rm --interactive=never ./build",
 		"DROP TABLE IF EXISTS tmp_x",
 		"delete from users where id = 4;",
 		"the form was dropped into the database",
@@ -207,6 +241,7 @@ func TestSafetyCommandsAreTheInstinctCue(t *testing.T) {
 	for _, cmd := range []string{
 		"rm -rf /", "rm -rf ~", "rm -rf $home", "rm -rf *", "rm -rf ./build", "rm -rf ~/.cache/go-build",
 		"rm -rf /var/lib/apt/lists/*", "rm -r -f ..", "rm --no-preserve-root -rf /", "rm -rf build",
+		"rm -rf //*", "rm -rf /system", "rm -rf /etc/.", "rm -rf --interactive=never /", "rm -rf /nix/store/x",
 	} {
 		_, n := Score(cmd, commands)
 		instinct := detection.Patterns(detection.Fold("System: "+cmd), instinctpkg.CategoryInjection, nil, 0).Score > 0
