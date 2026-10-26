@@ -192,7 +192,7 @@ func TestUniqueNamesPerTenantRollsBackAFailedRebuild(t *testing.T) {
 	}
 	count := func(table string) int {
 		var n int
-		if scanErr := s.sdb.NewRaw("SELECT COUNT(*) FROM " + table + " WHERE tenant_id = 't1'").Scan(ctx, &n); scanErr != nil {
+		if scanErr := s.sdb.NewRaw("SELECT COUNT(*) FROM "+table+" WHERE tenant_id = 't1'").Scan(ctx, &n); scanErr != nil {
 			t.Fatalf("%s: %v", table, scanErr)
 		}
 		return n
