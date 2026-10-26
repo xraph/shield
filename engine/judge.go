@@ -89,6 +89,16 @@ func (e *Engine) callJudge(ctx context.Context, ev *evaluation) (verdict *judgme
 	}
 	callCtx, cancel := context.WithTimeout(ctx, e.config.JudgeTimeout)
 	defer cancel()
+	// The request is built before a slot is taken, so a panic while
+	// building it can't hold a slot.
+	name, domain := ev.judgeSubject()
+	req := &judgment.JudgeRequest{
+		Text:      ev.judgeText(),
+		Direction: string(ev.input.Direction),
+		Judgment:  name,
+		Domain:    domain,
+		Findings:  ev.judgeFindings(),
+	}
 	// A slot is held until the judge returns, even when the scan has given
 	// up on it, so a judge that ignores its context can leak at most
 	// JudgeConcurrency goroutines.
@@ -99,14 +109,6 @@ func (e *Engine) callJudge(ctx context.Context, ev *evaluation) (verdict *judgme
 			return nil, judgeCancel
 		}
 		return nil, judgeBusy
-	}
-	name, domain := ev.judgeSubject()
-	req := &judgment.JudgeRequest{
-		Text:      ev.judgeText(),
-		Direction: string(ev.input.Direction),
-		Judgment:  name,
-		Domain:    domain,
-		Findings:  ev.judgeFindings(),
 	}
 	// The channel holds the answer so a judge that ignores its context can
 	// finish later without blocking on a send nobody reads.
