@@ -51,7 +51,7 @@ An instinct scores the text with its strategies, combines them as `1 - Π(1 - we
 | `heuristics` | Lines carrying hidden zero-width or bidi runes, and base64 runs of 40 or more characters that decode to a corpus match |
 | `canary` | Lines holding `Config["token"]`, a canary string you planted in your prompt |
 
-Each category runs its own families: `injection` runs override, impersonation, agent directive and role; `jailbreak` runs role and jailbreak; `manipulation` runs agent directive and manipulation; `exfiltration` runs exfiltration. Matching happens on folded text, so letter case, fullwidth forms, lookalike Cyrillic and Greek letters, odd spacing and invisible runes don't hide a phrase.
+Each category runs its own families: `injection` runs override, impersonation, agent directive and role; `jailbreak` runs role and jailbreak; `manipulation` runs agent directive and manipulation; `exfiltration` runs exfiltration. Any other category has no corpus. Its instinct still runs your own patterns, the heuristics and a canary, and every scan gets a `no corpus for the instinct's category` info finding naming it in `Details["category"]`. Matching happens on folded text, so letter case, fullwidth forms, lookalike Cyrillic and Greek letters, odd spacing and invisible runes don't hide a phrase.
 
 The action decides what happens to the matched lines. `redact` replaces each one with `[shield: removed suspected instruction]`, `quote` wraps the whole text with `scan.Quote`, and `block`, `flag` and `alert` do what they say.
 

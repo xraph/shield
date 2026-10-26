@@ -796,6 +796,36 @@ func TestUnsupportedStrategyIsVisible(t *testing.T) {
 	}
 }
 
+// An instinct whose category has no corpus, as one written straight to the
+// store can have, says so in an info finding and still runs the rest of its
+// strategies.
+func TestUnknownCategoryIsVisible(t *testing.T) {
+	r := newRig(t, nil)
+	ctx := tenantCtx("tenant-a")
+	inst := &instinct.Instinct{
+		ID: id.NewInstinctID(), Name: "odd", AppID: testApp, Category: "phishing",
+		Sensitivity: instinct.SensitivityBalanced, Action: instinct.ActionBlock, Enabled: true,
+	}
+	if err := r.st.CreateInstinct(ctx, inst); err != nil {
+		t.Fatal(err)
+	}
+	r.profile(ctx, t, "p", []string{"odd"}, nil)
+	res := scanText(ctx, t, r, &scan.Input{Text: "hello there", Profile: "p"})
+	if res.Decision != scan.DecisionAllow || len(res.Findings) != 1 {
+		t.Fatalf("result = %+v", res)
+	}
+	f := res.Findings[0]
+	if f.Severity != "info" || f.Message != "no corpus for the instinct's category" || f.Source != "odd" || f.Details["category"] != "phishing" {
+		t.Fatalf("finding = %+v", f)
+	}
+	// A known category gives no such finding.
+	r.instinct(ctx, t, "known", instinct.ActionBlock)
+	r.profile(ctx, t, "known", []string{"known"}, nil)
+	if res = scanText(ctx, t, r, &scan.Input{Text: "hello there", Profile: "known"}); len(res.Findings) != 0 {
+		t.Fatalf("known category findings = %+v", res.Findings)
+	}
+}
+
 func TestStrategiesAndSensitivity(t *testing.T) {
 	r := newRig(t, nil)
 	ctx := tenantCtx("tenant-a")

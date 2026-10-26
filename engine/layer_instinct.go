@@ -25,6 +25,15 @@ var instinctMessages = map[instinct.Category]string{
 // the highest unit score and the lines of every unit that reached it.
 func (e *Engine) runInstincts(ctx context.Context, ev *evaluation) {
 	for _, inst := range ev.profile.instincts {
+		if detection.Families(inst.category) == nil {
+			// A category written straight to the store that shield has no
+			// corpus for: only its custom patterns, heuristics and canary
+			// run.
+			ev.add(&scan.Finding{
+				Layer: layerInstinct, Source: inst.name, Message: "no corpus for the instinct's category", Action: actionInfo,
+				Details: map[string]any{"category": string(inst.category)},
+			})
+		}
 		for _, s := range inst.strategies {
 			if !slices.Contains([]string{strategyPatterns, strategyHeuristics, strategyCanary}, s.name) {
 				ev.info(layerInstinct, inst.name, "unsupported strategy "+s.name)
