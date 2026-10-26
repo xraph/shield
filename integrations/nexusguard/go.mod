@@ -3,9 +3,9 @@ module github.com/xraph/shield/integrations/nexusguard
 go 1.26.0
 
 require (
-	github.com/xraph/grove v1.9.1
-	github.com/xraph/grove/drivers/sqlitedriver v1.9.1
-	github.com/xraph/nexus v1.8.0
+	github.com/xraph/grove v1.10.0
+	github.com/xraph/grove/drivers/sqlitedriver v1.10.0
+	github.com/xraph/nexus v1.9.0
 	github.com/xraph/shield v1.8.1
 )
 
@@ -28,9 +28,10 @@ require (
 	go.opentelemetry.io/otel/metric v1.45.0 // indirect
 	go.opentelemetry.io/otel/trace v1.45.0 // indirect
 	golang.org/x/exp v0.0.0-20260727155853-b88d891fe743 // indirect
+	golang.org/x/mod v0.41.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/term v0.46.0 // indirect
-	golang.org/x/text v0.42.0 // indirect
+	golang.org/x/tools v0.49.0 // indirect
 	modernc.org/libc v1.68.0 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect

@@ -72,12 +72,11 @@
 //
 // # nexus versions
 //
-// The module builds against nexus v1.8.0 and later. From v1.9.0 on,
-// CheckInput.Metadata holds a copy of the request's metadata in both
-// phases, and the guards copy it onto each stored scan, leaving out the
-// keys shield owns ("source", "untrusted", "secret_count"). With v1.8.0 it
-// is empty. The guards never write to it. On v1.8.0 output guards see only
-// non-streamed replies; v1.9.0 also runs them on streamed output.
+// The module requires nexus v1.9.0 or later. CheckInput.Metadata holds a
+// copy of the request's metadata in both phases, and the guards copy it
+// onto each stored scan, leaving out the keys shield owns ("source",
+// "untrusted", "secret_count"). The guards never write to it. Output guards
+// run on streamed replies as well as non-streamed ones.
 //
 // # Model judge
 //

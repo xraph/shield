@@ -11,7 +11,7 @@ description: Scan the prompts, tool results and replies that pass through a nexu
 go get github.com/xraph/shield/integrations/nexusguard@latest
 ```
 
-It builds against nexus v1.8.0 and later.
+It requires nexus v1.9.0 or later, and pulls it in for you.
 
 ## Register the guards
 
@@ -149,4 +149,4 @@ Only a judgment with a `model` assessor uses it. The InfraAgent preset has none,
 
 ## nexus versions
 
-From nexus v1.9.0, `CheckInput.Metadata` holds a copy of the request's metadata in both phases, and the guards copy it onto each stored scan, leaving out the keys Shield owns (`source`, `untrusted`, `secret_count`). On v1.8.0 it's empty, and output guards see only non-streamed replies. v1.9.0 runs them on streamed output too.
+The module needs nexus v1.9.0 or later. There, `CheckInput.Metadata` holds a copy of the request's metadata in both phases, and the guards copy it onto each stored scan, leaving out the keys Shield owns (`source`, `untrusted`, `secret_count`). Output guards run on streamed replies too, not only on non-streamed ones.
