@@ -37,13 +37,20 @@ type Config struct {
 
 	// JudgeTimeout bounds one judge call. Zero means 5 seconds.
 	JudgeTimeout time.Duration `json:"judge_timeout,omitempty"`
+
+	// JudgeConcurrency caps the judge calls in flight across the engine.
+	// A scan that cannot get a slot before its context or JudgeTimeout ends
+	// goes without the judge. A judge that ignores its context keeps its
+	// slot until it returns. Zero means 8.
+	JudgeConcurrency int `json:"judge_concurrency,omitempty"`
 }
 
 // Defaults for the scan limits.
 const (
-	DefaultMaxScanBytes    = 1 << 20
-	DefaultProfileCacheTTL = 30 * time.Second
-	DefaultJudgeTimeout    = 5 * time.Second
+	DefaultMaxScanBytes     = 1 << 20
+	DefaultProfileCacheTTL  = 30 * time.Second
+	DefaultJudgeTimeout     = 5 * time.Second
+	DefaultJudgeConcurrency = 8
 )
 
 // DefaultConfig returns a Config with sensible defaults.
@@ -55,5 +62,6 @@ func DefaultConfig() Config {
 		MaxScanBytes:       DefaultMaxScanBytes,
 		ProfileCacheTTL:    DefaultProfileCacheTTL,
 		JudgeTimeout:       DefaultJudgeTimeout,
+		JudgeConcurrency:   DefaultJudgeConcurrency,
 	}
 }

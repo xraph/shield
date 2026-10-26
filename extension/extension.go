@@ -113,6 +113,7 @@ func (e *Extension) Register(fapp forge.App) error {
 			ScanConcurrency: e.config.ScanConcurrency, EnableShortCircuit: e.config.EnableShortCircuit,
 			MaxScanBytes: e.config.MaxScanBytes, ProfileCacheTTL: e.config.ProfileCacheTTL,
 			StoreRedacted: e.config.StoreRedacted, ModelJudge: e.config.ModelJudge, JudgeTimeout: e.config.JudgeTimeout,
+			JudgeConcurrency: e.config.JudgeConcurrency,
 		}),
 		engine.WithLogger(e.Logger()),
 		engine.WithMetrics(e.Metrics()),
@@ -254,6 +255,9 @@ func (e *Extension) mergeWithDefaults(cfg Config) Config {
 	if cfg.JudgeTimeout == 0 {
 		cfg.JudgeTimeout = defaults.JudgeTimeout
 	}
+	if cfg.JudgeConcurrency == 0 {
+		cfg.JudgeConcurrency = defaults.JudgeConcurrency
+	}
 	return cfg
 }
 
@@ -303,6 +307,10 @@ func (e *Extension) mergeConfigurations(yamlConfig, programmaticConfig Config) C
 	}
 	if yamlConfig.JudgeTimeout == 0 && programmaticConfig.JudgeTimeout != 0 {
 		yamlConfig.JudgeTimeout = programmaticConfig.JudgeTimeout
+	}
+
+	if yamlConfig.JudgeConcurrency == 0 && programmaticConfig.JudgeConcurrency != 0 {
+		yamlConfig.JudgeConcurrency = programmaticConfig.JudgeConcurrency
 	}
 
 	// Fill remaining zeros with defaults.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"math"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -60,8 +61,14 @@ func answer(score float64, reason string) *fakeJudge {
 // nil; on sets Config.ModelJudge.
 func judgeRig(t *testing.T, on bool, judge *fakeJudge, timeout time.Duration, threshold float64, assessors ...judgment.Assessor) (*rig, context.Context) {
 	t.Helper()
+	return judgeRigWith(t, func(cfg *shield.Config) { cfg.ModelJudge, cfg.JudgeTimeout = on, timeout }, judge, threshold, assessors...)
+}
+
+// judgeRigWith is judgeRig with the config edited by edit.
+func judgeRigWith(t *testing.T, edit func(*shield.Config), judge *fakeJudge, threshold float64, assessors ...judgment.Assessor) (*rig, context.Context) {
+	t.Helper()
 	cfg := shield.DefaultConfig()
-	cfg.ModelJudge, cfg.JudgeTimeout = on, timeout
+	edit(&cfg)
 	st := shieldtest.Store(t)
 	opts := []engine.Option{engine.WithStore(st), engine.WithConfig(cfg)}
 	if judge != nil {
@@ -91,6 +98,22 @@ var (
 	instinctCount  = judgment.Assessor{Name: "finding_count", Config: map[string]any{"layer": "instinct", "saturate": 3.0}}
 	instinctScored = judgment.Assessor{Name: "layer_score", Config: map[string]any{"layers": []any{"instinct"}}}
 )
+
+// within runs fn and fails the test cleanly if it does not return in d,
+// instead of hanging to the package timeout.
+func within(t *testing.T, d time.Duration, what string, fn func()) {
+	t.Helper()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		fn()
+	}()
+	select {
+	case <-done:
+	case <-time.After(d):
+		t.Fatalf("%s did not return within %s", what, d)
+	}
+}
 
 func unavailable(res *scan.Result) *scan.Finding {
 	for _, f := range inLayer(res, "judgment") {
@@ -185,11 +208,10 @@ func TestJudgeTimeout(t *testing.T) {
 		return nil, ctx.Err()
 	}}
 	r, ctx := judgeRig(t, true, j, 50*time.Millisecond, 0.9, instinctCount, modelOnly)
-	start := time.Now()
-	res := scanText(ctx, t, r, &scan.Input{Text: injectionCommit, Profile: "p"})
-	if d := time.Since(start); d > 500*time.Millisecond {
-		t.Fatalf("scan took %s", d)
-	}
+	var res *scan.Result
+	within(t, 500*time.Millisecond, "the scan", func() {
+		res = scanText(ctx, t, r, &scan.Input{Text: injectionCommit, Profile: "p"})
+	})
 	if f := unavailable(res); f == nil || f.Details["cause"] != "timeout" {
 		t.Fatalf("findings = %+v", res.Findings)
 	}
@@ -209,11 +231,10 @@ func TestJudgeDoesNotOutliveACancelledScan(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 		cancel()
 	}()
-	start := time.Now()
-	res := scanText(ctx, t, r, &scan.Input{Text: injectionCommit, Profile: "p"})
-	if d := time.Since(start); d > 500*time.Millisecond {
-		t.Fatalf("scan took %s", d)
-	}
+	var res *scan.Result
+	within(t, 500*time.Millisecond, "the cancelled scan", func() {
+		res = scanText(ctx, t, r, &scan.Input{Text: injectionCommit, Profile: "p"})
+	})
 	if f := unavailable(res); f == nil || f.Details["cause"] != "cancelled" {
 		t.Fatalf("findings = %+v", res.Findings)
 	}
@@ -222,7 +243,10 @@ func TestJudgeDoesNotOutliveACancelledScan(t *testing.T) {
 	r2, ctx2 := judgeRig(t, true, j2, time.Second, 0.9, modelOnly)
 	done, stop := context.WithCancel(ctx2)
 	stop()
-	if _, err := r2.eng.ScanInput(done, &scan.Input{Text: "hello", Profile: "p"}); err == nil && j2.calls.Load() != 0 {
+	within(t, 500*time.Millisecond, "the pre-cancelled scan", func() {
+		_, _ = r2.eng.ScanInput(done, &scan.Input{Text: "hello", Profile: "p"})
+	})
+	if j2.calls.Load() != 0 {
 		t.Fatal("the judge was called for a cancelled scan")
 	}
 }
@@ -322,5 +346,96 @@ func TestCapabilitiesReportModelJudge(t *testing.T) {
 	b, err := json.Marshal(build(true, answer(0, "")))
 	if err != nil || !strings.Contains(string(b), `"unavailable_judgment_assessors":[]`) {
 		t.Fatalf("json = %s %v", b, err)
+	}
+}
+
+func TestJudgeIsBoundedUnderLoad(t *testing.T) {
+	const slots, scans = 2, 6 // 3 x JudgeConcurrency
+	release := make(chan struct{})
+	var inFlight, peak atomic.Int32
+	var holding atomic.Bool
+	// This judge ignores its context and holds its slot until released.
+	j := &fakeJudge{fn: func(context.Context, *judgment.JudgeRequest) (*judgment.JudgeVerdict, error) {
+		if !holding.Load() {
+			return &judgment.JudgeVerdict{Score: 0}, nil
+		}
+		n := inFlight.Add(1)
+		for {
+			p := peak.Load()
+			if n <= p || peak.CompareAndSwap(p, n) {
+				break
+			}
+		}
+		<-release
+		inFlight.Add(-1)
+		return &judgment.JudgeVerdict{Score: 1}, nil
+	}}
+	r, ctx := judgeRigWith(t, func(cfg *shield.Config) {
+		cfg.ModelJudge, cfg.JudgeTimeout, cfg.JudgeConcurrency = true, 100*time.Millisecond, slots
+	}, j, 0.9, modelOnly)
+	// One answered scan loads and caches the profile, which the in-memory
+	// store cannot serve to parallel connections.
+	scanText(ctx, t, r, &scan.Input{Text: "hello", Profile: "p"})
+	j.calls.Store(0)
+	holding.Store(true)
+	before := runtime.NumGoroutine()
+	results := make(chan *scan.Result, scans)
+	for range scans {
+		go func() {
+			res, err := r.eng.ScanInput(ctx, &scan.Input{Text: "hello", Profile: "p"})
+			if err != nil {
+				t.Error(err)
+			}
+			results <- res
+		}()
+	}
+	for range scans {
+		select {
+		case res := <-results:
+			if res == nil {
+				continue
+			}
+			if res.Decision != scan.DecisionAllow || unavailable(res) == nil {
+				t.Errorf("decision %s, findings %+v", res.Decision, res.Findings)
+			}
+		case <-time.After(2 * time.Second):
+			close(release)
+			t.Fatal("a scan outlived the judge timeout")
+		}
+	}
+	if peak.Load() > slots || j.calls.Load() > slots {
+		t.Errorf("peak %d, calls %d, want at most %d", peak.Load(), j.calls.Load(), slots)
+	}
+	if extra := runtime.NumGoroutine() - before; extra > slots+scans+4 {
+		t.Errorf("%d goroutines added", extra)
+	}
+	close(release)
+}
+
+func TestTwoModelJudgmentsCallTheJudgeOnce(t *testing.T) {
+	j := answer(0.95, "once")
+	r, ctx := judgeRig(t, true, j, time.Second, 0.9, modelOnly)
+	r.judgment(ctx, t, "second", "flag", 0.5, modelOnly)
+	r.safetyProfile(ctx, t, &profile.SafetyProfile{
+		Name: "two", Judgments: []profile.JudgmentAssignment{{JudgmentName: "judge"}, {JudgmentName: "second"}},
+	})
+	res := scanText(ctx, t, r, &scan.Input{Text: "hello", Profile: "two"})
+	if j.calls.Load() != 1 {
+		t.Fatalf("judge calls = %d", j.calls.Load())
+	}
+	if len(inLayer(res, "judgment")) != 2 || res.Decision != scan.DecisionBlock {
+		t.Fatalf("decision %s, findings %+v", res.Decision, res.Findings)
+	}
+	if got := j.last(t).Judgment; got != "judge,second" && got != "second,judge" {
+		t.Fatalf("judgment name = %q", got)
+	}
+}
+
+func TestJudgeCanRaiseAToolCall(t *testing.T) {
+	j := answer(0.95, "")
+	r, ctx := judgeRig(t, true, j, time.Second, 0.9, modelOnly)
+	res := scanCall(ctx, t, r, &scan.ToolCallInput{Tool: "deploy", Arguments: json.RawMessage(`{"target":"prod"}`), RiskClass: "change", Profile: "p"})
+	if res.Decision != scan.DecisionBlock {
+		t.Fatalf("decision = %s", res.Decision)
 	}
 }

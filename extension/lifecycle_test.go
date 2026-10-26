@@ -124,7 +124,7 @@ func TestExtensionDefaultsScanLimits(t *testing.T) {
 
 func TestExtensionPassesJudgeConfig(t *testing.T) {
 	dir := t.TempDir()
-	yaml := "extensions:\n  shield:\n    model_judge: true\n    judge_timeout: 2s\n"
+	yaml := "extensions:\n  shield:\n    model_judge: true\n    judge_timeout: 2s\n    judge_concurrency: 3\n"
 	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(yaml), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +134,7 @@ func TestExtensionPassesJudgeConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := e.Engine().Config()
-	if !cfg.ModelJudge || cfg.JudgeTimeout != 2*time.Second {
+	if !cfg.ModelJudge || cfg.JudgeTimeout != 2*time.Second || cfg.JudgeConcurrency != 3 {
 		t.Fatalf("judge config lost: %+v", cfg)
 	}
 }
@@ -146,7 +146,7 @@ func TestExtensionJudgeDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := e.Engine().Config()
-	if cfg.ModelJudge || cfg.JudgeTimeout != 5*time.Second {
+	if cfg.ModelJudge || cfg.JudgeTimeout != 5*time.Second || cfg.JudgeConcurrency != 8 {
 		t.Fatalf("judge defaults = %+v", cfg)
 	}
 }

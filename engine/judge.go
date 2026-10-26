@@ -25,6 +25,7 @@ const (
 	judgeTimeout  = "timeout"
 	judgeCancel   = "cancelled"
 	judgeInvalid  = "invalid_verdict"
+	judgeBusy     = "busy"
 	judgeAnswered = "answered"
 )
 
@@ -42,15 +43,25 @@ type judgeAnswer struct {
 	err     error
 }
 
-// askJudge asks the judge about j under the "assess with model judge" span,
-// the scan's context and Config.JudgeTimeout. It returns the verdict, or a
-// nil verdict and the cause when there is none. The judge is untrusted: a
-// panic, an error, a nil verdict and a score outside [0,1] all count as no
-// verdict, and a cancelled scan or a slow judge never holds the scan up.
-func (e *Engine) askJudge(ctx context.Context, ev *evaluation, j *compiledJudgment) (verdict *judgment.JudgeVerdict, cause string) {
+// askJudge returns the scan's judge verdict. The judge is called at most
+// once per scan, whatever the number of judgments with a model assessor: the
+// first call's outcome is reused by the rest.
+func (e *Engine) askJudge(ctx context.Context, ev *evaluation) (verdict *judgment.JudgeVerdict, cause string) {
+	if !ev.judged {
+		ev.judged = true
+		ev.judgeVerdict, ev.judgeCause = e.traceJudge(ctx, ev)
+	}
+	return ev.judgeVerdict, ev.judgeCause
+}
+
+// traceJudge makes the call under the "assess with model judge" span. The
+// judge is untrusted: a panic, an error, a nil verdict and a score outside
+// [0,1] all count as no verdict, and a cancelled scan, a slow judge or a
+// full judge pool never holds the scan up.
+func (e *Engine) traceJudge(ctx context.Context, ev *evaluation) (verdict *judgment.JudgeVerdict, cause string) {
 	ctx, span := telemetry.Tracer().Start(ctx, "assess with model judge")
 	defer span.End()
-	verdict, cause = e.callJudge(ctx, ev, j)
+	verdict, cause = e.callJudge(ctx, ev)
 	span.SetAttributes(attribute.String("shield.judge.outcome", cause))
 	if verdict == nil {
 		telemetry.Fail(span, "judge_unavailable", errJudgeUnavailable)
@@ -58,23 +69,55 @@ func (e *Engine) askJudge(ctx context.Context, ev *evaluation, j *compiledJudgme
 	return verdict, cause
 }
 
-func (e *Engine) callJudge(ctx context.Context, ev *evaluation, j *compiledJudgment) (verdict *judgment.JudgeVerdict, cause string) {
+// judgeSubject names the judgments that use the model assessor, and their
+// domain when they share one (custom otherwise). One judgment gives its own
+// name; several give their names joined by commas.
+func (ev *evaluation) judgeSubject() (name string, domain judgment.Domain) {
+	var names []string
+	for _, j := range ev.profile.judgments {
+		if !slices.ContainsFunc(j.assessors, func(a compiledAssessor) bool { return a.name == assessorModel }) {
+			continue
+		}
+		if len(names) == 0 {
+			domain = j.domain
+		} else if domain != j.domain {
+			domain = judgment.DomainCustom
+		}
+		names = append(names, j.name)
+	}
+	return strings.Join(names, ","), domain
+}
+
+func (e *Engine) callJudge(ctx context.Context, ev *evaluation) (verdict *judgment.JudgeVerdict, cause string) {
 	if ctx.Err() != nil {
 		return nil, judgeCancel
 	}
 	callCtx, cancel := context.WithTimeout(ctx, e.config.JudgeTimeout)
 	defer cancel()
+	// A slot is held until the judge returns, even when the scan has given
+	// up on it, so a judge that ignores its context can leak at most
+	// JudgeConcurrency goroutines.
+	select {
+	case e.judgeSlots <- struct{}{}:
+	case <-callCtx.Done():
+		if ctx.Err() != nil {
+			return nil, judgeCancel
+		}
+		return nil, judgeBusy
+	}
+	name, domain := ev.judgeSubject()
 	req := &judgment.JudgeRequest{
 		Text:      ev.judgeText(),
 		Direction: string(ev.input.Direction),
-		Judgment:  j.name,
-		Domain:    j.domain,
+		Judgment:  name,
+		Domain:    domain,
 		Findings:  ev.judgeFindings(),
 	}
 	// The channel holds the answer so a judge that ignores its context can
 	// finish later without blocking on a send nobody reads.
 	done := make(chan judgeAnswer, 1)
 	go func() {
+		defer func() { <-e.judgeSlots }()
 		defer func() {
 			if recover() != nil {
 				done <- judgeAnswer{err: errJudgeUnavailable}

@@ -60,6 +60,8 @@ type Engine struct {
 	profiles *profileCache
 	rates    *rateCounter
 	judge    judgment.Judge
+	// judgeSlots caps the judge calls in flight, Config.JudgeConcurrency.
+	judgeSlots chan struct{}
 
 	scansCompleted *telemetry.CounterVec
 	scanDuration   *telemetry.HistogramVec
@@ -124,6 +126,10 @@ func New(opts ...Option) (*Engine, error) {
 	if e.config.JudgeTimeout <= 0 {
 		e.config.JudgeTimeout = shield.DefaultJudgeTimeout
 	}
+	if e.config.JudgeConcurrency <= 0 {
+		e.config.JudgeConcurrency = shield.DefaultJudgeConcurrency
+	}
+	e.judgeSlots = make(chan struct{}, e.config.JudgeConcurrency)
 	e.registry.SetLogger(e.logger)
 	e.registry.SetMetrics(e.metrics)
 	e.scansCompleted = telemetry.NewCounterVec(e.metrics, ScansCompletedMetric,

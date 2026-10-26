@@ -49,6 +49,9 @@ type Config struct {
 	// JudgeTimeout bounds one judge call (default 5s).
 	JudgeTimeout time.Duration `json:"judge_timeout" mapstructure:"judge_timeout" yaml:"judge_timeout"`
 
+	// JudgeConcurrency caps the judge calls in flight (default 8).
+	JudgeConcurrency int `json:"judge_concurrency" mapstructure:"judge_concurrency" yaml:"judge_concurrency"`
+
 	// GroveDatabase is the name of a grove.DB registered in the DI container.
 	// When set, the extension resolves this named database and auto-constructs
 	// the appropriate store based on the driver type (pg/sqlite/mongo).
@@ -69,5 +72,6 @@ func DefaultConfig() Config {
 		MaxScanBytes:       shield.DefaultMaxScanBytes,
 		ProfileCacheTTL:    shield.DefaultProfileCacheTTL,
 		JudgeTimeout:       shield.DefaultJudgeTimeout,
+		JudgeConcurrency:   shield.DefaultJudgeConcurrency,
 	}
 }

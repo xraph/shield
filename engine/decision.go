@@ -8,6 +8,7 @@ import (
 	"github.com/xraph/shield/awareness/perception"
 	"github.com/xraph/shield/id"
 	"github.com/xraph/shield/instinct/detection"
+	"github.com/xraph/shield/judgment"
 	"github.com/xraph/shield/scan"
 )
 
@@ -94,6 +95,11 @@ type evaluation struct {
 	// piiRedacted tallies the personal data queued for redaction, by
 	// detector, for the PIIRedacted hook once the scan is not blocked.
 	piiRedacted []piiTally
+
+	// The scan's one judge call, once made.
+	judged       bool
+	judgeVerdict *judgment.JudgeVerdict
+	judgeCause   string
 
 	// labels are the topic detector names that matched, for boundaries.
 	labels []string

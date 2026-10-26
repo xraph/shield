@@ -88,11 +88,12 @@ func compileJudgment(j *judgment.Judgment, override float64) (*compiledJudgment,
 // highest finding score in its layers, finding_count is the number of
 // findings in its layer over saturate, capped at 1. The model assessor asks
 // the model judge when Config.ModelJudge is on and a judge is registered,
-// once per judgment; otherwise it is skipped with an info finding, as is any
+// once per scan however many judgments use it; otherwise it is skipped with an info finding, as is any
 // unknown assessor. The judge is untrusted and only max() joins its score to
 // the deterministic risk, so it can raise a risk and never lower it. A judge
 // that fails, times out or answers outside [0,1] gives an info finding and
-// the deterministic risk stands. Every judgment reports its risk level; it
+// the deterministic risk stands. The judge's reason is kept only on a
+// judgment finding that fires. Every judgment reports its risk level; it
 // fires when the risk reaches its threshold.
 func (e *Engine) runJudgments(ctx context.Context, ev *evaluation) {
 	for _, j := range ev.profile.judgments {
@@ -123,7 +124,7 @@ func (e *Engine) runJudgments(ctx context.Context, ev *evaluation) {
 				case !asked:
 					asked = true
 					var cause string
-					if verdict, cause = e.askJudge(ctx, ev, j); verdict == nil {
+					if verdict, cause = e.askJudge(ctx, ev); verdict == nil {
 						ev.add(&scan.Finding{
 							Layer: layerJudgment, Source: j.name, Message: "model judge unavailable", Action: actionInfo,
 							Details: map[string]any{"cause": cause},
