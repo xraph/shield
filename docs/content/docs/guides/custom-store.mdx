@@ -145,5 +145,5 @@ The `store/storetest` package has a shared suite for all of this, tenancy includ
 - Use compile-time interface checks: `var _ store.Store = (*MyStore)(nil)`.
 - Return the subsystem's not-found sentinel (`shield.ErrScanNotFound` and so on) when a row is missing, as the built-in stores do, so `errors.Is` works for callers.
 - Every `store.Store` method must follow the [store rules](/docs/concepts/multi-tenancy#the-store-rules): resolve the tenant with `store.Tenant(ctx, want)`, return the not-found sentinel for another tenant's row, and check policy and report scopes with `store.ScopeVisible`, `store.ScopeLevels`, `store.ScopeWritable`, `store.ReportScope` and `store.ReportLevels`. The engine relies on this to keep one tenant's scans away from another's rows.
-- Make primitive and profile names unique per app, tenant and name, and policy names unique per scope key.
+- Give primitive and profile names a unique key on `(app_id, tenant_id, name)`, and policy names one on `(scope_key, name)`.
 - Keep slice fields such as `Strategies`, `Detectors`, `Rules`, `Triggers` and `Actions` in JSON or JSONB columns, as the built-in SQL stores do.

@@ -52,7 +52,8 @@ const (
 	PIIActionFlag PIIAction = "flag"
 	// PIIActionBlock prevents content from passing.
 	PIIActionBlock PIIAction = "block"
-	// PIIActionVault redacts PII and stores the original encrypted.
+	// PIIActionVault redacts PII exactly as PIIActionRedact does. Shield
+	// stores no token and does not encrypt or keep the original value.
 	PIIActionVault PIIAction = "vault"
 )
 

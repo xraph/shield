@@ -216,28 +216,24 @@ Delete `shield.db` before you run it again, since the names are unique per app a
 
 ## Step 8: Add a plugin
 
-Plugins observe lifecycle events: scans starting, finishing and blocking, each layer firing, PII found and redacted, policies evaluated. Shield ships an audit plugin.
+Plugins observe lifecycle events: scans starting, finishing and blocking, each layer firing, PII found and redacted, policies evaluated. Shield ships an audit plugin. To try it, add `audithook "github.com/xraph/shield/audit_hook"` to the imports and replace the Step 2 engine with this:
 
 ```go
-import (
-    "context"
-    "log"
+    auditPlugin := audithook.New(audithook.RecorderFunc(
+        func(ctx context.Context, ev *audithook.AuditEvent) error {
+            log.Printf("audit: %s %s", ev.Action, ev.ResourceID)
+            return nil
+        },
+    ))
 
-    audithook "github.com/xraph/shield/audit_hook"
-    "github.com/xraph/shield/engine"
-)
-
-auditPlugin := audithook.New(audithook.RecorderFunc(
-    func(ctx context.Context, ev *audithook.AuditEvent) error {
-        log.Printf("audit: %s %s", ev.Action, ev.ResourceID)
-        return nil
-    },
-))
-
-eng, err := engine.New(
-    engine.WithStore(st),
-    engine.WithPlugin(auditPlugin),
-)
+    eng, err := engine.New(
+        engine.WithStore(st),
+        engine.WithPlugin(auditPlugin),
+    )
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer eng.Stop(ctx)
 ```
 
 The import path is `github.com/xraph/shield/audit_hook`, but the package name is `audithook`.

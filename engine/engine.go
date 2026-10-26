@@ -1,14 +1,15 @@
 // Package engine provides the layered safety execution engine.
 //
-// The engine processes content through six cognitive layers, each
-// modeled after human safety cognition:
+// The engine runs content through six layers modeled on human safety
+// cognition, in this order, and then the tenant's policies:
 //
-//	Layer 1: INSTINCTS    (fastest, <10ms)   — Injection, Jailbreak, Exfiltration
-//	Layer 2: AWARENESS    (perception, <50ms) — PII, Topic, Intent detection
-//	Layer 3: BOUNDARIES   (binary, <5ms)      — Hard topic/action/data limits
-//	Layer 4: VALUES       (ethical, <100ms)    — Toxicity, Brand, Honesty
-//	Layer 5: JUDGMENT     (contextual, <500ms) — Grounding, Relevance, Compliance
-//	Layer 6: REFLEXES     (policy, <10ms)      — Custom condition→action rules
+//	Layer 1: INSTINCTS    injection, jailbreak, exfiltration and manipulation patterns
+//	Layer 2: AWARENESS    PII, secret, topic and custom pattern detectors
+//	Layer 3: BOUNDARIES   topic, data, output and tool-call (action) limits
+//	Layer 4: VALUES       safety and toxicity lexicons, custom terms and patterns
+//	Layer 5: JUDGMENT     risk over the findings so far, plus the optional model judge
+//	Layer 6: REFLEXES     trigger and action rules
+//	then:    POLICIES     the tenant's org-level and assigned app-level rules
 //
 // Every scan runs inside a tenant and evaluates one safety profile of that
 // tenant, compiled from the store and cached (see Config.ProfileCacheTTL),

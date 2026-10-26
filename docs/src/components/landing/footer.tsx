@@ -62,8 +62,8 @@ export function Footer() {
             </Link>
             <p className="text-sm text-fd-muted-foreground leading-relaxed max-w-xs">
               Composable AI safety and governance library for Go. Scan inputs,
-              detect PII, enforce policies, and generate compliance reports at
-              scale.
+              outputs and tool calls, redact PII and secrets, and enforce
+              policies per tenant.
             </p>
             {/* Social links */}
             <div className="flex items-center gap-3 mt-6">

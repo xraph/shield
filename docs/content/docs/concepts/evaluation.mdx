@@ -113,7 +113,7 @@ Reflexes run by priority, highest first, then by name. A reflex fires when all o
 | `on_pattern` | Its regex matches the text |
 | `on_finding` | A finding's `layer:source` matches its glob |
 | `on_score` | The best finding score in layers matching its glob reaches its threshold |
-| `on_context` | Every `key=glob` pair matches. Keys are the string values of `Input.Context` plus `direction`, `source` and `untrusted` (and on a tool call, `tool`, `risk_class` and every `Metadata` key) |
+| `on_context` | Every `key=glob` pair matches. On a text scan the keys are the string values of `Input.Context` plus `direction`, `source` and `untrusted`. On a tool call they are `direction`, `tool`, `risk_class` and every `Metadata` key; there is no `untrusted` key, and `source` is empty |
 | `on_rate` | More than its threshold of scans matched the other triggers within its window, per tenant, app and reflex, in this process |
 | `always` | Always |
 

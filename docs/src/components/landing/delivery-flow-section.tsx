@@ -369,14 +369,14 @@ export function DeliveryFlowSection() {
             <SectionHeader
               badge="Safety Pipeline"
               title="From input to safe output."
-              description="Shield orchestrates the entire safety lifecycle — instinct checks, awareness detection, boundary enforcement, value alignment, judgment scoring, and reflex actions."
+              description="Every scan runs the whole safety pipeline: instinct checks, awareness detection, boundary enforcement, value rules, judgment scoring and reflex actions, then your policies."
               align="left"
             />
 
             <div className="mt-8 space-y-5">
               <FeatureBullet
                 title="Short-Circuit Execution"
-                description="Safety layers can short-circuit the pipeline early. If instincts detect a prompt injection, the scan terminates immediately without invoking downstream layers — minimizing latency and maximizing protection."
+                description="A block ends the scan early. When an instinct blocks a prompt injection, the deeper layers never run, so you get the verdict sooner."
                 delay={0.2}
               />
               <FeatureBullet

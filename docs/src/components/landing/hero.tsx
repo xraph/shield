@@ -173,9 +173,9 @@ export function Hero() {
               transition={{ duration: 0.5, delay: 0.6 }}
               className="mt-6 text-lg text-fd-muted-foreground leading-relaxed max-w-lg"
             >
-              Scan inputs and outputs, detect and vault PII, enforce safety
-              policies, and generate compliance reports &mdash; tenant-scoped,
-              plugin-extensible, and Forge-native.
+              Scan inputs, outputs and tool calls, redact PII and secrets, and
+              enforce safety policies. Every rule is scoped to a tenant, every
+              lifecycle event reaches your plugins, and it runs on Forge.
             </motion.p>
 
             {/* Install command */}
