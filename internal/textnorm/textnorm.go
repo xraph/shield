@@ -166,17 +166,28 @@ func stripHidden(s string) (string, []removal) {
 			kept = make([]byte, 0, len(s))
 		}
 		kept = append(kept, s[last:i]...)
-		// Each rune is judged on its own, except that one zero-width joiner
-		// does the job of joining two neighbours: a second ZWJ between the
-		// same two does none and counts.
+		// One zero-width joiner does the job of joining two neighbours: a
+		// second ZWJ between the same two does none and counts. Likewise one
+		// non-joiner, one LRM and one RLM per run do a job, and a mark typed
+		// twice in a row is a slip; any more of them are hiding something.
 		joined := false
+		var marks [3]int
+		prevMark := rune(-1)
 		for k := i; k < j; {
 			rk, sk := utf8.DecodeRuneInString(s[k:])
 			counted := k >= flagEnd && hides(rk, k, prev, base, next)
-			if k >= flagEnd && !counted && rk == 0x200D {
-				counted, joined = joined, true
+			if k >= flagEnd && !counted {
+				switch rk {
+				case 0x200D:
+					counted, joined = joined, true
+				case 0x200C, 0x200E, 0x200F:
+					m := markIndex(rk)
+					counted = marks[m] > 1 || marks[m] == 1 && prevMark != rk
+					marks[m]++
+				}
 			}
 			removed = append(removed, removal{at: k, size: sk, kept: len(kept), counted: counted})
+			prevMark = rk
 			k += sk
 		}
 		last, i = j, j
@@ -191,8 +202,8 @@ func stripHidden(s string) (string, []removal) {
 // given the visible runes around its run. The exceptions are the jobs these
 // runes do in ordinary text: a byte order mark that opens a file, a joiner
 // inside an emoji sequence or a non-Latin word, and direction marks and
-// non-joiners in non-Latin text (Persian, Arabic, Hebrew). Fold allows one
-// joiner per run of invisible runes.
+// non-joiners in non-Latin text (Persian, Arabic, Hebrew). stripHidden
+// limits how many of these one run of invisible runes may hold.
 func hides(r rune, i int, prev, base, next rune) bool {
 	switch r {
 	case 0xFEFF:
@@ -206,6 +217,17 @@ func hides(r rune, i int, prev, base, next rune) bool {
 		return !isScriptLetter(prev) || !isScriptLetter(next)
 	}
 	return true
+}
+
+// markIndex numbers the marks stripHidden limits per run: ZWNJ, LRM, RLM.
+func markIndex(r rune) int {
+	switch r {
+	case 0x200C:
+		return 0
+	case 0x200E:
+		return 1
+	}
+	return 2
 }
 
 // flagTags returns the byte length of the tag sequence a subdivision flag
@@ -468,8 +490,9 @@ func (t Text) Lines(start, end int) (lineStart, lineEnd int) {
 
 // Hidden returns the number of removed runes that hid something: every
 // invisible rune Fold removed except a leading byte order mark, joiners in
-// emoji sequences and non-Latin words, subdivision flag tags, and direction
-// marks or non-joiners that do not sit between two Latin letters.
+// emoji sequences and non-Latin words, subdivision flag tags, and the first
+// non-joiner, LRM and RLM of a run (and an immediate repeat of one) that do
+// not sit between two Latin letters.
 func (t Text) Hidden() int {
 	return len(t.hidden)
 }
