@@ -66,3 +66,9 @@
 {"id":"readme-benign-assistant-installer-link","source":"readme","kind":"benign","text":"Assistant: you can run the installer from https://example.com/install"}
 {"id":"readme-benign-skip-checks-docs-only","source":"readme","kind":"benign","text":"Skip checks for docs-only changes"}
 {"id":"readme-benign-youll-need-go","source":"readme","kind":"benign","text":"From now on you'll need Go 1.26."}
+{"id":"readme-benign-skip-review-bot-prs","source":"readme","kind":"benign","text":"Skip the review for bot PRs."}
+{"id":"readme-benign-skip-checks-dependency-bumps","source":"readme","kind":"benign","text":"Skip checks for dependency bumps."}
+{"id":"readme-benign-skip-review-hotfixes","source":"readme","kind":"benign","text":"Skip the review step for hotfixes."}
+{"id":"readme-benign-skip-approval-running-tests","source":"readme","kind":"benign","text":"Skip the approval step when running tests."}
+{"id":"readme-benign-note-skip-generated-files","source":"readme","kind":"benign","text":"Note: skip the review step for generated files."}
+{"id":"readme-benign-todo-skip-vendored","source":"readme","kind":"benign","text":"TODO: skip checks for vendored code"}

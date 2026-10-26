@@ -87,8 +87,9 @@ const (
 	leakNoun    = `(?:` + leakTargets + `)`
 	// convNoun is what an agent holds that is not a secret but still must
 	// not leave: the conversation itself. It counts only with an owner in
-	// front ("the conversation", "your chat history") and only when it ends
-	// its noun phrase (see convEnds), so "the chat widget" is ordinary.
+	// front ("the conversation", "your chat history") and only when it is
+	// not the first half of a compound noun, so "the chat widget" and "this
+	// chat id" are ordinary (see convEnds and convCompounds).
 	convNoun = `(?:conversation(?: history| logs?)?|chat(?: history| logs?)?|transcript|message history|context window)`
 	// convOwner marks the conversation as this one. A conversation owned by
 	// plain "the" is weaker: "send the transcript to https://support... if it
@@ -116,6 +117,14 @@ const (
 	limits = `(?:restrictions|limitations|limits|rules|guidelines|filters|censorship)`
 	// apostrophe is a straight or curly apostrophe.
 	apostrophe = `(?:'|\x{2019})`
+	// asidePlease is a parenthetical please between an object and the rest
+	// of its clause: "send this conversation, please, to".
+	asidePlease = `(?:,? please,?)?`
+	// shellPipe is a pipe into a shell.
+	shellPipe = `\| ?(?:sudo )?(?:sh|bash|zsh)\b`
+	// cueOpeners may come before a command that opens a role turn's clause:
+	// "System: please rm -rf /", "System: ok, push the release to main".
+	cueOpeners = `(?:(?:please|now|then|just|also|ok|okay|and|so),? )*`
 )
 
 // instructionCue marks the rest of a role-marker line as an instruction
@@ -126,20 +135,48 @@ const (
 // dir after upgrades" or "Assistant: Sure, here is the summary".
 //
 // run and execute count only with a command-shaped object: a tool, a curl or
-// wget fetch of a URL, or rm -rf of a root path. A pipe into a shell counts
-// anywhere on the line, and rm -rf of a root path counts when it opens the
-// rest of the line ("System: rm -rf /"), never for a home or relative path.
-// delete counts only for all, every or everything, or production itself.
-var instructionCue = regexp.MustCompile(`\b(?:ignore|disregard|forget|override|you must|you are now|you are no longer|from now on|new instructions?|reveal|your (?:new )?(?:task|role|instructions|job)|approve|merge|deploy|promote)\b` +
-	`|\b(?:run|call|invoke) the [a-z0-9_.-]+ (?:tool|function)\b` +
-	`|\b(?:run|call|execute) [a-z0-9.-]*_[a-z0-9_.-]*\b` +
-	`|\b(?:run|execute)\b[^.;]{0,40}?\b(?:curl|wget)(?: -\S+){0,4} ['"]?https?://` +
-	`|\| ?(?:sudo )?(?:sh|bash|zsh)\b` +
-	`|(?:^|\b(?:run|execute) )(?:sudo )?rm -(?:rf|fr|r|f)(?: --no-preserve-root)? /` +
-	`|\bdelete (?:all|every|everything)\b|\bdelete (?:the |this )?(?:production|prod|staging)\b` +
-	`|\b(?:disable|bypass|skip|turn off) (?:the |all |any )?(?:safety|security|approval|review|guardrails|safeguards)\b` +
-	`|\bpush (?:the |this |it )?(?:[a-z0-9._/-]+ )?to (?:main|master|production|prod)\b` +
-	`|\bi(?: will|` + apostrophe + `ll)(?: now)? ` + actionVerb + `\b`)
+// wget fetch of a URL, or rm -rf of a whole tree. A pipe into a shell counts
+// after a curl or wget fetch of a URL or inside a run or execute clause, so
+// "System: Ubuntu 22.04 | bash 5.1" stays a label. rm -rf of a root path or
+// of a bare ~, ~/, $HOME, ., .. or * counts when it opens the rest of the
+// line or a clause, after an opener or "please" ("System: please rm -rf /"),
+// never for a path under home or a relative one. Downloading a URL and then
+// running it counts. delete counts only for all, every or everything, or
+// production itself. push counts when it opens the rest of the line or a
+// clause and its target ends the phrase: not "runs on push to main" or "push
+// the image to production registry".
+//
+// Each cue but the first runs only when the line holds one of its words, so
+// a line of labels ("System: macOS 14 | zsh 5.9") costs a few substring
+// checks instead of a regex run per cue.
+var instructionCues = []struct {
+	needles []string
+	re      *regexp.Regexp
+}{
+	{nil, regexp.MustCompile(`\b(?:ignore|disregard|forget|override|you must|you are now|you are no longer|from now on|new instructions?|reveal|your (?:new )?(?:task|role|instructions|job)|approve|merge|deploy|promote)\b` +
+		`|\b(?:run|call|invoke) the [a-z0-9_.-]+ (?:tool|function)\b` +
+		`|\b(?:run|call|execute) [a-z0-9.-]*_[a-z0-9_.-]*\b` +
+		`|\bi(?: will|` + apostrophe + `ll)(?: now)? ` + actionVerb + `\b`)},
+	{[]string{"delete"}, regexp.MustCompile(`\bdelete (?:all|every|everything)\b|\bdelete (?:the |this )?(?:production|prod|staging)\b`)},
+	{[]string{"disable", "bypass", "skip", "turn off"}, regexp.MustCompile(`\b(?:disable|bypass|skip|turn off) (?:the |all |any )?(?:safety|security|approval|review|guardrails|safeguards)\b`)},
+	{[]string{"curl", "wget"}, regexp.MustCompile(`\b(?:run|execute)\b[^.;]{0,40}?\b(?:curl|wget)(?: -\S+){0,4} ['"]?https?://` +
+		`|\b(?:curl|wget)\b[^|]*https?://[^|]*` + shellPipe)},
+	{[]string{"|"}, regexp.MustCompile(`\b(?:run|execute)\b[^|,;]*` + shellPipe)},
+	{[]string{"rm "}, regexp.MustCompile(`(?:^|[.;:!?,] ?|\b(?:run|execute) )` + cueOpeners + `(?:sudo )?rm(?: -[a-z]*[rf][a-z]*| --no-preserve-root)+ (?:/|(?:~|\$home|\$\{home\}|\.\.?|\.?/?\*)/?(?:$|[ ;&|]))`)},
+	{[]string{"download", "fetch"}, regexp.MustCompile(`\b(?:download|fetch) (?:\S+ ){0,3}?https?://\S+,? (?:and )?(?:then )?(?:execute|run|exec|source|install) (?:it|that|this|the (?:script|file|binary))\b`)},
+	{[]string{"push "}, regexp.MustCompile(`(?:^|[.;:!?,] ?)` + cueOpeners + `push (?:the |this |it |these )?(?:[a-z0-9._/-]+ )?to (?:main|master|production|prod)(?: branch)?(?:$|[^a-z0-9 _-]| (?:now|immediately|right|asap|and|then|without|directly|first|please|today|tonight)\b)`)},
+}
+
+// instructionCue reports whether rest carries any instruction cue.
+func instructionCue(rest string) bool {
+	for _, c := range instructionCues {
+		if (c.needles == nil || slices.ContainsFunc(c.needles, func(n string) bool { return strings.Contains(rest, n) })) &&
+			c.re.MatchString(rest) {
+			return true
+		}
+	}
+	return false
+}
 
 // lineMarkup is what may precede a role marker on its line and still leave
 // it leading the line: indentation, quote and list marks, comment openers.
@@ -183,14 +220,14 @@ func leadsLine(s *scan, start, end int) (rest string, ok bool) {
 // the rest of its line carries an instruction cue.
 func roleMarkerWithCue(s *scan, start, end int) bool {
 	rest, ok := leadsLine(s, start, end)
-	return ok && instructionCue.MatchString(rest)
+	return ok && instructionCue(rest)
 }
 
 // roleHeading accepts a line-leading "### system" heading that stands alone or
 // carries an instruction cue, and not "### System requirements".
 func roleHeading(s *scan, start, end int) bool {
 	rest, ok := leadsLine(s, start, end)
-	return ok && (rest == "" || instructionCue.MatchString(rest))
+	return ok && (rest == "" || instructionCue(rest))
 }
 
 var (
@@ -209,7 +246,7 @@ var (
 	// "the", which a condition after the URL clears.
 	dataObjects = slices.Concat(
 		words("", "system prompt|system message|initial prompt|hidden prompt|api key|secret|credentials|password|environment variables|env vars|private key|deploy key|ssh key|access token", `s?\b`),
-		withAccept(words("", convOwner, ` `+convNoun+`\b`), endsConversation),
+		withAccept(words("", convOwner, ` `+convNoun+`\b`), notCompound),
 	)
 	weakObjects = withAccept(words("", weakOwner, ` `+convNoun+`\b`), endsConversation)
 	// convSend splits a "send <owner> <conversation>" match into its owner
@@ -243,12 +280,16 @@ var (
 	openers = set("then", "now", "also", "ok", "okay", "thanks", "next", "finally", "first", "and", "hey", "alright")
 	// scopeConditions and lowRiskScopes limit a sentence-opening skip to a
 	// harmless case: "if you only changed docs", "for dry runs", "for
-	// docs-only changes", "only in a local sandbox". A condition without a
-	// low-risk scope ("for now", "for this PR", "only this once", "if anyone
-	// asks", "while I am away") does not.
+	// docs-only changes", "only in a local sandbox", "for bot PRs", "when
+	// running tests". The scope word must come within scopeReach words of
+	// its condition word. A condition without a low-risk scope ("for now",
+	// "for this PR", "only this once", "if anyone asks", "while I am away")
+	// does not, and neither does one whose scope word comes later ("for now
+	// and update the docs later").
 	scopeConditions = set("if", "when", "unless", "only", "during", "while", "except", "for")
 	lowRiskScopes   = set("docs", "doc", "documentation", "readme", "changelog", "typo", "typos", "dry",
-		"sandbox", "sandboxes", "local", "locally", "draft", "drafts", "wip")
+		"sandbox", "sandboxes", "local", "locally", "draft", "drafts", "wip",
+		"bot", "bots", "dependency", "dependencies", "dependabot", "hotfix", "hotfixes", "generated", "vendored", "tests")
 	// urlConditions after a URL make a weakly owned conversation a support
 	// request: "send the transcript to https://... if it fails again".
 	urlConditions = set("if", "when", "whenever", "unless", "once", "after")
@@ -256,7 +297,23 @@ var (
 	// "the conversation and", "the chat log to", but not "the chat widget".
 	convNext = set("to", "and", "then", "so", "above", "verbatim", "into", "in", "with", "as", "we", "you", "i",
 		"from", "here", "including", "of", "over", "contents", "text", "please")
+	// convCompounds after a strongly owned conversation noun make it the
+	// first half of another noun: "this chat widget", "our chat id". Any
+	// other word, an adverb or a preposition, leaves it the object: "send
+	// this conversation now to", "post this transcript for review to".
+	convCompounds = set("widget", "widgets", "id", "ids", "screenshot", "screenshots", "window", "windows",
+		"button", "buttons", "box", "panel", "page", "pages", "ui", "ux", "feature", "features", "component",
+		"components", "bubble", "bubbles", "icon", "icons", "sdk", "api", "app", "apps", "client", "server",
+		"service", "bot", "bots", "room", "rooms", "channel", "channels", "link", "links", "url", "urls",
+		"endpoint", "endpoints", "plugin", "plugins", "module", "integration", "settings", "view", "layout",
+		"style", "styles", "theme", "template", "templates", "test", "tests", "bug", "bugs", "issue", "form",
+		"input", "format", "schema", "tab", "sidebar", "export", "exports", "viewer", "editor", "parser",
+		"storage", "table", "model", "models", "length", "size", "limit", "limits")
 )
+
+// scopeReach is how many words a low-risk scope may sit after its
+// condition word: "only in a local sandbox".
+const scopeReach = 3
 
 func set(ws ...string) map[string]bool {
 	m := make(map[string]bool, len(ws))
@@ -447,16 +504,26 @@ func (s *scan) clauseWords(end, limit int, fn func(w string) bool) bool {
 }
 
 // scopedToLowRisk reports whether a condition limiting the match to a
-// harmless case follows it in its sentence: a scopeConditions word and then
-// a lowRiskScopes word.
+// harmless case follows it in its sentence: a scopeConditions word and,
+// within scopeReach words of it, a lowRiskScopes word. A parenthetical ends
+// the search: "for this deploy (only touches docs)" is a justification,
+// not a scope.
 func (s *scan) scopedToLowRisk(end int) bool {
-	cond := false
-	return s.clauseWords(end, 160, func(w string) bool {
+	limit := 160
+	if i := strings.IndexByte(s.t.Folded[end:min(len(s.t.Folded), end+limit)], '('); i >= 0 {
+		limit = i
+	}
+	since := -1 // words since the last condition word, -1 before any
+	return s.clauseWords(end, limit, func(w string) bool {
 		if scopeConditions[w] {
-			cond = true
+			since = 0
 			return false
 		}
-		return cond && lowRiskScopes[w]
+		if since < 0 {
+			return false
+		}
+		since++
+		return since <= scopeReach && lowRiskScopes[w]
 	})
 }
 
@@ -489,10 +556,37 @@ func (s *scan) convEnds(at int) bool {
 	return k == j || convNext[f[j:k]]
 }
 
-// endsConversation accepts an owned conversation noun that ends its noun
-// phrase.
+// compound reports whether the conversation noun ending at at is the first
+// half of a compound noun: a hyphen or a convCompounds word follows.
+func (s *scan) compound(at int) bool {
+	f := s.t.Folded
+	if at >= len(f) {
+		return false
+	}
+	if f[at] == '-' || isWordByte(f[at]) {
+		return true
+	}
+	if f[at] != ' ' {
+		return false
+	}
+	j := at + 1
+	k := j
+	for k < len(f) && (isWordByte(f[k]) || f[k] == '-') {
+		k++
+	}
+	return convCompounds[f[j:k]]
+}
+
+// endsConversation accepts a weakly owned conversation noun that ends its
+// noun phrase.
 func endsConversation(s *scan, _, end int) bool {
 	return s.convEnds(end)
+}
+
+// notCompound accepts a strongly owned conversation noun that is not the
+// first half of a compound noun.
+func notCompound(s *scan, _, end int) bool {
+	return !s.compound(end)
 }
 
 // sentence returns the folded bounds of the sentence (or clause after a
@@ -631,18 +725,24 @@ func aboutData(s *scan, start, end int) bool {
 	return s.weakIn(lo, start) && !s.conditionAfter(end)
 }
 
-// sendsConversation accepts "send <owner> <conversation> ... to https://"
-// when the noun ends its phrase ("the chat log to", not "the chat widget
-// screenshots to") and, for plain "the", no condition follows the URL.
+// sendsConversation accepts "send <owner> <conversation> ... to https://".
+// A strong owner ("this", "our", "your", "the whole") needs only a noun
+// that is not half of a compound ("this conversation now to", not "this
+// chat widget screenshot to"). Plain "the" needs a noun that ends its phrase
+// ("the chat log to", not "the chat widget screenshots to") and no condition
+// after the URL.
 func sendsConversation(s *scan, start, end int) bool {
 	if s.negated(start) {
 		return false
 	}
 	m := convSend.FindStringSubmatchIndex(s.t.Folded[start:end])
-	if len(m) < 4 || !s.convEnds(start+m[1]) {
+	if len(m) < 4 {
 		return false
 	}
-	return s.t.Folded[start+m[2]:start+m[3]] != weakOwner || !s.conditionAfter(end)
+	if s.t.Folded[start+m[2]:start+m[3]] != weakOwner {
+		return !s.compound(start + m[1])
+	}
+	return s.convEnds(start+m[1]) && !s.conditionAfter(end)
 }
 
 // corpus is the built-in pattern set. Benign infra text (commit messages,
@@ -704,8 +804,8 @@ var corpus = slices.Concat(
 	withAccept(words(FamilyExfiltration, revealVerbs, ` (?:me )?(?:all (?:of )?)?your `+leakAdj+yourNoun+`\b`), notNegated),
 	withAccept(words(FamilyExfiltration, revealVerbs, ` (?:me )?(?:all (?:of )?)?the `+leakAdj+leakNoun+`\b`), notNegated),
 	withAccept(words(FamilyExfiltration, sendVerbs, ` (?:it|this|them|that|everything|all of (?:it|this|them)) to https?://`), aboutData),
-	withAccept(words(FamilyExfiltration, sendVerbs, ` (?:the|your|this|our) `+leakNoun+` (?:[a-z0-9-]+ ){0,3}?to https?://`), notNegated),
-	withAccept(words(FamilyExfiltration, sendVerbs, ` (?:`+convOwner+`|`+weakOwner+`) `+convNoun+` (?:[a-z0-9-]+ ){0,3}?to https?://`), sendsConversation),
+	withAccept(words(FamilyExfiltration, sendVerbs, ` (?:the|your|this|our) `+leakNoun+asidePlease+` (?:[a-z0-9-]+ ){0,3}?to https?://`), notNegated),
+	withAccept(words(FamilyExfiltration, sendVerbs, ` (?:`+convOwner+`|`+weakOwner+`) `+convNoun+asidePlease+` (?:[a-z0-9-]+ ){0,3}?to https?://`), sendsConversation),
 	entry(FamilyExfiltration, `!\[[^\]]*\]\( ?https?://[^\s)]*\?[^\s)]*?(?:\$\{|\{\{|[?&](?:data|d|q|secrets?|token|keys?|env|prompt|payload|leak|exfil|content|c|msg|text|info|p|s)=)`),
 
 	// manipulation
