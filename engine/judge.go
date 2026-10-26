@@ -5,8 +5,6 @@ import (
 	"errors"
 	"slices"
 	"strings"
-	"unicode"
-	"unicode/utf8"
 
 	"go.opentelemetry.io/otel/attribute"
 
@@ -14,9 +12,6 @@ import (
 	"github.com/xraph/shield/internal/telemetry"
 	"github.com/xraph/shield/judgment"
 )
-
-// maxJudgeReasonBytes bounds the judge's reason in a finding's details.
-const maxJudgeReasonBytes = 200
 
 // Why a judge call gave no verdict. They are the cause detail of the
 // "model judge unavailable" finding and the outcome of its span.
@@ -223,24 +218,4 @@ func (ev *evaluation) builtinMatches() (secrets, pii []perception.Match) {
 		}
 	}
 	return secrets, pii
-}
-
-// cleanReason makes a judge's reason fit for a finding: invalid UTF-8,
-// control and format characters are dropped, and the rest is cut to
-// maxJudgeReasonBytes on a character boundary.
-func cleanReason(s string) string {
-	s = strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) || !unicode.IsGraphic(r) {
-			return -1
-		}
-		return r
-	}, strings.ToValidUTF8(s, ""))
-	if len(s) <= maxJudgeReasonBytes {
-		return s
-	}
-	cut := maxJudgeReasonBytes
-	for cut > 0 && !utf8.RuneStart(s[cut]) {
-		cut--
-	}
-	return s[:cut]
 }

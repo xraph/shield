@@ -18,6 +18,8 @@ A scan now needs a profile. Pass `scan.Input.Profile`, or set `default_profile` 
 
 Six config keys are new, all with defaults you can leave alone: `max_scan_bytes` (1 MiB), `profile_cache_ttl` (30s), `store_redacted` (false), `model_judge` (false), `judge_timeout` (5s) and `judge_concurrency` (8). A scan larger than `max_scan_bytes` fails with `shield.ErrInputTooLarge`, so raise it if you scan long logs.
 
+If you turn on the model judge, a judgment finding it pushed over the threshold carries the judge's score as `judge_score` in its details. You won't find the judge's reason there or in the stored scan. A model wrote it, and findings only hold names, counts and offsets.
+
 The scan metrics gain label values: `direction` can be `tool_call`, and `decision` can be `require_approval`. The plugin hooks that never fired before (`OnScanBlocked`, `OnScanFailed`, the six layer hooks, the PII, policy and profile hooks) all fire now.
 
 ### Every call needs a tenant

@@ -20,8 +20,8 @@ type JudgeRequest struct {
 }
 
 // JudgeVerdict is a judge's answer. Score is a risk in [0,1]. Reason is
-// untrusted text: the engine strips control characters and truncates it
-// before it reaches a finding.
+// untrusted model text. The engine never stores it: a judgment finding
+// keeps the score only, as judge_score in its details.
 type JudgeVerdict struct {
 	Score  float64
 	Reason string

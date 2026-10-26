@@ -196,7 +196,7 @@ The judge is optional and off by default. Register one with `engine.WithJudge` a
 - It's called at most once per scan, however many judgments use it, and at most `Config.JudgeConcurrency` calls (8 by default) run at once across the engine.
 - Each call is bounded by `Config.JudgeTimeout` (5 seconds by default). A scan that can't get a slot in time, a judge that errors or times out, and a score outside `[0, 1]` all give a `model judge unavailable` info finding, and the deterministic result stands.
 - It can only raise risk. The judgment's risk becomes the larger of the deterministic risk and the judge's score.
-- Its reason is untrusted. Control characters are stripped, it's cut to 200 bytes, and it's kept only on a judgment finding that fires.
+- Its reason is untrusted model text, so Shield never stores it. A judgment finding that fires keeps the judge's score as `judge_score` in its details, and nothing the judge wrote.
 
 `Capabilities().ModelJudge` tells you whether it's on.
 

@@ -149,11 +149,10 @@ func (e *Engine) runJudgments(ctx context.Context, ev *evaluation) {
 		level := riskLevel(risk)
 		if (weights > 0 || verdict != nil) && risk >= j.threshold-scoreTolerance {
 			details := map[string]any{"risk_level": string(level), "threshold": j.threshold}
+			// The judge's reason is untrusted model text, so a finding keeps
+			// its score only.
 			if verdict != nil {
 				details["judge_score"] = verdict.Score
-				if reason := cleanReason(verdict.Reason); reason != "" {
-					details["judge_reason"] = reason
-				}
 			}
 			ev.add(&scan.Finding{
 				Layer: layerJudgment, Source: j.name, Message: "risk reached the judgment threshold", Score: risk, Action: j.action,

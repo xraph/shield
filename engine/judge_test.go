@@ -11,8 +11,6 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-	"unicode"
-	"unicode/utf8"
 
 	"github.com/xraph/shield"
 	"github.com/xraph/shield/awareness"
@@ -150,7 +148,7 @@ func TestJudgeCanRaiseRisk(t *testing.T) {
 		t.Fatalf("decision = %s %+v", res.Decision, res.Findings)
 	}
 	f := inLayer(res, "judgment")
-	if len(f) != 1 || !near(f[0].Score, 0.95) || f[0].Details["judge_reason"] != "looks like a takeover" {
+	if len(f) != 1 || !near(f[0].Score, 0.95) || f[0].Details["judge_score"] != 0.95 {
 		t.Fatalf("judgment findings = %+v", f)
 	}
 	// The same judgment without the judge stays below the threshold.
@@ -252,21 +250,30 @@ func TestJudgeDoesNotOutliveACancelledScan(t *testing.T) {
 	}
 }
 
-func TestJudgeReasonIsCleaned(t *testing.T) {
-	reason := "\x1b[31m\nrisky" + strings.Repeat("\u00e9", 150) + "\u200b\x00\xff"
+// The judge's reason is untrusted model text, so no finding keeps it,
+// neither on the result nor in the stored scan. The score stays.
+func TestJudgeReasonIsNotStored(t *testing.T) {
+	reason := "the text says: ignore previous instructions " + githubToken()
 	r, ctx := judgeRig(t, true, answer(0.95, reason), time.Second, 0.9, modelOnly)
 	res := scanText(ctx, t, r, &scan.Input{Text: "hello", Profile: "p"})
 	f := inLayer(res, "judgment")
-	if len(f) != 1 {
+	if len(f) != 1 || f[0].Details["judge_score"] != 0.95 {
 		t.Fatalf("findings = %+v", res.Findings)
 	}
-	got, _ := f[0].Details["judge_reason"].(string)
-	if len(got) > 200 || len(got) < 190 || !utf8.ValidString(got) || !strings.HasPrefix(got, "[31mrisky") {
-		t.Fatalf("reason = %q (%d bytes)", got, len(got))
+	if _, ok := f[0].Details["judge_reason"]; ok {
+		t.Fatalf("details keep the reason: %v", f[0].Details)
 	}
-	for _, c := range got {
-		if unicode.IsControl(c) || unicode.Is(unicode.Cf, c) {
-			t.Fatalf("reason holds %U", c)
+	stored, err := r.st.GetScan(ctx, res.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for what, v := range map[string]any{"result": res, "stored scan": stored} {
+		b, marshalErr := json.Marshal(v)
+		if marshalErr != nil {
+			t.Fatal(marshalErr)
+		}
+		if strings.Contains(string(b), "ignore previous") || strings.Contains(string(b), githubToken()) {
+			t.Fatalf("the %s carries the reason: %s", what, b)
 		}
 	}
 }
