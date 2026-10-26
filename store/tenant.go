@@ -98,3 +98,36 @@ func ScopeWritable(ctx context.Context, key, level string) error {
 	}
 	return nil
 }
+
+// ReportScope is the one compliance report scope ctx may read: a tenant's
+// own org scope, or, with no tenant on ctx, the app scope of the context
+// app (an operator call). App-level reports are shared by every tenant of the
+// app, so a tenant never reads them. ok is false when ctx names neither.
+func ReportScope(ctx context.Context) (key, level string, ok bool) {
+	if tenant := shield.TenantFromContext(ctx); tenant != "" {
+		return tenant, levelOrg, true
+	}
+	if app := shield.AppFromContext(ctx); app != "" {
+		return app, levelApp, true
+	}
+	return "", "", false
+}
+
+// ReportLevels resolves which scope levels a compliance report list keyed by
+// key may cover. An empty key is ErrTenantRequired. With no tenant on ctx the
+// list is a filter-only call and gets no level restriction (nil). With a
+// tenant on ctx only its own org level is readable: any other key is
+// ErrTenantMismatch.
+func ReportLevels(ctx context.Context, key string) ([]string, error) {
+	if key == "" {
+		return nil, shield.ErrTenantRequired
+	}
+	tenant := shield.TenantFromContext(ctx)
+	if tenant == "" {
+		return nil, nil
+	}
+	if key != tenant {
+		return nil, shield.ErrTenantMismatch
+	}
+	return []string{levelOrg}, nil
+}

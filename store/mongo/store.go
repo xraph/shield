@@ -1524,13 +1524,14 @@ func (s *Store) CreateReport(ctx context.Context, report *compliance.Report) err
 }
 
 func (s *Store) GetReport(ctx context.Context, reportID id.ComplianceReportID) (*compliance.Report, error) {
+	key, level, ok := store.ReportScope(ctx)
+	if !ok {
+		return nil, shield.ErrComplianceNotFound
+	}
 	var m complianceReportModel
-	err := s.mdb.NewFind(&m).Filter(bson.M{"_id": reportID.String()}).Scan(ctx)
+	err := s.mdb.NewFind(&m).Filter(bson.M{"_id": reportID.String(), "scope_key": key, "scope_level": level}).Scan(ctx)
 	if err != nil {
 		return nil, notFoundOrWrap(err, shield.ErrComplianceNotFound, "get compliance report")
-	}
-	if !store.ScopeVisible(ctx, m.ScopeKey, m.ScopeLevel) {
-		return nil, shield.ErrComplianceNotFound
 	}
 	return complianceFromModel(&m)
 }
@@ -1539,7 +1540,7 @@ func (s *Store) ListReports(ctx context.Context, filter *compliance.ListFilter) 
 	if filter == nil {
 		return nil, shield.ErrTenantRequired
 	}
-	levels, levelErr := store.ScopeLevels(ctx, filter.ScopeKey, "")
+	levels, levelErr := store.ReportLevels(ctx, filter.ScopeKey)
 	if levelErr != nil {
 		return nil, levelErr
 	}

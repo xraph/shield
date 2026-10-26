@@ -173,7 +173,9 @@ func dashboardPredicate(scope store.Scope, kind string) bson.M {
 			{"scope_key": scope.AppID, "scope_level": "app", "tenant_ids": scope.TenantID},
 		}}
 	case "compliance":
-		key, level := scope.ReportScope()
+		// A tenant reads only its own reports; app-level reports need the
+		// host-granted app scope.
+		key, level := scope.PolicyScope()
 		return bson.M{"scope_key": key, "scope_level": level}
 	}
 	return bson.M{"app_id": scope.AppID, "tenant_id": scope.TenantID}

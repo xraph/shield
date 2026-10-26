@@ -180,8 +180,9 @@ func (s Scope) AppScope() bool {
 	return s.PolicyLevel == levelApp && s.PolicyKey != "" && s.PolicyKey == s.AppID
 }
 
-// PolicyScope is where a dashboard policy write lands and the only scope a
-// policy update or delete may touch: the app scope for an app-scope actor
+// PolicyScope is where a dashboard policy write lands, the only scope a
+// policy update or delete may touch, and the only scope of the compliance
+// reports a dashboard actor reads: the app scope for an app-scope actor
 // (see AppScope), otherwise the actor tenant's org scope. App-level policies
 // are shared by every tenant of the app, so a tenant actor never writes
 // them; it reads the ones assigned to it (see the store's dashboard list and
@@ -201,15 +202,6 @@ func DashboardWritable(scope Scope, kind string, row map[string]any) bool {
 	}
 	key, level := scope.PolicyScope()
 	return row["scope_key"] == key && row["scope_level"] == level
-}
-
-// ReportScope is the scope of dashboard compliance reports: the host's
-// explicit policy scope, else the app.
-func (s Scope) ReportScope() (key, level string) {
-	if s.PolicyKey != "" && (s.PolicyLevel == levelApp || s.PolicyLevel == levelOrg) {
-		return s.PolicyKey, s.PolicyLevel
-	}
-	return s.AppID, levelApp
 }
 
 // TokenStats includes the entire authorized tenant, independent of pagination.

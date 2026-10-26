@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xraph/shield"
+	"github.com/xraph/shield/compliance"
 	"github.com/xraph/shield/id"
 	"github.com/xraph/shield/pii"
 	"github.com/xraph/shield/store"
@@ -350,6 +352,73 @@ func testPrivacyTypeTotals(t *testing.T, factory func(*testing.T) Backend) {
 	}
 }
 
+// testReportTenancy pins that tenants of one app never reach each other's
+// compliance reports, through the store API or the dashboard, and that
+// app-level reports need the app scope: tenant b cannot see or delete
+// tenant a's report, and no tenant reads the app's shared reports.
+func testReportTenancy(t *testing.T, factory func(*testing.T) Backend) {
+	s := factory(t)
+	ctx := context.Background()
+	a := tenantCtx("tenant-a", tenantApp)
+	b := tenantCtx("tenant-b", tenantApp)
+	operator := shield.WithApp(context.Background(), tenantApp)
+	mine := newReport("tenant-a")
+	if err := s.CreateReport(a, mine); err != nil {
+		t.Fatal(err)
+	}
+	shared := newReport(tenantApp)
+	shared.ScopeLevel = "app"
+	if err := s.CreateReport(operator, shared); err != nil {
+		t.Fatal(err)
+	}
+
+	// Store API.
+	if _, err := s.GetReport(a, mine.ID); err != nil {
+		t.Fatalf("owner read: %v", err)
+	}
+	if _, err := s.GetReport(b, mine.ID); !errors.Is(err, shield.ErrComplianceNotFound) {
+		t.Fatalf("tenant-b reads tenant-a's report: %v", err)
+	}
+	if _, err := s.GetReport(a, shared.ID); !errors.Is(err, shield.ErrComplianceNotFound) {
+		t.Fatalf("a tenant reads the app's report: %v", err)
+	}
+	if _, err := s.GetReport(operator, shared.ID); err != nil {
+		t.Fatalf("operator read of the app report: %v", err)
+	}
+	if _, err := s.ListReports(b, &compliance.ListFilter{ScopeKey: "tenant-a"}); !errors.Is(err, shield.ErrTenantMismatch) {
+		t.Fatalf("tenant-b lists tenant-a's reports: %v", err)
+	}
+	if _, err := s.ListReports(a, &compliance.ListFilter{ScopeKey: tenantApp}); !errors.Is(err, shield.ErrTenantMismatch) {
+		t.Fatalf("a tenant lists the app's reports: %v", err)
+	}
+
+	// Dashboard.
+	scopeA := store.Scope{TenantID: "tenant-a", AppID: tenantApp}
+	scopeB := store.Scope{TenantID: "tenant-b", AppID: tenantApp}
+	appScope := store.Scope{TenantID: "tenant-a", AppID: tenantApp, PolicyKey: tenantApp, PolicyLevel: "app"}
+	for name, want := range map[string]struct {
+		scope store.Scope
+		total int64
+	}{"tenant-a": {scopeA, 1}, "tenant-b": {scopeB, 0}, "app": {appScope, 1}} {
+		page, err := s.DashboardList(ctx, want.scope, "compliance", store.Filter{Limit: 25})
+		if err != nil || page.Total != want.total {
+			t.Fatalf("%s lists %d reports (%v), want %d", name, page.Total, err, want.total)
+		}
+	}
+	if _, err := s.DashboardGet(ctx, scopeB, "compliance", mine.ID.String()); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("tenant-b reads tenant-a's report on the dashboard: %v", err)
+	}
+	if _, err := s.DashboardGet(ctx, scopeA, "compliance", shared.ID.String()); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("a tenant reads the app's report on the dashboard: %v", err)
+	}
+	if err := s.DashboardDelete(ctx, scopeB, "compliance", mine.ID.String()); err == nil {
+		t.Fatal("tenant-b deleted tenant-a's report")
+	}
+	if _, err := s.DashboardGet(ctx, scopeA, "compliance", mine.ID.String()); err != nil {
+		t.Fatalf("tenant-a's report gone: %v", err)
+	}
+}
+
 type Backend interface {
 	store.Store
 	store.DashboardStore
@@ -364,6 +433,7 @@ func Run(t *testing.T, factory func(*testing.T) Backend) {
 	t.Run("scope-and-round-trip", func(t *testing.T) { testDashboardScopeAndNestedRoundTrip(t, factory) })
 	t.Run("paging-and-assignment", func(t *testing.T) { testDashboardPagingClearAndAssignment(t, factory) })
 	t.Run("policy-tenancy", func(t *testing.T) { testDashboardPolicyTenancy(t, factory) })
+	t.Run("report-tenancy", func(t *testing.T) { testReportTenancy(t, factory) })
 	t.Run("privacy-type-totals", func(t *testing.T) { testPrivacyTypeTotals(t, factory) })
 	t.Run("privacy-and-retention", func(t *testing.T) { testPrivacyMetadataAndBoundedRetention(t, factory) })
 }

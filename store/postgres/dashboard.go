@@ -164,7 +164,9 @@ func dashboardPredicate(scope store.Scope, kind string) (predicate string, args 
 		return "((scope_key = ? AND scope_level = 'org') OR (scope_key = ? AND scope_level = 'app' AND id IN " +
 			"(SELECT policy_id FROM shield_policy_tenants WHERE tenant_id = ?)))", []any{scope.TenantID, scope.AppID, scope.TenantID}
 	case "compliance":
-		key, level := scope.ReportScope()
+		// A tenant reads only its own reports; app-level reports need the
+		// host-granted app scope.
+		key, level := scope.PolicyScope()
 		return "scope_key = ? AND scope_level = ?", []any{key, level}
 	}
 	return "app_id = ? AND tenant_id = ?", []any{scope.AppID, scope.TenantID}

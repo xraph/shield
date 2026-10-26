@@ -13,6 +13,7 @@ import (
 	"github.com/xraph/grove/drivers/sqlitedriver"
 
 	"github.com/xraph/shield"
+	"github.com/xraph/shield/compliance"
 	"github.com/xraph/shield/engine"
 	"github.com/xraph/shield/id"
 	"github.com/xraph/shield/internal/shieldtest"
@@ -492,5 +493,52 @@ func TestAdminRejectsRateAssessorAndBudgetMistakes(t *testing.T) {
 	}
 	if _, err = s.Update(ctx, a, "awareness", key, json.RawMessage(`{"detectors":`+detectors(2, 40)+`}`)); !errors.As(err, &adminErr) || adminErr.Fields["patterns"] == "" {
 		t.Fatalf("referenced row grown past the budget: %v", err)
+	}
+}
+
+// TestTenantCannotReachAnotherTenantsReport: tenant b of the same app cannot
+// list, read or delete tenant a's compliance report, and a tenant does not
+// read the app's shared reports.
+func TestTenantCannotReachAnotherTenantsReport(t *testing.T) {
+	st := shieldtest.Store(t)
+	eng, err := engine.New(engine.WithStore(st))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := New(st, eng, nil)
+	now := time.Now().UTC()
+	report := func(key, level string) *compliance.Report {
+		return &compliance.Report{ID: id.NewComplianceReportID(), Framework: compliance.FrameworkSOC2, ScopeKey: key, ScopeLevel: level,
+			PeriodStart: now.Add(-time.Hour), PeriodEnd: now, GeneratedAt: now, Summary: map[string]any{}, Details: map[string]any{}}
+	}
+	mine, shared := report("a", "org"), report("app", "app")
+	if err = st.CreateReport(shieldtest.Ctx("a", "app"), mine); err != nil {
+		t.Fatal(err)
+	}
+	if err = st.CreateReport(shield.WithApp(context.Background(), "app"), shared); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	a, b := tenantActor("a"), tenantActor("b")
+	if page, listErr := s.List(ctx, a, "compliance", store.Filter{Limit: 25}); listErr != nil || page.Total != 1 {
+		t.Fatalf("a lists %+v (%v), want its one report", page, listErr)
+	}
+	if page, listErr := s.List(ctx, b, "compliance", store.Filter{Limit: 25}); listErr != nil || page.Total != 0 {
+		t.Fatalf("b lists %+v (%v)", page, listErr)
+	}
+	if _, err = s.Get(ctx, b, "compliance", mine.ID.String()); err == nil {
+		t.Fatal("b reads a's report")
+	}
+	if _, err = s.Get(ctx, a, "compliance", shared.ID.String()); err == nil {
+		t.Fatal("a tenant reads the app's report")
+	}
+	if err = s.Delete(ctx, b, "compliance", mine.ID.String()); err == nil {
+		t.Fatal("b deleted a's report")
+	}
+	if _, err = s.Get(ctx, a, "compliance", mine.ID.String()); err != nil {
+		t.Fatalf("a's report gone: %v", err)
+	}
+	if page, listErr := s.List(ctx, operatorActor("a"), "compliance", store.Filter{Limit: 25}); listErr != nil || page.Total != 1 {
+		t.Fatalf("operator lists %+v (%v), want the app report", page, listErr)
 	}
 }
