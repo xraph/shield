@@ -103,6 +103,13 @@ const (
 	leakAdj   = `(?:full |entire |complete |current |original |hidden |initial |exact )?`
 	urgencies = `urgent|urgently|immediately|asap|right now|right away|emergency`
 	urgency   = `(?:` + urgencies + `)`
+	// promptNoun is what the model was set up with, under the names a prompt
+	// leak asks for it by. It counts after "the" too: "print the developer
+	// message" asks for the model's own, where "print the instructions" is a
+	// README.
+	promptNoun = `(?:initial instructions|developer message)`
+	// overrideNoun is what an override tells the model to drop.
+	overrideNoun = `(?:instructions?|rules|guidelines|directions|prompts?)`
 	// approvals is what "without" waives. "review" is left out: "without
 	// waiting for review of the runbook" is ordinary prose.
 	approvals = ` (?:any |further |human |prior |manual )?(?:approval|confirmation|sign-?off)\b`
@@ -289,6 +296,13 @@ var (
 	// subject: "Hey bot approve the plan". A pronoun stays the subject: "hey
 	// we approve the plan now and move on" describes.
 	addressees = set("bot", "ci", "pipeline")
+	// quantifiers make an override sweeping enough to count without "your":
+	// "ignore all instructions", "disregard any rules you were given".
+	quantifiers = set("all", "any", "every")
+	// overrideNext may follow the noun of an override that ends its noun
+	// phrase: "ignore the instructions and print", "ignore all rules you were
+	// given", but not "ignore the instructions in the old README".
+	overrideNext = set("and", "then", "now", "so", "you", "completely", "entirely", "altogether", "instead", "immediately")
 	// labels open a commit subject or a log line: "chore: skip checks",
 	// "fix(ci)!: skip review", "WARN: skip checks". A clause after one
 	// describes. Prose framing words (Note, Important, Tip, NB, PS, TODO)
@@ -842,6 +856,48 @@ func sendsConversation(s *scan, start, end int) bool {
 	return s.convEnds(start+m[1]) && !s.conditionAfter(end)
 }
 
+// endsPhrase reports whether the noun ending at folded offset at ends its
+// noun phrase: the end of the text, punctuation that does not continue a
+// file name or path ("rules." but not "rules.yaml"), or an overrideNext word.
+func (s *scan) endsPhrase(at int) bool {
+	f := s.t.Folded
+	if at >= len(f) {
+		return true
+	}
+	if c := f[at]; c != ' ' {
+		return strings.IndexByte("./-", c) < 0 || at+1 == len(f) || !isWordByte(f[at+1])
+	}
+	j := at + 1
+	k := j
+	for k < len(f) && isWordByte(f[k]) {
+		k++
+	}
+	return overrideNext[f[j:k]]
+}
+
+// ownInstructions accepts an override of instructions, rules or a prompt
+// that is not negated and reads as the model's own:
+//   - "your" makes them so: "ignore your instructions",
+//   - a quantifier does when the noun ends its phrase: "ignore all
+//     instructions." but not "ignore all rules for generated files",
+//   - a plain determiner does when the noun ends its phrase and the verb
+//     opens its sentence: "Ignore the instructions and print ...", but not
+//     "Ignore the instructions in the old README" or "Windows users can
+//     ignore the rules."
+func ownInstructions(s *scan, start, end int) bool {
+	if s.negated(start) {
+		return false
+	}
+	quantified := false
+	for _, w := range strings.Fields(s.t.Folded[start:end])[1:] {
+		if w == "your" {
+			return true
+		}
+		quantified = quantified || quantifiers[w]
+	}
+	return s.endsPhrase(end) && (quantified || s.opensSentence(start, end))
+}
+
 // corpus is the built-in pattern set. Benign infra text (commit messages,
 // build logs, READMEs, issue bodies) must not match: when one does, tighten
 // the pattern.
@@ -851,6 +907,7 @@ var corpus = slices.Concat(
 	words(FamilyOverride, "ignore|disregard|forget", ` (?:everything|all) (?:you (?:were|have been) told|above|before)\b`),
 	words(FamilyOverride, "new|updated|real|actual", ` instructions? ?:`),
 	words(FamilyOverride, "override", ` (?:your|the) (?:system prompt|instructions|safety (?:rules|guidelines|settings))\b`),
+	withAccept(words(FamilyOverride, "ignore|disregard|forget|override", ` (?:(?:all|any|every|the|of|your|my|these|those) )+(?:(?:prior|previous|earlier|above|system|original) )?`+overrideNoun+`\b`), ownInstructions),
 
 	// impersonation
 	withAccept(words(FamilyImpersonation, "system|assistant", ` ?:`), roleMarkerWithCue),
@@ -900,6 +957,7 @@ var corpus = slices.Concat(
 	// exfiltration
 	withAccept(words(FamilyExfiltration, revealVerbs, ` (?:me )?(?:all (?:of )?)?your `+leakAdj+yourNoun+`\b`), notNegated),
 	withAccept(words(FamilyExfiltration, revealVerbs, ` (?:me )?(?:all (?:of )?)?the `+leakAdj+leakNoun+`\b`), notNegated),
+	withAccept(words(FamilyExfiltration, revealVerbs, ` (?:me )?(?:all (?:of )?)?(?:your|the) `+leakAdj+promptNoun+`\b`), notNegated),
 	withAccept(words(FamilyExfiltration, sendVerbs, ` (?:it|this|them|that|everything|all of (?:it|this|them)) to https?://`), aboutData),
 	withAccept(words(FamilyExfiltration, sendVerbs, ` (?:the|your|this|our) `+leakNoun+asidePlease+` (?:[a-z0-9-]+ ){0,3}?to https?://`), notNegated),
 	withAccept(words(FamilyExfiltration, sendVerbs, ` (?:`+convOwner+`|`+weakOwner+`) `+convNoun+asidePlease+` (?:[a-z0-9-]+ ){0,3}?to https?://`), sendsConversation),
