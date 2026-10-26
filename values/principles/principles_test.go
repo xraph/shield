@@ -31,9 +31,17 @@ func TestSafetyLexicon(t *testing.T) {
 		"TRUNCATE TABLE events;",
 		"git push origin main --force",
 		"docker system prune -a --volumes",
-		// The rm detector is the instincts' (see TestSafetyCommandsAreTheInstinctCue):
-		// any absolute path counts as a root until 4b tunes it.
+		// The rm detector is the instincts' (see TestSafetyCommandsAreTheInstinctCue).
+		// Root, a system directory, home and the working directory count.
 		"rm -rf /etc",
+		"rm -rf /*",
+		"rm -rf /.",
+		"rm -rf /usr/*",
+		"rm -rf /home",
+		"rm -rf ~/*",
+		"rm -rf $HOME/*",
+		`rm -rf "$HOME"`,
+		"rm -rf --no-preserve-root /",
 	} {
 		if _, n := Score(text, lex); n == 0 {
 			t.Errorf("%q: no match", text)
@@ -41,6 +49,13 @@ func TestSafetyLexicon(t *testing.T) {
 	}
 	for _, text := range []string{
 		"rm -rf ./build",
+		// A path under a system directory is not the directory.
+		"rm -rf /var/lib/apt/lists/*",
+		"rm -rf /tmp/*",
+		"rm -rf /tmp/cache",
+		"apk add --no-cache curl && rm -rf /var/cache/apk/*",
+		"RUN pip install -r requirements.txt && rm -rf /root/.cache",
+		"rm -rf /etc/nginx/sites-enabled/default",
 		"DROP TABLE IF EXISTS tmp_x",
 		"delete from users where id = 4;",
 		"the form was dropped into the database",
