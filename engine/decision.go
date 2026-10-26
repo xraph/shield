@@ -4,6 +4,7 @@ import (
 	"maps"
 	"slices"
 
+	"github.com/xraph/shield/awareness"
 	"github.com/xraph/shield/awareness/perception"
 	"github.com/xraph/shield/id"
 	"github.com/xraph/shield/instinct/detection"
@@ -13,6 +14,9 @@ import (
 // removedInstruction replaces each line an instinct removes.
 const removedInstruction = "[shield: removed suspected instruction]"
 
+// redactedMask replaces each span a reflex redacts.
+const redactedMask = "[REDACTED]"
+
 // Finding layers.
 const (
 	layerInstinct  = "instinct"
@@ -21,15 +25,25 @@ const (
 	layerValues    = "values"
 	layerJudgment  = "judgment"
 	layerReflex    = "reflex"
+	layerPolicy    = "policy"
 )
 
 // actionInfo is the action of a finding that reports a configuration the
 // engine cannot run. It never changes the decision.
 const actionInfo = "info"
 
+// actionBlock is the action of a finding that blocks.
+const actionBlock = "block"
+
+// scoreTolerance absorbs float rounding when a score is compared with a
+// threshold, so a score computed as 0.7 reaches a threshold of 0.7.
+const scoreTolerance = 1e-9
+
 // evaluation is the working state of one scan as the layers run.
 type evaluation struct {
 	scanID  id.ScanID
+	tenant  string
+	app     string
 	input   *scan.Input
 	profile *compiledProfile
 
@@ -37,16 +51,26 @@ type evaluation struct {
 	haveFolded bool
 
 	findings []*scan.Finding
+	blocked  bool // a finding blocks
 
 	// Redactions in the order Apply gives them precedence at an equal
 	// start: removed instruction lines, then secrets, then personal data,
-	// then other patterns.
+	// then other patterns, then reflex masks.
 	removals []perception.Span
 	secrets  []perception.Match
 	pii      []perception.Match
 	custom   []perception.Match
+	masks    []perception.Span
 
-	quote bool // an instinct asked for the whole text to be quoted
+	quote   bool    // an instinct asked for the whole text to be quoted
+	rewrite *string // a reflex replaced the whole text
+
+	// hits holds what each awareness finding matched, so a policy can
+	// force its redaction.
+	hits map[*scan.Finding]*awarenessHit
+
+	// policiesUsed names the policies evaluated.
+	policiesUsed []string
 
 	// Every match found, redacted or not, for counting.
 	secretsFound []perception.Match
@@ -75,11 +99,34 @@ func (ev *evaluation) foldedText() detection.Text {
 	return ev.folded
 }
 
+// awarenessHit is what one awareness finding matched.
+type awarenessHit struct {
+	focus    awareness.Focus
+	detector string
+	matches  []perception.Match
+	redacted bool // queued for redaction
+}
+
 // add records a finding. Its severity follows from its action.
 func (ev *evaluation) add(f *scan.Finding) {
 	f.ID = id.NewFindingID()
 	f.Severity = severity(f.Action)
 	ev.findings = append(ev.findings, f)
+	if scan.ActionDecision(f.Action) == scan.DecisionBlock {
+		ev.blocked = true
+	}
+}
+
+// detections returns the findings so far that report a detection, leaving
+// out configuration notices.
+func (ev *evaluation) detections() []*scan.Finding {
+	out := make([]*scan.Finding, 0, len(ev.findings))
+	for _, f := range ev.findings {
+		if f.Action != actionInfo {
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 // info records a finding about configuration the engine cannot run.
@@ -104,9 +151,9 @@ func severity(action string) string {
 
 // decide folds the findings into the result: the strictest action decides,
 // Blocked follows a block, and Redacted is the text with every redaction
-// applied, quoted when the input is untrusted or an instinct asked for it.
-// A blocked result carries no text, and trusted text that was not redacted
-// carries none either.
+// applied (or a reflex's rewrite), quoted when the input is untrusted or an
+// instinct asked for it. A blocked result carries no text, and trusted text
+// that was not redacted carries none either.
 func (ev *evaluation) decide(r *scan.Result) {
 	decision := scan.DecisionAllow
 	for _, f := range ev.findings {
@@ -119,7 +166,12 @@ func (ev *evaluation) decide(r *scan.Result) {
 	if r.Blocked {
 		return
 	}
-	text := ev.redactedText()
+	var text string
+	if ev.rewrite != nil {
+		text = *ev.rewrite
+	} else {
+		text = ev.redactedText()
+	}
 	switch {
 	case ev.input.Untrusted || ev.quote:
 		r.Redacted = scan.Quote(ev.input.Source, text)
@@ -130,7 +182,7 @@ func (ev *evaluation) decide(r *scan.Result) {
 
 // redactedText applies every redaction to the input. Overlapping spans
 // merge into the first one by start, in removal, secret, personal data,
-// pattern order on a tie, as perception.Apply does. Placeholder numbers are
+// pattern, mask order on a tie, as perception.Apply does. Placeholder numbers are
 // given only to the matches that survive that merge, so a hidden overlap
 // never uses up a number.
 func (ev *evaluation) redactedText() string {
@@ -139,7 +191,7 @@ func (ev *evaluation) redactedText() string {
 		match   perception.Match
 		isMatch bool
 	}
-	cands := make([]candidate, 0, len(ev.removals)+len(ev.secrets)+len(ev.pii)+len(ev.custom))
+	cands := make([]candidate, 0, len(ev.removals)+len(ev.secrets)+len(ev.pii)+len(ev.custom)+len(ev.masks))
 	for _, s := range ev.removals {
 		cands = append(cands, candidate{span: s})
 	}
@@ -147,6 +199,9 @@ func (ev *evaluation) redactedText() string {
 		for _, m := range group {
 			cands = append(cands, candidate{span: perception.Span{Start: m.Start, End: m.End}, match: m, isMatch: true})
 		}
+	}
+	for _, s := range ev.masks {
+		cands = append(cands, candidate{span: s})
 	}
 	if len(cands) == 0 {
 		return ev.input.Text

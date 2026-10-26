@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"regexp"
 	"slices"
+	"strings"
 
 	"github.com/xraph/shield"
 	"github.com/xraph/shield/awareness"
@@ -11,8 +12,10 @@ import (
 	"github.com/xraph/shield/boundary"
 	"github.com/xraph/shield/instinct"
 	"github.com/xraph/shield/judgment"
+	"github.com/xraph/shield/policy"
 	"github.com/xraph/shield/profile"
 	"github.com/xraph/shield/reflex"
+	"github.com/xraph/shield/scan"
 	"github.com/xraph/shield/values"
 )
 
@@ -24,16 +27,19 @@ const (
 )
 
 // compiledProfile is a safety profile with its primitives loaded, disabled
-// ones dropped, regexes compiled and assignment overrides applied. It is
-// immutable once built, so cached copies are shared across scans.
+// ones dropped, regexes compiled and assignment overrides applied, plus the
+// tenant policies that apply to it. It is immutable once built, so cached
+// copies are shared across scans.
 type compiledProfile struct {
 	name       string
 	instincts  []*compiledInstinct
 	awareness  []*compiledAwareness
-	boundaries []*boundary.Boundary
-	values     []*values.Values
+	boundaries []*compiledBoundary
+	values     []*compiledValues
 	judgments  []*compiledJudgment
-	reflexes   []*reflex.Reflex
+	reflexes   []*compiledReflex // by priority, highest first, then name
+	policies   []string          // names of the policies that apply
+	rules      []compiledPolicyRule
 }
 
 // compiledInstinct is an instinct ready to run.
@@ -73,12 +79,6 @@ type compiledDetector struct {
 	patterns []*regexp.Regexp
 }
 
-// compiledJudgment is a judgment with its profile threshold override applied.
-type compiledJudgment struct {
-	judgment  *judgment.Judgment
-	threshold float64
-}
-
 // profileRows holds the enabled rows a profile references, by name.
 type profileRows struct {
 	instincts  map[string]*instinct.Instinct
@@ -97,9 +97,10 @@ func invalid(kind, name, why string) error {
 	return fmt.Errorf("%w: %s %s: %s", shield.ErrProfileInvalid, kind, name, why)
 }
 
-// compileProfile builds the compiled form of p from rows. A nil entry in a
-// rows map is a disabled primitive and is skipped.
-func compileProfile(p *profile.SafetyProfile, rows *profileRows) (*compiledProfile, error) {
+// compileProfile builds the compiled form of p from rows and the policies
+// that apply. A nil entry in a rows map is a disabled primitive and is
+// skipped.
+func compileProfile(p *profile.SafetyProfile, rows *profileRows, policies []*policy.Policy) (*compiledProfile, error) {
 	out := &compiledProfile{name: p.Name}
 	for _, a := range p.Instincts {
 		inst := rows.instincts[a.InstinctName]
@@ -125,31 +126,64 @@ func compileProfile(p *profile.SafetyProfile, rows *profileRows) (*compiledProfi
 	}
 	for _, name := range p.Boundaries {
 		if b := rows.boundaries[name]; b != nil {
-			out.boundaries = append(out.boundaries, b)
+			out.boundaries = append(out.boundaries, compileBoundary(b))
 		}
 	}
 	for _, name := range p.Values {
-		if v := rows.values[name]; v != nil {
-			out.values = append(out.values, v)
+		v := rows.values[name]
+		if v == nil {
+			continue
 		}
+		cv, err := compileValues(v)
+		if err != nil {
+			return nil, err
+		}
+		out.values = append(out.values, cv)
 	}
 	for _, a := range p.Judgments {
 		j := rows.judgments[a.JudgmentName]
 		if j == nil {
 			continue
 		}
-		threshold := j.Threshold
-		if a.Threshold > 0 {
-			threshold = a.Threshold
+		cj, err := compileJudgment(j, a.Threshold)
+		if err != nil {
+			return nil, err
 		}
-		out.judgments = append(out.judgments, &compiledJudgment{judgment: j, threshold: threshold})
+		out.judgments = append(out.judgments, cj)
 	}
 	for _, name := range p.Reflexes {
-		if r := rows.reflexes[name]; r != nil {
-			out.reflexes = append(out.reflexes, r)
+		r := rows.reflexes[name]
+		if r == nil {
+			continue
 		}
+		cr, err := compileReflex(r)
+		if err != nil {
+			return nil, err
+		}
+		out.reflexes = append(out.reflexes, cr)
+	}
+	slices.SortStableFunc(out.reflexes, func(a, b *compiledReflex) int {
+		if a.priority != b.priority {
+			return b.priority - a.priority
+		}
+		return strings.Compare(a.name, b.name)
+	})
+	var err error
+	if out.policies, out.rules, err = compilePolicies(policies); err != nil {
+		return nil, err
 	}
 	return out, nil
+}
+
+// applicable returns the action the engine takes for a primitive's action.
+// An action that asks for a redaction the primitive cannot make (any
+// redacting action not in redacts) blocks instead, so a result never reports
+// a redaction that left the text as it was.
+func applicable(action string, redacts ...string) string {
+	if scan.ActionDecision(action) == scan.DecisionRedact && !slices.Contains(redacts, action) {
+		return actionBlock
+	}
+	return action
 }
 
 // compileInstinct applies the sensitivity override and compiles strategies.
@@ -159,7 +193,10 @@ func compileInstinct(inst *instinct.Instinct, override instinct.Sensitivity) (*c
 	if override != "" {
 		sensitivity = override
 	}
-	ci := &compiledInstinct{name: inst.Name, category: inst.Category, action: inst.Action, threshold: sensitivity.Weight()}
+	ci := &compiledInstinct{
+		name: inst.Name, category: inst.Category, threshold: sensitivity.Weight(),
+		action: applicable(inst.Action, instinct.ActionRedact, instinct.ActionQuote),
+	}
 	strategies := inst.Strategies
 	if len(strategies) == 0 {
 		strategies = []instinct.Strategy{{Name: strategyPatterns}, {Name: strategyHeuristics}}

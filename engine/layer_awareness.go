@@ -123,27 +123,38 @@ func (ev *evaluation) recordAwareness(ctx context.Context, e *Engine, a *compile
 	if !ok {
 		message = "pattern matched"
 	}
-	ev.add(&scan.Finding{
+	finding := &scan.Finding{
 		Layer: layerAwareness, Source: a.name, Message: message, Score: score, Action: a.action,
 		Details: map[string]any{"detector": f.detector, "count": len(spans), "spans": spans},
-	})
-	redact := scan.ActionDecision(a.action) == scan.DecisionRedact
+	}
+	ev.add(finding)
+	hit := &awarenessHit{focus: f.focus, detector: f.detector, matches: f.matches}
+	ev.hits[finding] = hit
 	switch f.focus {
 	case awareness.FocusSecrets:
 		ev.secretsFound = append(ev.secretsFound, f.matches...)
-		if redact {
-			ev.secrets = append(ev.secrets, f.matches...)
-		}
 	case awareness.FocusPII:
 		ev.piiFound = append(ev.piiFound, f.matches...)
-		if redact {
-			ev.pii = append(ev.pii, f.matches...)
-			ev.piiRedacted = append(ev.piiRedacted, piiTally{f.detector, len(spans)})
-		}
 		e.registry.EmitPIIDetected(ctx, ev.scanID, f.detector, len(spans))
+	}
+	if scan.ActionDecision(a.action) == scan.DecisionRedact {
+		ev.redactHit(hit)
+	}
+}
+
+// redactHit queues the matches of an awareness finding for redaction, once.
+func (ev *evaluation) redactHit(hit *awarenessHit) {
+	if hit.redacted {
+		return
+	}
+	hit.redacted = true
+	switch hit.focus {
+	case awareness.FocusSecrets:
+		ev.secrets = append(ev.secrets, hit.matches...)
+	case awareness.FocusPII:
+		ev.pii = append(ev.pii, hit.matches...)
+		ev.piiRedacted = append(ev.piiRedacted, piiTally{hit.detector, countSpans(hit.matches)})
 	default:
-		if redact {
-			ev.custom = append(ev.custom, f.matches...)
-		}
+		ev.custom = append(ev.custom, hit.matches...)
 	}
 }

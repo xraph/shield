@@ -114,7 +114,8 @@ func (e *Engine) resolveProfile(ctx context.Context, tenant, app, name string) (
 }
 
 // loadProfile reads the profile and every primitive it references from the
-// store, filtered on (app, tenant), and compiles them.
+// store, filtered on (app, tenant), and the policies that apply to the
+// tenant, and compiles them.
 func (e *Engine) loadProfile(ctx context.Context, tenant, app, name string) (*compiledProfile, error) {
 	profiles, err := e.store.ListProfiles(ctx, &profile.ListFilter{AppID: app, TenantID: tenant})
 	if err != nil {
@@ -174,7 +175,11 @@ func (e *Engine) loadProfile(ctx context.Context, tenant, app, name string) (*co
 	}, func(r *reflex.Reflex) (string, string, bool) { return r.Name, r.AppID, r.Enabled }); err != nil {
 		return nil, err
 	}
-	compiled, err := compileProfile(p, rows)
+	policies, err := e.loadPolicies(ctx, tenant, app)
+	if err != nil {
+		return nil, err
+	}
+	compiled, err := compileProfile(p, rows, policies)
 	if err != nil {
 		return nil, err
 	}

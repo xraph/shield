@@ -5,6 +5,8 @@ import (
 
 	"github.com/xraph/shield"
 	"github.com/xraph/shield/awareness/perception"
+	"github.com/xraph/shield/reflex"
+	"github.com/xraph/shield/values"
 )
 
 // Capabilities describes implemented services, independently of configured rows.
@@ -18,8 +20,11 @@ type Capabilities struct {
 	// Layers lists the layers that cannot run. It is empty, never nil.
 	Layers []string `json:"unavailable_layers"`
 	// Supported names what the engine runs, sorted, under the keys
-	// instinct_strategies, awareness_detectors, judgment_assessors and
-	// reflex_triggers.
+	// instinct_strategies, awareness_detectors, judgment_assessors,
+	// reflex_triggers and values_lexicons (the principles with a built-in
+	// detector). unavailable_judgment_assessors names the assessors a
+	// judgment may list that the engine skips: model, until a model judge
+	// is wired in.
 	Supported map[string][]string `json:"supported"`
 }
 
@@ -34,8 +39,13 @@ func (e *Engine) Capabilities() Capabilities {
 		Supported: map[string][]string{
 			"instinct_strategies": {strategyCanary, strategyHeuristics, strategyPatterns},
 			"awareness_detectors": detectors,
-			"judgment_assessors":  {},
-			"reflex_triggers":     {},
+			"judgment_assessors":  {assessorFindingCount, assessorLayerScore},
+			"reflex_triggers": {
+				string(reflex.TriggerAlways), string(reflex.TriggerOnContext), string(reflex.TriggerOnFinding),
+				string(reflex.TriggerOnPattern), string(reflex.TriggerOnRate), string(reflex.TriggerOnScore),
+			},
+			"values_lexicons":                {string(values.PrincipleSafety), string(values.PrincipleToxicity)},
+			"unavailable_judgment_assessors": {assessorModel},
 		},
 	}
 }

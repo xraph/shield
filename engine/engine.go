@@ -11,7 +11,9 @@
 //	Layer 6: REFLEXES     (policy, <10ms)      — Custom condition→action rules
 //
 // Every scan runs inside a tenant and evaluates one safety profile of that
-// tenant, compiled from the store and cached (see Config.ProfileCacheTTL).
+// tenant, compiled from the store and cached (see Config.ProfileCacheTTL),
+// then the tenant's policies. With Config.EnableShortCircuit a block ends
+// the scan after the layer that found it.
 package engine
 
 import (
@@ -55,6 +57,7 @@ type Engine struct {
 	logger   log.Logger
 	metrics  gometrics.Metrics
 	profiles *profileCache
+	rates    *rateCounter
 
 	scansCompleted *telemetry.CounterVec
 	scanDuration   *telemetry.HistogramVec
@@ -99,6 +102,7 @@ func New(opts ...Option) (*Engine, error) {
 		config:   shield.DefaultConfig(),
 		logger:   log.NewNoopLogger(),
 		profiles: newProfileCache(),
+		rates:    newRateCounter(),
 	}
 	for _, opt := range opts {
 		opt(e)
@@ -221,7 +225,10 @@ func (e *Engine) evaluate(ctx context.Context, scanID id.ScanID, input *scan.Inp
 	}
 	e.registry.EmitSafetyProfileResolved(ctx, scanID, compiled.name)
 
-	ev := &evaluation{scanID: scanID, input: input, profile: compiled}
+	ev := &evaluation{
+		scanID: scanID, tenant: tenant, app: app, input: input, profile: compiled,
+		hits: map[*scan.Finding]*awarenessHit{},
+	}
 	for _, layer := range []struct {
 		name string
 		run  func(context.Context, *evaluation)
@@ -232,8 +239,12 @@ func (e *Engine) evaluate(ctx context.Context, scanID id.ScanID, input *scan.Inp
 		{layerValues, e.runValues},
 		{layerJudgment, e.runJudgments},
 		{layerReflex, e.runReflexes},
+		{layerPolicy, e.runPolicies},
 	} {
 		e.evaluateLayer(ctx, ev, layer.name, layer.run)
+		if ev.blocked && e.config.EnableShortCircuit {
+			break
+		}
 	}
 
 	result := &scan.Result{
@@ -242,7 +253,7 @@ func (e *Engine) evaluate(ctx context.Context, scanID id.ScanID, input *scan.Inp
 		TenantID:     tenant,
 		AppID:        app,
 		ProfileUsed:  compiled.name,
-		PoliciesUsed: []string{},
+		PoliciesUsed: append([]string{}, ev.policiesUsed...),
 		PIICount:     ev.piiCount(),
 		Metadata:     ev.metadata(),
 	}

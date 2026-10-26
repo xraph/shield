@@ -266,7 +266,7 @@ func TestProfileAndLayersRunUnderTheScanSpan(t *testing.T) {
 		}
 		layers = append(layers, attrs(l)["shield.scan.layer"].AsString())
 	}
-	want := []string{"instinct", "awareness", "boundary", "values", "judgment", "reflex"}
+	want := []string{"instinct", "awareness", "boundary", "values", "judgment", "reflex", "policy"}
 	if strings.Join(layers, ",") != strings.Join(want, ",") {
 		t.Errorf("layers = %v, want %v", layers, want)
 	}

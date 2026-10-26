@@ -340,7 +340,13 @@ func (s *Service) Assign(ctx context.Context, a Actor, key string, assigned bool
 	if !ok {
 		return fail("UNAVAILABLE", "Policy assignments are unavailable")
 	}
-	return db.DashboardAssign(ctx, a.Scope, key, assigned)
+	if err := db.DashboardAssign(ctx, a.Scope, key, assigned); err != nil {
+		return err
+	}
+	// Assigned app-level policies are part of the tenant's compiled
+	// profiles, so the next scan must load them again.
+	s.invalidate(a)
+	return nil
 }
 func (s *Service) Tokens(ctx context.Context, a Actor, scanID string, f store.Filter) (store.Page, error) {
 	if err := a.Check(false); err != nil {
