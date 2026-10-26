@@ -70,7 +70,7 @@ What bites here:
 - revive's `exported` rule keeps its stutter check in this repo. A name like `scan.ScanResult` fails, so name it `scan.Result`.
 - govet runs `enable-all` minus `fieldalignment`, shadow included. An inner `if err := f()` under an outer `err` is flagged, and gocritic's `sloppyReassign` rejects `if err = f(); err != nil { return err }` in non-test code. Give the inner error its own name, as the tree does with `operationErr`, `marshalErr` and `recErr`. `store/storetest/dashboard.go` is non-test code too. Test files can reuse `err`, because gocritic skips them.
 - gosec, errcheck and gocritic are excluded for `_test.go`. revive and staticcheck aren't. A `//nolint` for one of the excluded three in a test file is unused, and nolintlint flags it, so write a plain comment there.
-- errcheck has `check-blank: true` and `check-type-assertions: true`. A deliberate `_ = f()` needs `//nolint:errcheck // <reason>`, and every `//nolint` in the tree carries a reason. The stores do not open transactions today, so you have no rollback defer to copy.
+- errcheck has `check-blank: true` and `check-type-assertions: true`. A deliberate `_ = f()` needs `//nolint:errcheck // <reason>`, and every `//nolint` in the tree carries a reason. The stores do not open transactions, so you have no rollback defer to copy. The one transaction is in SQL: SQLite's `unique_names_per_tenant` migration runs each table rebuild between `BEGIN IMMEDIATE` and `COMMIT`.
 - errorlint wants `errors.Is`, `errors.As` and `%w`. errname wants `Err...` sentinels and `...Error` types.
 - goimports puts `github.com/xraph/shield` imports in the last group.
 

@@ -376,7 +376,7 @@ CREATE INDEX IF NOT EXISTS idx_shield_compliance_scope ON shield_compliance_repo
 			Version: "20261024000001",
 			Up: func(ctx context.Context, exec migrate.Executor) error {
 				for _, t := range tenantUniqueTables {
-					if _, err := exec.Exec(ctx, rebuildWithTenantUnique(t.name, t.columns, "app_id, tenant_id, name")); err != nil {
+					if err := rebuildTable(ctx, exec, t.name, t.columns, "app_id, tenant_id, name"); err != nil {
 						return err
 					}
 				}
@@ -392,7 +392,7 @@ CREATE INDEX IF NOT EXISTS idx_shield_compliance_scope ON shield_compliance_repo
 					return err
 				}
 				for _, t := range tenantUniqueTables {
-					if _, err := exec.Exec(ctx, rebuildWithTenantUnique(t.name, t.columns, "app_id, name")); err != nil {
+					if err := rebuildTable(ctx, exec, t.name, t.columns, "app_id, name"); err != nil {
 						return err
 					}
 				}
@@ -508,6 +508,24 @@ var tenantUniqueTables = []struct{ name, columns string }{
     created_at      TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
 `},
+}
+
+// rebuildTable rebuilds table with columns and UNIQUE(unique) in one
+// transaction, so a crash or a failed statement between dropping the table
+// and renaming its copy leaves the table as it was. The migration is
+// registered without grove's Transactional flag, so no outer transaction
+// is open here.
+//
+// A failed script stops at the failing statement and leaves its
+// transaction open on the connection that ran it. Nothing else runs while
+// a migration holds the lock, and database/sql hands out the most recently
+// used idle connection first, so the ROLLBACK reaches that connection.
+func rebuildTable(ctx context.Context, exec migrate.Executor, table, columns, unique string) error {
+	if _, err := exec.Exec(ctx, "BEGIN IMMEDIATE;\n"+rebuildWithTenantUnique(table, columns, unique)+"COMMIT;\n"); err != nil {
+		_, _ = exec.Exec(context.WithoutCancel(ctx), "ROLLBACK") //nolint:errcheck // the script may have failed before BEGIN, and its own error is the one to report
+		return err
+	}
+	return nil
 }
 
 func rebuildWithTenantUnique(table, columns, unique string) string {

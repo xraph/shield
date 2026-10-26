@@ -170,3 +170,56 @@ func TestUniqueNamesPerTenantIgnoresLeftoverTable(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// A rebuild that fails between dropping a table and renaming its copy
+// rolls back, so the table and its rows survive, and a rerun after the cause
+// is gone completes. The view makes SQLite refuse the rename: it re-checks
+// every view then, and this one names the table just dropped.
+func TestUniqueNamesPerTenantRollsBackAFailedRebuild(t *testing.T) {
+	ctx := context.Background()
+	s, exec, last := preTenantStore(t)
+	for _, table := range []string{"shield_instincts", "shield_values"} {
+		if err := s.seedPrimitive(t, table, "t1"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.sdb.NewRaw("CREATE VIEW shield_values_view AS SELECT name FROM shield_values").Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	err := last.Up(ctx, exec)
+	if err == nil || !strings.Contains(err.Error(), "shield_values_view") {
+		t.Fatalf("Up = %v, want the rename refused over the view", err)
+	}
+	count := func(table string) int {
+		var n int
+		if scanErr := s.sdb.NewRaw("SELECT COUNT(*) FROM " + table + " WHERE tenant_id = 't1'").Scan(ctx, &n); scanErr != nil {
+			t.Fatalf("%s: %v", table, scanErr)
+		}
+		return n
+	}
+	if n := count("shield_values"); n != 1 {
+		t.Fatalf("shield_values holds %d rows after the failed rebuild", n)
+	}
+	if names := tableNames(t, s); strings.Contains(names, "shield_values_new") {
+		t.Fatalf("the failed rebuild left its copy behind: %s", names)
+	}
+	// The connection is usable and holds no open transaction.
+	if err = s.seedPrimitive(t, "shield_boundaries", "t1"); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err = s.sdb.NewRaw("DROP VIEW shield_values_view").Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err = last.Up(ctx, exec); err != nil {
+		t.Fatalf("rerun: %v", err)
+	}
+	for _, table := range []string{"shield_instincts", "shield_values", "shield_boundaries"} {
+		if n := count(table); n != 1 {
+			t.Fatalf("%s holds %d rows after the rerun", table, n)
+		}
+	}
+	if err = s.seedPrimitive(t, "shield_values", "t2"); err != nil {
+		t.Fatalf("tenant-unique key missing after the rerun: %v", err)
+	}
+}
