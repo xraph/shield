@@ -14,9 +14,23 @@ import "slices"
 //
 // A path below any of them is not a whole tree: rm -rf /var/lib/apt/lists/*,
 // /tmp/*, /root/.cache, ~/.cache/go-build and ./build are ordinary cleanup.
+//
+// Options come in any spelling and any number: -rf, -fr, -r -f, -R, -v -rf,
+// --recursive --force, a -- before the target. One of them must be recursive
+// or forced. --no-preserve-root among them counts whatever the target. The
+// option run is unbounded, so a long -rfvvv... cluster or many -r groups do
+// not get past it; the regexp engine still runs in linear time.
+//
 // The impersonation cue for a role turn that runs rm is built from it, and
 // the values safety principle counts it, so the two never disagree.
-const rmWholeTree = `rm(?: -[a-z]{0,32}[rf][a-z]{0,32}| --no-preserve-root){1,16} ` + rmTarget
+const rmWholeTree = `rm(?:` + rmOptions + rmForced + rmOptions + ` ` + rmTarget +
+	`|` + rmOptions + ` --no-preserve-root(?:$|[\s;&|)]))`
+
+// rmOptions is any run of rm options, rmForced one that recurses or forces.
+const (
+	rmOptions = `(?: -[a-z-]*)*`
+	rmForced  = ` (?:-[a-z]*[rf][a-z]*|--recursive|--force|--no-preserve-root)`
+)
 
 // systemDirs are the top-level directories whose removal breaks the machine
 // or loses its data: the FHS directories other than /tmp, which Dockerfiles
@@ -30,9 +44,9 @@ const rmTarget = `(?:"` + rmTree + `"|'` + rmTree + `'|` + rmTree + `)(?:$|[\s;&
 const rmTree = `(?:/[*.]?|/(?:` + systemDirs + `)/?\*?|(?:~|\$home|\$\{home\})(?:/\*?)?|\.\.?(?:/\*?)?|\*)`
 
 // destructiveCommands are shell commands that destroy a tree, a disk or a
-// machine, as regexp sources for folded text. Repetition is bounded and each
-// starts with a literal, so values/principles can match them with a fast
-// literal search.
+// machine, as regexp sources for folded text. Each starts with a literal, so
+// values/principles can find them with a fast literal search. Repetition is
+// bounded in all but rmWholeTree, whose option run is not.
 var destructiveCommands = []string{
 	rmWholeTree,
 	`chmod -[a-z]{0,4}r[a-z]{0,4} (?:0?777|a\+rwx|ugo\+rwx) /(?:$|[ ;&|)])`,
@@ -47,7 +61,7 @@ var destructiveCommands = []string{
 
 // DestructiveCommands returns the regexp sources of the destructive shell
 // commands the detectors know, written for folded text (see Fold). The values
-// safety principle counts them; 4b tunes them here.
+// safety principle counts them.
 func DestructiveCommands() []string {
 	return slices.Clone(destructiveCommands)
 }

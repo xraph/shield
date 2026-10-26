@@ -10,12 +10,15 @@
 // Lexicon entries are ASCII case-insensitive. Score counts their matches on
 // a lower-cased copy of the text with a literal-prefix search, so a lexicon
 // costs one fast pass per entry instead of a full regexp scan, and stays
-// linear on large inputs. It counts exactly what the returned regexps find.
+// linear on large inputs. A shell command whose repetition is unbounded runs
+// as one regexp pass over the lower-cased text instead, which is linear too.
+// Score counts exactly what the returned regexps find.
 package principles
 
 import (
 	"bufio"
 	"embed"
+	"errors"
 	"fmt"
 	"math"
 	"regexp"
@@ -51,8 +54,12 @@ type entry struct {
 	// anchored matches the pattern, \b stripped, at the start of
 	// lower-cased text.
 	anchored *regexp.Regexp
-	// maxLen bounds the bytes of one match.
+	// maxLen bounds the bytes of one match. It is negative for an entry
+	// with unbounded repetition, which Score runs as lower over the whole
+	// lower-cased text.
 	maxLen int
+	// lower is the pattern as written, for lower-cased text.
+	lower *regexp.Regexp
 }
 
 var (
@@ -78,7 +85,7 @@ func init() {
 			if !ok {
 				panic(fmt.Sprintf("principles: %s:%d: want <category> <pattern>", name, line))
 			}
-			e, err := newEntry(p, category, strings.TrimSpace(source))
+			e, err := newEntry(p, category, strings.TrimSpace(source), false)
 			if err != nil {
 				panic(fmt.Sprintf("principles: %s:%d: %v", name, line, err))
 			}
@@ -92,7 +99,7 @@ func init() {
 		if isWord(source[0]) {
 			source = `\b` + source
 		}
-		e, err := newEntry(values.PrincipleSafety, categoryCommands, source)
+		e, err := newEntry(values.PrincipleSafety, categoryCommands, source, true)
 		if err != nil {
 			panic(fmt.Sprintf("principles: destructive command %q: %v", source, err))
 		}
@@ -105,8 +112,9 @@ func init() {
 // taken from instinct/detection.
 const categoryCommands = "commands"
 
-// newEntry compiles one lexicon line.
-func newEntry(p values.Principle, category, source string) (*entry, error) {
+// newEntry compiles one lexicon line. Unbounded repetition is an error
+// unless unbounded is set.
+func newEntry(p values.Principle, category, source string, unbounded bool) (*entry, error) {
 	e := &entry{principle: p, category: category}
 	body := source
 	if rest, ok := strings.CutPrefix(source, `\b`); ok {
@@ -123,7 +131,13 @@ func newEntry(p values.Principle, category, source string) (*entry, error) {
 	if e.wordStart && !isWord(e.literal[0]) {
 		return nil, fmt.Errorf("\\b before the non-word literal %q", e.literal)
 	}
-	if e.maxLen, err = maxLength(tree); err != nil {
+	switch e.maxLen, err = maxLength(tree); {
+	case errors.Is(err, errUnbounded) && unbounded:
+		e.maxLen = -1
+		if e.lower, err = regexp.Compile(source); err != nil {
+			return nil, err
+		}
+	case err != nil:
 		return nil, err
 	}
 	if lowerErr := lowerOnly(tree); lowerErr != nil {
@@ -160,6 +174,9 @@ func leadingLiteral(re *syntax.Regexp) (string, error) {
 	return lit, nil
 }
 
+// errUnbounded is maxLength's error for a pattern with unbounded repetition.
+var errUnbounded = errors.New("unbounded repetition")
+
 // maxLength bounds the bytes one match of re can span.
 func maxLength(re *syntax.Regexp) (int, error) {
 	switch re.Op {
@@ -176,9 +193,14 @@ func maxLength(re *syntax.Regexp) (int, error) {
 		return 0, nil
 	case syntax.OpCapture, syntax.OpQuest:
 		return maxLength(re.Sub[0])
+	case syntax.OpStar, syntax.OpPlus:
+		if _, err := maxLength(re.Sub[0]); err != nil {
+			return 0, err
+		}
+		return 0, errUnbounded
 	case syntax.OpRepeat:
 		if re.Max < 0 {
-			return 0, fmt.Errorf("unbounded repetition")
+			return 0, errUnbounded
 		}
 		n, err := maxLength(re.Sub[0])
 		return n * re.Max, err
@@ -197,8 +219,8 @@ func maxLength(re *syntax.Regexp) (int, error) {
 		}
 		return total, nil
 	default:
-		// Star, plus, begin text and no-match are not allowed: the first
-		// two are unbounded and a pattern never anchors to the text start.
+		// Begin text and no-match are not allowed: a pattern never anchors
+		// to the text start.
 		return 0, fmt.Errorf("unsupported operator %s", re.Op)
 	}
 }
@@ -331,7 +353,9 @@ func Score(text string, patterns []*regexp.Regexp) (score float64, count int) {
 // groups the built-in lexicon once, so counting many short texts against
 // the same patterns stays cheap.
 type Scorer struct {
-	slow   []*regexp.Regexp
+	slow []*regexp.Regexp
+	// whole are the lexicon entries with unbounded repetition.
+	whole  []*entry
 	groups []literalGroup
 }
 
@@ -354,6 +378,10 @@ func NewScorer(patterns []*regexp.Regexp) *Scorer {
 			s.slow = append(s.slow, re)
 			continue
 		}
+		if e.maxLen < 0 {
+			s.whole = append(s.whole, e)
+			continue
+		}
 		k, seen := index[e.literal]
 		if !seen {
 			k = len(s.groups)
@@ -371,10 +399,13 @@ func (s *Scorer) Count(text string) int {
 	for _, re := range s.slow {
 		count += len(re.FindAllStringIndex(text, -1))
 	}
-	if len(s.groups) > 0 {
+	if len(s.groups) > 0 || len(s.whole) > 0 {
 		lower := asciiLower(text)
 		for _, g := range s.groups {
 			count += countLiteralGroup(lower, g.literal, g.entries)
+		}
+		for _, e := range s.whole {
+			count += len(e.lower.FindAllStringIndex(lower, -1))
 		}
 	}
 	return count

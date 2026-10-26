@@ -42,6 +42,19 @@ func TestSafetyLexicon(t *testing.T) {
 		"rm -rf $HOME/*",
 		`rm -rf "$HOME"`,
 		"rm -rf --no-preserve-root /",
+		// Any flag spelling, quoted roots, and flag runs of any length.
+		"rm -fr /",
+		"rm -R /",
+		"rm --recursive --force /",
+		"sudo rm --recursive --force ~/*",
+		`rm -rf "/"`,
+		"rm -rf '/'",
+		"rm -v -rf /",
+		"rm -rf -- /",
+		"rm -rf" + strings.Repeat("v", 38) + " /",
+		"rm -" + strings.Repeat("v", 33) + "rf /",
+		"rm" + strings.Repeat(" -r", 17) + " /",
+		"rm -rf" + strings.Repeat("v", 5000) + " /",
 	} {
 		if _, n := Score(text, lex); n == 0 {
 			t.Errorf("%q: no match", text)
@@ -49,6 +62,8 @@ func TestSafetyLexicon(t *testing.T) {
 	}
 	for _, text := range []string{
 		"rm -rf ./build",
+		"rm --recursive --force ./build",
+		"rm -v ~",
 		// A path under a system directory is not the directory.
 		"rm -rf /var/lib/apt/lists/*",
 		"rm -rf /tmp/*",
@@ -189,7 +204,8 @@ func TestLexiconMatchesAgreeWithTheRegexps(t *testing.T) {
 	pieces := []string{
 		"rm", " -rf", " /", " ~/*", "DROP", " DATABASE", " prod", "mkfs.ext4", " /dev/sda", "You", " are", " a",
 		" complete", " IDIOT", "kill", " yourself", "I", " will", " kill", " you", "\n", ";", ".", "x", "é", "K",
-		" ", "  ", "delete from t;", "Kys", "terraform destroy", "kubectl delete ns x", "_", "1",
+		" ", "  ", " --recursive", " --force", " -v", " --", ` "/"`, " '/'", " /etc", " -r", " -R", " $HOME", " ./build",
+		" &&", "delete from t;", "Kys", "terraform destroy", "kubectl delete ns x", "_", "1",
 	}
 	r := rand.New(rand.NewSource(7))
 	for range 3000 {
