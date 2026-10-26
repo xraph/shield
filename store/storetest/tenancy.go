@@ -309,8 +309,8 @@ func primitiveCases(s Backend) []primitiveCase {
 	}
 }
 
-// The fixtures below set every collection: postgres stores them in NOT NULL
-// jsonb columns, and a nil slice or map is written as NULL.
+// The fixtures below set every collection; testNilCollections covers rows
+// that leave them nil.
 
 func newScan(tenant string) *scan.Result {
 	return &scan.Result{ID: id.NewScanID(), Direction: scan.DirectionInput, Decision: scan.DecisionAllow, TenantID: tenant, AppID: tenantApp, Findings: []*scan.Finding{}, PoliciesUsed: []string{}, Metadata: map[string]any{}}

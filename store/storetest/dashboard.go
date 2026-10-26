@@ -429,6 +429,7 @@ type Backend interface {
 
 func Run(t *testing.T, factory func(*testing.T) Backend) {
 	RunTenancy(t, factory)
+	t.Run("nil-collections", func(t *testing.T) { testNilCollections(t, factory) })
 	t.Run("update-revision", func(t *testing.T) { testUpdateRevision(t, factory) })
 	t.Run("scope-and-round-trip", func(t *testing.T) { testDashboardScopeAndNestedRoundTrip(t, factory) })
 	t.Run("paging-and-assignment", func(t *testing.T) { testDashboardPagingClearAndAssignment(t, factory) })
