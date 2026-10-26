@@ -31,7 +31,9 @@ const closingTag = "</" + QuoteTag
 // lookalike letters, a "-", a space or no separator in place of the "_",
 // whitespace after the "<" or the "/", and invisible runes and combining
 // marks anywhere inside the tag. Every byte of text is kept; only the
-// backslashes are added. S is source in lower case with every rune other
+// backslashes are added. HTML entities and URL encoding
+// ("&lt;/untrusted_content&gt;", "%3C/untrusted_content") are the escaped
+// form of a literal tag, which a model reads as data, and are left alone. S is source in lower case with every rune other
 // than a to z, 0 to 9, '_', '.' and '-' replaced by '_'; an empty source is
 // "unknown".
 func Quote(source, text string) string {
@@ -75,7 +77,7 @@ func writeEscaped(b *strings.Builder, text string) {
 	last := 0
 	for i := 0; i < len(folded); {
 		r, size := utf8.DecodeRuneInString(folded[i:])
-		if isLessThan(r) && tagAfter(folded, i+size) {
+		if isLessThan(r) && tagAfter(t, i+size) {
 			// Right after the original "<", before any invisible rune that
 			// followed it.
 			if _, end := t.Span(i, i+size); end >= last {
@@ -91,19 +93,20 @@ func writeEscaped(b *strings.Builder, text string) {
 
 // tagAfter reports whether folded text at i continues a "<" into the
 // wrapper's tag: optional whitespace, an optional "/", optional whitespace,
-// "untrusted", up to four separator runes and "content", with ignorable runes
+// "untrusted", any run of separator runes and "content", with ignorable runes
 // anywhere. It never reads past the next "<", so the scans from all the "<"
 // in a text stay linear together.
-func tagAfter(folded string, i int) bool {
+func tagAfter(t textnorm.Text, i int) bool {
+	folded := t.Folded
 	i = skip(folded, i, true)
 	if r, size := utf8.DecodeRuneInString(folded[i:]); isSlash(r) {
 		i = skip(folded, i+size, true)
 	}
 	var ok bool
-	if i, ok = word(folded, i, "untrusted"); !ok {
+	if i, ok = word(t, i, "untrusted"); !ok {
 		return false
 	}
-	for range 4 {
+	for {
 		i = skip(folded, i, false)
 		r, size := utf8.DecodeRuneInString(folded[i:])
 		if !isSeparator(r) {
@@ -111,22 +114,37 @@ func tagAfter(folded string, i int) bool {
 		}
 		i += size
 	}
-	_, ok = word(folded, i, "content")
+	_, ok = word(t, i, "content")
 	return ok
 }
 
-// word matches the letters of w at i, through lookalikes, with ignorable
-// runes between them, and returns the offset after the last one.
-func word(folded string, i int, w string) (int, bool) {
+// word matches the letters of w at folded offset i, through lookalikes, with
+// ignorable runes between them, and returns the offset after the last one.
+func word(t textnorm.Text, i int, w string) (int, bool) {
+	folded := t.Folded
 	for k := range len(w) {
 		i = skip(folded, i, false)
 		r, size := utf8.DecodeRuneInString(folded[i:])
-		if size == 0 || latinOf(r) != rune(w[k]) {
+		if size == 0 || letterAt(t, i, size, r) != rune(w[k]) {
 			return i, false
 		}
 		i += size
 	}
 	return i, true
+}
+
+// letterAt returns the ASCII letter the folded rune r at [i, i+size) reads
+// as. A Greek letter is read from the original text, before Fold lowers and
+// folds it: capital Nu lowers to nu, which Fold turns into "v" inside a
+// Latin word, yet it reads as "N".
+func letterAt(t textnorm.Text, i, size int, r rune) rune {
+	if start, _ := t.Span(i, i+size); start < len(t.Original) {
+		orig, _ := utf8.DecodeRuneInString(t.Original[start:])
+		if c, ok := greekLookalikes[orig]; ok {
+			return c
+		}
+	}
+	return latinOf(r)
 }
 
 // skip passes the ignorable runes at i, and whitespace too when spaces is
@@ -185,7 +203,7 @@ var tagLookalikes = map[rune]rune{
 	// Cyrillic
 	0x0441: 'c', 0x043E: 'o', 0x0435: 'e', 0x0455: 's', 0x0501: 'd', 0x0442: 't',
 	0x0433: 'r', 0x043F: 'n', 0x04BD: 'e',
-	// Greek
+	// Greek, as Fold leaves it (see also greekLookalikes)
 	0x03BF: 'o', 0x03C5: 'u', 0x03C4: 't', 0x03B7: 'n', 0x03F2: 'c',
 	0x03C2: 'c', // NFKC turns the lunate sigma U+03F2 into the final sigma
 	// Armenian
@@ -193,6 +211,16 @@ var tagLookalikes = map[rune]rune{
 	// Small capitals and other Latin forms
 	0x1D1C: 'u', 0x0274: 'n', 0x1D1B: 't', 0x0280: 'r', 0xA731: 's', 0x1D07: 'e',
 	0x1D05: 'd', 0x1D04: 'c', 0x1D0F: 'o', 0x028B: 'u',
+}
+
+// greekLookalikes maps Greek letters, capital and small, to the Latin
+// letters they look like. letterAt reads them from the original text.
+var greekLookalikes = map[rune]rune{
+	0x0391: 'a', 0x0392: 'b', 0x0395: 'e', 0x0396: 'z', 0x0397: 'h', 0x0399: 'i', 0x039A: 'k',
+	0x039C: 'm', 0x039D: 'n', 0x039F: 'o', 0x03A1: 'p', 0x03A4: 't', 0x03A5: 'y', 0x03A7: 'x',
+	0x03B1: 'a', 0x03B2: 'b', 0x03B5: 'e', 0x03B6: 'z', 0x03B7: 'n', 0x03B9: 'i', 0x03BA: 'k',
+	0x03BC: 'u', 0x03BD: 'n', 0x03BF: 'o', 0x03C1: 'p', 0x03C4: 't', 0x03C5: 'u', 0x03C7: 'x',
+	0x03F2: 'c',
 }
 
 // latinOf returns the ASCII letter r reads as, or 0. A letter that composed
@@ -204,8 +232,9 @@ func latinOf(r rune) rune {
 	if c, ok := tagLookalikes[r]; ok {
 		return c
 	}
-	if d := norm.NFD.String(string(r)); d != string(r) {
-		base, _ := utf8.DecodeRuneInString(d)
+	var buf [utf8.UTFMax]byte
+	if d := norm.NFD.Properties(utf8.AppendRune(buf[:0], r)).Decomposition(); d != nil {
+		base, _ := utf8.DecodeRune(d)
 		if base < utf8.RuneSelf {
 			return base
 		}
