@@ -431,6 +431,48 @@ func TestTwoModelJudgmentsCallTheJudgeOnce(t *testing.T) {
 	}
 }
 
+// The judge never sees a secret or personal data even when the profile has
+// no awareness at all: the built-in detectors redact the judge's text.
+func TestJudgeTextIsRedactedWithoutAwareness(t *testing.T) {
+	token := githubToken()
+	only := func(t *testing.T) (*fakeJudge, *rig, context.Context) {
+		t.Helper()
+		j := answer(0.1, "")
+		r, ctx := judgeRig(t, true, j, time.Second, 0.9, modelOnly)
+		r.safetyProfile(ctx, t, &profile.SafetyProfile{Name: "judge-only", Judgments: []profile.JudgmentAssignment{{JudgmentName: "judge"}}})
+		return j, r, ctx
+	}
+	t.Run("text scan", func(t *testing.T) {
+		j, r, ctx := only(t)
+		res := scanText(ctx, t, r, &scan.Input{Text: "push with " + token + " and mail " + email + " now", Profile: "judge-only"})
+		if res.Redacted != "" || res.Decision != scan.DecisionAllow {
+			t.Fatalf("the judge's redaction reached the result: %+v", res)
+		}
+		req := j.last(t)
+		if strings.Contains(req.Text, token) || strings.Contains(req.Text, "ghp_") || strings.Contains(req.Text, email) {
+			t.Fatalf("judge text leaks: %q", req.Text)
+		}
+		if !strings.HasPrefix(req.Text, "push with [") || !strings.Contains(req.Text, " and mail [") {
+			t.Fatalf("judge text = %q", req.Text)
+		}
+	})
+	t.Run("tool call", func(t *testing.T) {
+		j, r, ctx := only(t)
+		raw, err := json.Marshal(map[string]any{"a": "x " + token, "b": email})
+		if err != nil {
+			t.Fatal(err)
+		}
+		scanCall(ctx, t, r, &scan.ToolCallInput{Tool: "deploy", Arguments: raw, RiskClass: "change", Profile: "judge-only"})
+		req := j.last(t)
+		if strings.Contains(req.Text, token) || strings.Contains(req.Text, email) {
+			t.Fatalf("judge text leaks: %q", req.Text)
+		}
+		if !strings.Contains(req.Text, "a: x [") || !strings.Contains(req.Text, "b: [") {
+			t.Fatalf("judge text = %q", req.Text)
+		}
+	})
+}
+
 func TestJudgeCanRaiseAToolCall(t *testing.T) {
 	j := answer(0.95, "")
 	r, ctx := judgeRig(t, true, j, time.Second, 0.9, modelOnly)

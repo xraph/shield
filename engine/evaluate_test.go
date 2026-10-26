@@ -943,3 +943,17 @@ func TestCapabilitiesReportEvaluation(t *testing.T) {
 		t.Fatal("effective default config missing")
 	}
 }
+
+func TestProfileGenerationFollowsInvalidation(t *testing.T) {
+	r := newRig(t, nil)
+	a0, b0 := r.eng.ProfileGeneration("tenant-a"), r.eng.ProfileGeneration("tenant-b")
+	r.eng.InvalidateProfiles("tenant-a")
+	a1 := r.eng.ProfileGeneration("tenant-a")
+	if a1 == a0 || r.eng.ProfileGeneration("tenant-b") != b0 {
+		t.Fatalf("after tenant-a's invalidation: a %d -> %d, b %d -> %d", a0, a1, b0, r.eng.ProfileGeneration("tenant-b"))
+	}
+	r.eng.InvalidateAllProfiles()
+	if r.eng.ProfileGeneration("tenant-a") == a1 || r.eng.ProfileGeneration("tenant-b") == b0 {
+		t.Fatal("InvalidateAllProfiles left a generation unchanged")
+	}
+}

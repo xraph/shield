@@ -113,8 +113,9 @@ func (r *rig) instinctProfile(t *testing.T, name, action string) {
 	}
 }
 
-// judgedProfile stores profile "judged": secrets awareness (redact) and
-// judgment "model-check" (flag at 0.9) whose only assessor is the model.
+// judgedProfile stores judgment "model-check" (flag at 0.9) whose only
+// assessor is the model, in profile "judged" with secrets awareness
+// (redact) and in profile "judge-only" alone.
 func (r *rig) judgedProfile(t *testing.T) {
 	t.Helper()
 	ctx := tenantCtx()
@@ -132,13 +133,20 @@ func (r *rig) judgedProfile(t *testing.T) {
 	if err := r.st.CreateJudgment(ctx, j); err != nil {
 		t.Fatal(err)
 	}
-	p := &profile.SafetyProfile{
-		ID: id.NewSafetyProfileID(), Name: "judged", AppID: testApp, Enabled: true,
-		Awareness: []profile.AwarenessAssignment{{AwarenessName: "judged-secrets"}},
-		Judgments: []profile.JudgmentAssignment{{JudgmentName: "model-check"}},
-	}
-	if err := r.st.CreateProfile(ctx, p); err != nil {
-		t.Fatal(err)
+	for _, p := range []*profile.SafetyProfile{
+		{
+			ID: id.NewSafetyProfileID(), Name: "judged", AppID: testApp, Enabled: true,
+			Awareness: []profile.AwarenessAssignment{{AwarenessName: "judged-secrets"}},
+			Judgments: []profile.JudgmentAssignment{{JudgmentName: "model-check"}},
+		},
+		{
+			ID: id.NewSafetyProfileID(), Name: "judge-only", AppID: testApp, Enabled: true,
+			Judgments: []profile.JudgmentAssignment{{JudgmentName: "model-check"}},
+		},
+	} {
+		if err := r.st.CreateProfile(ctx, p); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
@@ -368,9 +376,10 @@ func TestGuardHandlesDecodedJSONParts(t *testing.T) {
 	r := newRig(t)
 	image := map[string]any{"type": "image_url", "image_url": map[string]any{"url": "https://example.com/a.png"}}
 	parts := []any{
-		map[string]any{"type": "text", "text": "first line"},
+		map[string]any{"type": "text", "text": "first image:"},
 		image,
-		map[string]any{"type": "text", "text": "the token is " + githubToken()},
+		map[string]any{"type": "text", "text": "second, token " + githubToken()},
+		image,
 	}
 	res, err := outputGuard(r).Check(context.Background(), &guard.CheckInput{
 		Messages: []provider.Message{{Role: "assistant", Content: parts}},
@@ -380,15 +389,119 @@ func TestGuardHandlesDecodedJSONParts(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, ok := res.Messages[0].Content.([]any)
-	if !res.Modified || !ok || len(got) != 2 {
+	if !res.Modified || !ok || len(got) != 4 {
 		t.Fatalf("result %+v", res)
 	}
-	text, _ := got[0].(map[string]any)["text"].(string)
-	if !strings.Contains(text, "first line") || !strings.Contains(text, "the token is [") || strings.Contains(text, githubToken()) {
+	// Each part keeps its place; only the part with the token changes.
+	if !reflect.DeepEqual(got[0], parts[0]) || !reflect.DeepEqual(got[1], image) || !reflect.DeepEqual(got[3], image) {
+		t.Errorf("layout changed: %+v", got)
+	}
+	text, _ := got[2].(map[string]any)["text"].(string)
+	if text != "second, token [GITHUB_TOKEN_1]" {
 		t.Errorf("text part %q", text)
 	}
-	if !reflect.DeepEqual(got[1], image) {
-		t.Errorf("image part %+v", got[1])
+	if parts[2].(map[string]any)["text"] != "second, token "+githubToken() {
+		t.Error("the guard edited the caller's parts in place")
+	}
+}
+
+func TestGuardQuotesEachUntrustedPart(t *testing.T) {
+	r := newRig(t)
+	parts := []provider.ContentPart{{Type: "text", Text: "pod a ready"}, {Type: "image_url", ImageURL: "https://example.com/a.png"}, {Type: "text", Text: "pod b ready"}}
+	res, err := inputGuard(r).Check(context.Background(), &guard.CheckInput{
+		Messages: []provider.Message{{Role: "tool", Content: parts}},
+		TenantID: testTenant,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := res.Messages[0].Content.([]provider.ContentPart)
+	if !ok || len(got) != 3 {
+		t.Fatalf("content %#v", res.Messages[0].Content)
+	}
+	if got[0].Text != scan.Quote("tool_message", "pod a ready") || got[2].Text != scan.Quote("tool_message", "pod b ready") || got[1] != parts[1] {
+		t.Errorf("parts %+v", got)
+	}
+}
+
+// The reviewer's probes: text the guard used to read as empty. A
+// tool_result block is scanned (and blocked here); a text part whose text is
+// not a string fails the request, since the guard cannot tell what reaches
+// the model.
+func TestGuardScansOrRefusesTextInJSONParts(t *testing.T) {
+	r := newRig(t)
+	r.instinctProfile(t, "blocking", instinct.ActionBlock)
+	g := inputGuard(r, nexusguard.WithProfile("blocking"))
+	check := func(content any) (*guard.CheckResult, error) {
+		return g.Check(context.Background(), &guard.CheckInput{
+			Messages: []provider.Message{{Role: "user", Content: content}}, TenantID: testTenant,
+		})
+	}
+	attack := injectionLine + " " + githubToken()
+
+	res, err := check([]any{map[string]any{"type": "tool_result", "tool_use_id": "t1", "content": attack}})
+	if err != nil || !res.Blocked {
+		t.Errorf("tool_result: result %+v, err %v", res, err)
+	}
+	res, err = check([]any{map[string]any{"type": "tool_result", "tool_use_id": "t1", "content": []any{
+		map[string]any{"type": "text", "text": "ok"},
+		map[string]any{"type": "tool_result", "content": []any{map[string]any{"type": "text", "text": attack}}},
+	}}})
+	if err != nil || !res.Blocked {
+		t.Errorf("nested tool_result: result %+v, err %v", res, err)
+	}
+	if n := len(r.scans(t)); n != 3 {
+		t.Errorf("%d scans, want 3", n)
+	}
+
+	for name, content := range map[string]any{
+		"non-string text":   []any{map[string]any{"type": "text", "text": map[string]any{"value": attack}}},
+		"unknown type":      []any{map[string]any{"type": "input_text", "text": attack}},
+		"no type":           []any{map[string]any{"text": attack}},
+		"media with text":   []any{map[string]any{"type": "image_url", "text": attack}},
+		"tool_result shape": []any{map[string]any{"type": "tool_result", "content": 7}},
+		"unknown struct":    []provider.ContentPart{{Type: "input_text", Text: attack}},
+		"element type":      []any{attack},
+		"scalar":            42,
+	} {
+		if _, err := check(content); err == nil || !strings.Contains(err.Error(), "cannot read") {
+			t.Errorf("%s: err %v", name, err)
+		}
+	}
+	deep := []any{map[string]any{"type": "text", "text": "x"}}
+	for range 6 {
+		deep = []any{map[string]any{"type": "tool_result", "content": deep}}
+	}
+	if _, err := check(deep); err == nil {
+		t.Error("tool results nested past the bound passed")
+	}
+}
+
+func TestGuardRedactsANestedToolResultInPlace(t *testing.T) {
+	r := newRig(t)
+	content := []any{map[string]any{"type": "tool_result", "tool_use_id": "t1", "content": []any{
+		map[string]any{"type": "text", "text": "build ok"},
+		map[string]any{"type": "text", "text": "log tail\n" + injectionLine + "\n" + githubToken()},
+	}}}
+	res, err := inputGuard(r, nexusguard.WithUntrustedRoles()).Check(context.Background(), &guard.CheckInput{
+		Messages: []provider.Message{{Role: "user", Content: content}}, TenantID: testTenant,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := res.Messages[0].Content.([]any)
+	if !res.Modified || !ok || len(got) != 1 {
+		t.Fatalf("result %+v", res)
+	}
+	block, _ := got[0].(map[string]any)
+	inner, _ := block["content"].([]any)
+	if block["tool_use_id"] != "t1" || len(inner) != 2 {
+		t.Fatalf("block %+v", block)
+	}
+	first, _ := inner[0].(map[string]any)["text"].(string)
+	second, _ := inner[1].(map[string]any)["text"].(string)
+	if first != "build ok" || strings.Contains(second, githubToken()) || strings.Contains(second, injectionLine) || !strings.HasPrefix(second, "log tail") {
+		t.Errorf("inner parts %q, %q", first, second)
 	}
 }
 
@@ -506,7 +619,7 @@ func TestGuardTenantResolution(t *testing.T) {
 // never writes it.
 func TestGuardCopiesRequestMetadataOntoScans(t *testing.T) {
 	r := newRig(t)
-	md := map[string]string{"run_id": "run-1", "source": "spoofed"}
+	md := map[string]string{"run_id": "run-1", "source": "spoofed", "secret_count": "9"}
 	if _, err := inputGuard(r).Check(context.Background(), &guard.CheckInput{
 		Messages: []provider.Message{{Role: "tool", Content: "3 pods ready"}},
 		TenantID: testTenant,
@@ -514,7 +627,7 @@ func TestGuardCopiesRequestMetadataOntoScans(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(md, map[string]string{"run_id": "run-1", "source": "spoofed"}) {
+	if !reflect.DeepEqual(md, map[string]string{"run_id": "run-1", "source": "spoofed", "secret_count": "9"}) {
 		t.Errorf("metadata edited: %+v", md)
 	}
 	stored := r.scans(t)
@@ -522,6 +635,9 @@ func TestGuardCopiesRequestMetadataOntoScans(t *testing.T) {
 		t.Fatalf("%d scans", len(stored))
 	}
 	if stored[0].Metadata["run_id"] != "run-1" || stored[0].Metadata["source"] != "tool_message" || stored[0].Metadata["untrusted"] != true {
+		t.Errorf("stored metadata %+v", stored[0].Metadata)
+	}
+	if _, ok := stored[0].Metadata["secret_count"]; ok {
 		t.Errorf("stored metadata %+v", stored[0].Metadata)
 	}
 }

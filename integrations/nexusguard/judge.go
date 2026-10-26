@@ -71,7 +71,10 @@ func WithJudgeProvider(name string) JudgeOption {
 // NewJudge returns a judgment.Judge that asks model, through complete, for
 // a risk score. It sends a fixed system prompt and the text quoted with
 // scan.Quote("judged_content", ...), asks for at most 200 tokens, and treats
-// any reply other than {"score": <0..1>, "reason": "..."} as an error.
+// any reply that is not one {"score": <0..1>, "reason": "..."} object as an
+// error (other fields are ignored). The text is the one the engine hands
+// the judge, with every secret and personal data value the built-in
+// detectors find already replaced by a placeholder.
 //
 // The context it passes to complete makes both guards of this package pass
 // the completion unscanned, so a judge behind a guarded gateway does not
@@ -144,12 +147,13 @@ func parseVerdict(resp *provider.CompletionResponse) (*judgment.JudgeVerdict, er
 	if resp == nil || len(resp.Choices) == 0 {
 		return nil, errNotAVerdict
 	}
-	text, ok := textOf(resp.Choices[0].Message.Content)
-	if !ok {
+	cc, readErr := readContent(resp.Choices[0].Message.Content)
+	if readErr != nil {
 		return nil, errNotAVerdict
 	}
-	dec := json.NewDecoder(strings.NewReader(unfence(strings.TrimSpace(text))))
-	dec.DisallowUnknownFields()
+	// Unknown fields are ignored: a verdict only ever raises risk, so a
+	// model that adds a key keeps its score.
+	dec := json.NewDecoder(strings.NewReader(unfence(strings.TrimSpace(cc.text()))))
 	var v struct {
 		Score  *float64 `json:"score"`
 		Reason string   `json:"reason"`

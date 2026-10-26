@@ -5,8 +5,9 @@ import "context"
 // JudgeRequest is what a model judge is asked to assess.
 //
 // Text is never the scanned text as it came in: every secret and personal
-// data span the awareness layer found is replaced by a placeholder first,
-// whatever the profile does with those findings, because the judge is a
+// data span the awareness layer or shield's built-in detectors found is
+// replaced by a placeholder first, whatever the profile does with those
+// findings and even when it has no awareness, because the judge is a
 // remote model. For a tool call it holds one "path: value" line per
 // argument unit. Findings lists "<layer>:<source>" of the detections so
 // far and carries no matched text.

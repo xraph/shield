@@ -104,6 +104,15 @@ func (e *Engine) InvalidateProfiles(tenantID string) {
 	e.profiles.invalidate(tenantID)
 }
 
+// ProfileGeneration returns a number that changes whenever
+// InvalidateProfiles(tenantID) or InvalidateAllProfiles runs. A host that
+// caches scan verdicts keys them on it, so a profile change made through
+// the admin service (or followed by an invalidation) is never answered from
+// a stale verdict.
+func (e *Engine) ProfileGeneration(tenantID string) uint64 {
+	return e.profiles.generation(tenantID)
+}
+
 // resolveProfile returns the compiled profile name of (tenant, app), from
 // the cache when it is fresh. It runs under a "resolve profile" span.
 func (e *Engine) resolveProfile(ctx context.Context, tenant, app, name string) (*compiledProfile, error) {

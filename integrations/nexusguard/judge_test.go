@@ -98,6 +98,14 @@ func TestJudgeAcceptsAFencedVerdict(t *testing.T) {
 	}
 }
 
+func TestJudgeIgnoresExtraFields(t *testing.T) {
+	rec := &recorder{text: `{"score":0.7,"reason":"r","confidence":"high"}`}
+	v, err := nexusguard.NewJudge(rec.complete, "m").Assess(context.Background(), judgeRequest())
+	if err != nil || v.Score != 0.7 {
+		t.Errorf("verdict %+v, err %v", v, err)
+	}
+}
+
 func TestJudgeProvider(t *testing.T) {
 	rec := &recorder{text: `{"score":0.1,"reason":"ok"}`}
 	if _, err := nexusguard.NewJudge(rec.complete, "m", nexusguard.WithJudgeProvider("anthropic")).Assess(context.Background(), judgeRequest()); err != nil {
@@ -116,7 +124,6 @@ func TestJudgeBadReplyIsAnError(t *testing.T) {
 		`{"reason":"no score"}`,
 		`{"score":"0.5","reason":"r"}`,
 		`{"score":0.5,"reason":"r"} trailing`,
-		`{"score":0.5,"reason":"r","extra":true}`,
 		`[0.5]`,
 		"",
 	} {
@@ -190,33 +197,34 @@ func TestJudgeMarkerCannotBeForged(t *testing.T) {
 }
 
 // The judge is a remote model: what CompleteFunc receives never holds a
-// secret from the scanned text.
+// secret from the scanned text, whether or not the profile has secrets
+// awareness.
 func TestJudgeSeesRedactedTextOnly(t *testing.T) {
-	rec := &recorder{text: `{"score":0.2,"reason":"ok"}`}
-	cfg := shield.DefaultConfig()
-	cfg.ModelJudge = true
-	r := newRig(t, engine.WithConfig(cfg), engine.WithJudge(nexusguard.NewJudge(rec.complete, "m")))
-	r.judgedProfile(t)
-	token := githubToken()
-	res, err := inputGuard(r, nexusguard.WithProfile("judged")).Check(context.Background(), &guard.CheckInput{
-		Messages: []provider.Message{{Role: "user", Content: "push with " + token + " now"}}, TenantID: testTenant,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !res.Modified {
-		t.Fatalf("result %+v", res)
-	}
-	_, req := rec.last(t)
-	sent := requestText(t, req)
-	if strings.Contains(sent, token) || strings.Contains(sent, "ghp_") {
-		t.Errorf("the judge's request holds the token: %q", sent)
-	}
-	if !strings.Contains(sent, "push with [") {
-		t.Errorf("the judge's request lacks the redacted text: %q", sent)
-	}
-	if n := len(r.scans(t)); n != 1 {
-		t.Errorf("%d scans stored, want 1", n)
+	for _, name := range []string{"judged", "judge-only"} {
+		t.Run(name, func(t *testing.T) {
+			rec := &recorder{text: `{"score":0.2,"reason":"ok"}`}
+			cfg := shield.DefaultConfig()
+			cfg.ModelJudge = true
+			r := newRig(t, engine.WithConfig(cfg), engine.WithJudge(nexusguard.NewJudge(rec.complete, "m")))
+			r.judgedProfile(t)
+			token := githubToken()
+			if _, err := inputGuard(r, nexusguard.WithProfile(name), nexusguard.WithUntrustedRoles()).Check(context.Background(), &guard.CheckInput{
+				Messages: []provider.Message{{Role: "user", Content: "push with " + token + " now"}}, TenantID: testTenant,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			_, req := rec.last(t)
+			sent := requestText(t, req)
+			if strings.Contains(sent, token) || strings.Contains(sent, "ghp_") {
+				t.Errorf("the judge's request holds the token: %q", sent)
+			}
+			if !strings.Contains(sent, "push with [") {
+				t.Errorf("the judge's request lacks the redacted text: %q", sent)
+			}
+			if n := len(r.scans(t)); n != 1 {
+				t.Errorf("%d scans stored, want 1", n)
+			}
+		})
 	}
 }
 

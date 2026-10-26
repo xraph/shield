@@ -154,8 +154,10 @@ func (ev *evaluation) judgeFindings() []string {
 }
 
 // judgeText is the text the judge sees: the scanned text with a
-// placeholder in place of every secret and personal data span awareness
-// found, whatever the profile does with them. A tool call gives one
+// placeholder in place of every secret and personal data span, whatever the
+// profile does with them. The spans are those awareness found merged with
+// every built-in secret and personal data detector, so a profile with no
+// awareness, or a narrowed one, still never sends a secret to the judge. A tool call gives one
 // "path: value" line per argument unit, redacted the same way. It is only
 // for the judge and is never scanned.
 func (ev *evaluation) judgeText() string {
@@ -179,12 +181,16 @@ func (ev *evaluation) judgeText() string {
 }
 
 // judgeSpans returns the placeholder spans for every secret and personal
-// data match, offsets in the whole text. Overlapping matches merge into the
-// first by start (a secret before personal data on a tie).
+// data match, awareness's and the built-in detectors', offsets in the whole
+// text. Overlapping matches merge into the first by start (a secret before
+// personal data on a tie).
 func (ev *evaluation) judgeSpans() []perception.Span {
-	all := make([]perception.Match, 0, len(ev.secretsFound)+len(ev.piiFound))
+	secrets, pii := ev.builtinMatches()
+	all := make([]perception.Match, 0, len(ev.secretsFound)+len(secrets)+len(ev.piiFound)+len(pii))
 	all = append(all, ev.secretsFound...)
+	all = append(all, secrets...)
 	all = append(all, ev.piiFound...)
+	all = append(all, pii...)
 	slices.SortStableFunc(all, func(a, b perception.Match) int { return a.Start - b.Start })
 	var winners []perception.Match
 	for i := 0; i < len(all); {
@@ -199,6 +205,24 @@ func (ev *evaluation) judgeSpans() []perception.Span {
 		winners = append(winners, win)
 	}
 	return perception.Placeholders(winners)
+}
+
+// builtinMatches runs every built-in secret and personal data detector over
+// each unit, offsets in the whole text. Per unit, so no match spans two
+// arguments of a tool call.
+func (ev *evaluation) builtinMatches() (secrets, pii []perception.Match) {
+	for u, un := range ev.units {
+		text := ev.unitText(u)
+		for _, m := range perception.Secrets(text, nil) {
+			m.Start, m.End = m.Start+un.start, m.End+un.start
+			secrets = append(secrets, m)
+		}
+		for _, m := range perception.PII(text, perception.BuiltinPII()) {
+			m.Start, m.End = m.Start+un.start, m.End+un.start
+			pii = append(pii, m)
+		}
+	}
+	return secrets, pii
 }
 
 // cleanReason makes a judge's reason fit for a finding: invalid UTF-8,
