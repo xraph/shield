@@ -172,7 +172,55 @@ func compileProfile(p *profile.SafetyProfile, rows *profileRows, policies []*pol
 	if out.policies, out.rules, err = compilePolicies(policies); err != nil {
 		return nil, err
 	}
+	if n := out.operatorPatterns(); n > MaxProfilePatterns {
+		return nil, invalid("profile", p.Name, fmt.Sprintf("%d operator patterns, more than %d", n, MaxProfilePatterns))
+	}
 	return out, nil
+}
+
+// MaxProfilePatterns bounds the regexes and globs operators write into one
+// compiled profile: instinct, awareness and values patterns, reflex
+// patterns, targets and globs. Each regex without a literal prefix costs a
+// pass over the text, so the bound keeps one tenant's scans from costing
+// seconds.
+const MaxProfilePatterns = 256
+
+// operatorPatterns counts the operator-written regexes and globs of p.
+func (p *compiledProfile) operatorPatterns() int {
+	n := 0
+	for _, inst := range p.instincts {
+		for _, s := range inst.strategies {
+			n += len(s.patterns)
+		}
+	}
+	for _, a := range p.awareness {
+		for _, d := range a.detectors {
+			n += len(d.patterns)
+		}
+	}
+	for _, v := range p.values {
+		for _, r := range v.rules {
+			n += len(r.patterns)
+		}
+	}
+	for _, r := range p.reflexes {
+		for _, t := range r.triggers {
+			switch {
+			case t.pattern != nil:
+				n++
+			case t.glob != "":
+				n++
+			default:
+				n += len(t.context)
+			}
+		}
+		for _, a := range r.actions {
+			if a.ownTarget {
+				n++
+			}
+		}
+	}
+	return n
 }
 
 // applicable returns the action the engine takes for a primitive's action.

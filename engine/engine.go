@@ -205,7 +205,7 @@ func (e *Engine) evaluate(ctx context.Context, scanID id.ScanID, input *scan.Inp
 	if err != nil {
 		return nil, err
 	}
-	if len(input.Text) > e.config.MaxScanBytes {
+	if inputSize(input) > e.config.MaxScanBytes {
 		return nil, shield.ErrInputTooLarge
 	}
 	if e.store == nil {
@@ -264,6 +264,19 @@ func (e *Engine) evaluate(ctx context.Context, scanID id.ScanID, input *scan.Inp
 		}
 	}
 	return result, nil
+}
+
+// inputSize is what a scan counts against Config.MaxScanBytes: the text
+// plus every string value of the input context, which on_context reflexes
+// match against.
+func inputSize(input *scan.Input) int {
+	n := len(input.Text)
+	for _, v := range input.Context {
+		if s, ok := v.(string); ok {
+			n += len(s)
+		}
+	}
+	return n
 }
 
 // evaluateLayer runs one layer under an "evaluate layer" span.

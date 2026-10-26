@@ -72,8 +72,9 @@ func compileValues(v *values.Values) (*compiledValues, error) {
 }
 
 // runValues is layer 4. Each rule counts the matches of its detectors: the
-// built-in lexicon of its principle and categories and its literal terms on
-// the folded text, its own patterns on the text as given. The score is the
+// built-in lexicon of its principle and categories and its literal terms
+// (as whole words or phrases) on the folded text, its own patterns on the
+// text as given. The score is the
 // noisy-or of 0.5 per match (see principles.Score), and the rule is violated
 // when the score reaches its threshold. A rule with no detector gives an
 // info finding.
@@ -89,7 +90,7 @@ func (e *Engine) runValues(ctx context.Context, ev *evaluation) {
 			_, custom := principles.Score(ev.input.Text, r.patterns)
 			n += custom
 			for _, term := range r.terms {
-				n += strings.Count(folded, term)
+				n += countWords(folded, term, 0)
 			}
 			score := 1 - math.Pow(0.5, float64(n))
 			if n == 0 || score < r.threshold-scoreTolerance {

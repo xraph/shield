@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -39,9 +40,10 @@ type contextPair struct{ key, glob string }
 
 // compiledAction is one action with what it needs to apply.
 type compiledAction struct {
-	kind     string
-	target   *regexp.Regexp // redact
-	fallback string         // rewrite
+	kind      string
+	target    *regexp.Regexp // redact
+	ownTarget bool           // target is the action's own, not the on_pattern one
+	fallback  string         // rewrite
 }
 
 func compileReflex(r *reflex.Reflex) (*compiledReflex, error) {
@@ -72,6 +74,9 @@ func compileReflex(r *reflex.Reflex) (*compiledReflex, error) {
 			if err != nil || d <= 0 {
 				return nil, invalid("reflex", r.Name, "invalid window")
 			}
+			if t.Threshold < 0 || t.Threshold > MaxRateThreshold || t.Threshold != math.Trunc(t.Threshold) {
+				return nil, invalid("reflex", r.Name, "rate threshold must be a whole number up to 100000")
+			}
 			ct.window = d
 		case reflex.TriggerAlways:
 		default:
@@ -91,7 +96,7 @@ func compileReflex(r *reflex.Reflex) (*compiledReflex, error) {
 				if err != nil {
 					return nil, invalid("reflex", r.Name, "invalid target")
 				}
-				ca.target = re
+				ca.target, ca.ownTarget = re, true
 			}
 			if ca.target == nil {
 				// Nothing says what to redact: block rather than report
@@ -141,8 +146,9 @@ func (e *Engine) runReflexes(ctx context.Context, ev *evaluation) {
 			continue
 		}
 		for _, a := range r.actions {
-			ev.applyReflexAction(r, a)
-			e.registry.EmitReflexFired(ctx, ev.scanID, r.name, a.kind)
+			if ev.applyReflexAction(r, a) {
+				e.registry.EmitReflexFired(ctx, ev.scanID, r.name, a.kind)
+			}
 		}
 	}
 }
@@ -213,6 +219,9 @@ func (ev *evaluation) triggerMatches(t compiledTrigger) bool {
 // direction, source and untrusted flag of the scan, which win over context
 // keys of the same name.
 func (ev *evaluation) contextValues() map[string]string {
+	if ev.context != nil {
+		return ev.context
+	}
 	out := make(map[string]string, len(ev.input.Context)+3)
 	for k, v := range ev.input.Context {
 		if s, ok := v.(string); ok {
@@ -222,17 +231,27 @@ func (ev *evaluation) contextValues() map[string]string {
 	out["direction"] = string(ev.input.Direction)
 	out["source"] = ev.input.Source
 	out["untrusted"] = strconv.FormatBool(ev.input.Untrusted)
+	ev.context = out
 	return out
 }
 
-// applyReflexAction adds the finding of one action and makes its change.
-func (ev *evaluation) applyReflexAction(r *compiledReflex, a compiledAction) {
+// applyReflexAction adds the finding of one action and makes its change. It
+// reports whether the action fired: a redaction whose target matches nothing
+// does not, and leaves an info finding instead of a redact decision that
+// changed nothing.
+func (ev *evaluation) applyReflexAction(r *compiledReflex, a compiledAction) bool {
 	switch a.kind {
 	case string(reflex.ActionRedact):
+		masked := 0
 		for _, loc := range a.target.FindAllStringIndex(ev.input.Text, -1) {
 			if loc[1] > loc[0] {
 				ev.masks = append(ev.masks, perception.Span{Start: loc[0], End: loc[1], Placeholder: redactedMask})
+				masked++
 			}
+		}
+		if masked == 0 {
+			ev.info(layerReflex, r.name, "redact target matched nothing")
+			return false
 		}
 	case string(reflex.ActionRewrite):
 		if ev.rewrite == nil {
@@ -244,6 +263,7 @@ func (ev *evaluation) applyReflexAction(r *compiledReflex, a compiledAction) {
 		Layer: layerReflex, Source: r.name, Message: "reflex fired", Action: a.kind,
 		Details: map[string]any{"action": a.kind},
 	})
+	return true
 }
 
 // globMatch matches s against a pattern where * stands for any run of
@@ -293,9 +313,13 @@ type rateCounter struct {
 
 func newRateCounter() *rateCounter { return &rateCounter{logs: map[rateKey]*rateLog{}} }
 
-// rateKeep bounds the timestamps kept per key, so a threshold above it never
-// fires.
-const rateKeep = 100000
+// MaxRateThreshold is the largest on_rate threshold: more scans than this
+// within a window are never counted. Thresholds are whole numbers.
+const MaxRateThreshold = 100000
+
+// rateKeep bounds the timestamps kept per key: one more than the largest
+// threshold, so every allowed threshold can fire.
+const rateKeep = MaxRateThreshold + 1
 
 // rateSweep is the number of keys above which a hit drops the keys whose
 // scans have all left their window.
@@ -309,7 +333,7 @@ func (c *rateCounter) hit(key rateKey, now time.Time, triggers []compiledTrigger
 	keep := 1
 	for _, t := range triggers {
 		window = max(window, t.window)
-		keep = max(keep, int(min(t.threshold, rateKeep))+1)
+		keep = max(keep, min(int(t.threshold)+1, rateKeep))
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()

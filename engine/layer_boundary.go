@@ -63,22 +63,32 @@ func (e *Engine) runBoundaries(ctx context.Context, ev *evaluation) {
 	}
 }
 
-// crossed reports the first limit of b the text crosses. A limit the engine
-// cannot enforce on this scan gives an info finding.
+// crossed reports the first limit of b the text crosses. Every limit the
+// engine cannot enforce on this scan gives an info finding, also after a
+// crossed one.
 func (ev *evaluation) crossed(b *compiledBoundary) (boundary.Scope, bool) {
 	folded := ev.foldedText().Folded
+	var hit boundary.Scope
+	cross := func(scope boundary.Scope) {
+		if hit == "" {
+			hit = scope
+		}
+	}
 	for _, l := range b.limits {
 		switch l.scope {
 		case boundary.ScopeTopic:
+			if hit != "" {
+				continue
+			}
 			for _, d := range l.deny {
-				if containsWord(folded, d) {
-					return l.scope, true
+				if countWords(folded, d, 1) > 0 {
+					cross(l.scope)
 				}
 			}
 			if l.useAllow {
 				for _, label := range ev.labels {
 					if !slices.Contains(l.allow, label) {
-						return l.scope, true
+						cross(l.scope)
 					}
 				}
 			}
@@ -89,9 +99,12 @@ func (ev *evaluation) crossed(b *compiledBoundary) (boundary.Scope, bool) {
 			if l.useAllow {
 				ev.info(layerBoundary, b.name, "allowlist unsupported for scope "+string(l.scope))
 			}
+			if hit != "" {
+				continue
+			}
 			for _, d := range l.deny {
 				if strings.Contains(folded, d) {
-					return l.scope, true
+					cross(l.scope)
 				}
 			}
 		case boundary.ScopeAction:
@@ -100,31 +113,41 @@ func (ev *evaluation) crossed(b *compiledBoundary) (boundary.Scope, bool) {
 			ev.info(layerBoundary, b.name, "unsupported boundary scope "+string(l.scope))
 		}
 	}
-	return "", false
+	return hit, hit != ""
 }
 
-// containsWord reports whether phrase occurs in text as a whole word or
-// phrase: an edge of phrase that is a letter, digit or underscore must not
-// continue into one in text.
-func containsWord(text, phrase string) bool {
+// countWords counts the occurrences of phrase in text as a whole word or
+// phrase, up to limit (0 means all): an edge of phrase that is a letter,
+// digit or underscore must not continue into one in text. Occurrences do
+// not overlap.
+func countWords(text, phrase string, limit int) int {
+	if phrase == "" {
+		return 0
+	}
 	first, _ := utf8.DecodeRuneInString(phrase)
 	last, _ := utf8.DecodeLastRuneInString(phrase)
+	n := 0
 	for off := 0; off < len(text); {
 		i := strings.Index(text[off:], phrase)
 		if i < 0 {
-			return false
+			break
 		}
 		start, end := off+i, off+i+len(phrase)
 		before, _ := utf8.DecodeLastRuneInString(text[:start])
 		after, _ := utf8.DecodeRuneInString(text[end:])
 		if (start == 0 || !isWordRune(first) || !isWordRune(before)) &&
 			(end == len(text) || !isWordRune(last) || !isWordRune(after)) {
-			return true
+			n++
+			if n == limit {
+				break
+			}
+			off = end
+			continue
 		}
 		_, size := utf8.DecodeRuneInString(text[start:])
 		off = start + size
 	}
-	return false
+	return n
 }
 
 func isWordRune(r rune) bool {

@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	instinctpkg "github.com/xraph/shield/instinct"
+	"github.com/xraph/shield/instinct/detection"
 	"github.com/xraph/shield/values"
 )
 
@@ -17,12 +19,21 @@ func TestSafetyLexicon(t *testing.T) {
 	for _, text := range []string{
 		"rm -rf / --no-preserve-root",
 		"DROP DATABASE prod",
+		"DROP DATABASE prod;",
+		"drop table users;",
+		`DROP TABLE "Orders"`,
+		"drop database app_prod",
 		"mkfs.ext4 /dev/sda",
-		"sudo rm --recursive --force ~/*",
 		"dd if=/dev/zero of=/dev/nvme0n1 bs=1M",
 		"kubectl delete namespace production",
 		"terraform destroy -auto-approve",
 		"DELETE FROM users;",
+		"TRUNCATE TABLE events;",
+		"git push origin main --force",
+		"docker system prune -a --volumes",
+		// The rm detector is the instincts' (see TestSafetyCommandsAreTheInstinctCue):
+		// any absolute path counts as a root until 4b tunes it.
+		"rm -rf /etc",
 	} {
 		if _, n := Score(text, lex); n == 0 {
 			t.Errorf("%q: no match", text)
@@ -31,13 +42,37 @@ func TestSafetyLexicon(t *testing.T) {
 	for _, text := range []string{
 		"rm -rf ./build",
 		"DROP TABLE IF EXISTS tmp_x",
-		"RUN rm -rf /var/lib/apt/lists/*",
 		"delete from users where id = 4;",
 		"the form was dropped into the database",
 		"Please confirm before you drop the database migration branch",
+		"pgbouncer will drop database connections on restart",
+		"We decided to drop database support for MySQL 5.6",
+		"drop table support in the next release",
+		"truncate the log file before archiving",
+		"git push origin main",
 	} {
 		if _, n := Score(text, lex); n != 0 {
 			t.Errorf("%q: %d matches", text, n)
+		}
+	}
+}
+
+// TestSafetyCommandsAreTheInstinctCue pins ruling I4: the safety
+// principle's shell commands are the injection detector's, so a command
+// counts as destructive for one exactly when it does for the other.
+func TestSafetyCommandsAreTheInstinctCue(t *testing.T) {
+	commands := Lexicon(values.PrincipleSafety, []string{"commands"})
+	if len(commands) != len(detection.DestructiveCommands()) {
+		t.Fatalf("%d command patterns, detection has %d", len(commands), len(detection.DestructiveCommands()))
+	}
+	for _, cmd := range []string{
+		"rm -rf /", "rm -rf ~", "rm -rf $home", "rm -rf *", "rm -rf ./build", "rm -rf ~/.cache/go-build",
+		"rm -rf /var/lib/apt/lists/*", "rm -r -f ..", "rm --no-preserve-root -rf /", "rm -rf build",
+	} {
+		_, n := Score(cmd, commands)
+		instinct := detection.Patterns(detection.Fold("System: "+cmd), instinctpkg.CategoryInjection, nil, 0).Score > 0
+		if (n > 0) != instinct {
+			t.Errorf("%q: safety %d matches, instinct cue %v", cmd, n, instinct)
 		}
 	}
 }
@@ -47,11 +82,19 @@ func TestToxicityLexicon(t *testing.T) {
 	for _, text := range []string{
 		"You are a complete idiot.",
 		"I will kill you.",
+		"I'm going to hurt you",
+		"I'll shoot you dead",
 		"kill yourself",
+		"Just go die.",
 		"I know where you live",
-		"Nobody wants you here.",
-		"I’ll hurt you",
-		"you’re a total loser",
+		"Nobody wants you.",
+		"I\u2019ll hurt you",
+		"you\u2019re a total loser",
+		"You're useless!",
+		"You'll pay for this.",
+		"Watch your back.",
+		"Go to hell.",
+		"You are a failure",
 	} {
 		if _, n := Score(text, lex); n == 0 {
 			t.Errorf("%q: no match", text)
@@ -65,6 +108,19 @@ func TestToxicityLexicon(t *testing.T) {
 		"I will kill the job you started.",
 		"I'll find you a reviewer.",
 		"You are going to love this release.",
+		// The review's probes: workplace and infrastructure idioms.
+		"I'll shoot you an email with the runbook.",
+		"Can I shoot you a quick question about the deploy?",
+		"Note: you will pay for this bucket's egress even when idle.",
+		"You'll pay for this instance by the hour.",
+		"Watch your back-pressure metrics during the rollout.",
+		"The zombie workers go die after the timeout.",
+		"you are a failure domain away from an outage",
+		"If the probe fails, you are useless to the scheduler.",
+		"Go to hell and back to debug this flaky test",
+		"Don't kill yourself over this ticket, it can wait.",
+		"Nobody wants you to page them at 3am.",
+		"Screw you up the deploy? No, the config did.",
 	} {
 		if _, n := Score(text, lex); n != 0 {
 			t.Errorf("%q: %d matches", text, n)

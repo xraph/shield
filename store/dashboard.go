@@ -15,6 +15,10 @@ var ErrNotFound = errors.New("shield: scoped resource not found")
 var ErrCollection = errors.New("shield: unsupported dashboard collection")
 var ErrConflict = errors.New("shield: resource conflict")
 
+// ErrReadOnly reports a write to a resource the scope may read but not
+// change: an app-level policy seen from a tenant scope.
+var ErrReadOnly = errors.New("shield: resource is read-only in this scope")
+
 type Scope struct {
 	TenantID    string `json:"tenant_id"`
 	AppID       string `json:"app_id"`
@@ -23,7 +27,8 @@ type Scope struct {
 }
 
 func (s Scope) Validate() error {
-	if (s.PolicyKey != "" || s.PolicyLevel != "") && (strings.TrimSpace(s.PolicyKey) == "" || (s.PolicyLevel != "app" && s.PolicyLevel != "org") || (s.PolicyLevel == "app" && s.PolicyKey != s.AppID)) {
+	if (s.PolicyKey != "" || s.PolicyLevel != "") && (strings.TrimSpace(s.PolicyKey) == "" || (s.PolicyLevel != "app" && s.PolicyLevel != "org") ||
+		(s.PolicyLevel == "app" && s.PolicyKey != s.AppID) || (s.PolicyLevel == "org" && s.PolicyKey != s.TenantID)) {
 		return ErrScope
 	}
 	if strings.TrimSpace(s.TenantID) == "" || strings.TrimSpace(s.AppID) == "" {
@@ -168,12 +173,43 @@ func ReferenceField(kind string) string {
 	return map[string]string{"instincts": "instinct_name", "awareness": "awareness_name", "judgments": "judgment_name"}[kind]
 }
 
-// PolicyScope is supplied by a host authorization adapter, never request params.
+// AppScope reports whether the host's authorization adapter granted this
+// scope the app level (PolicyLevel "app"): an operator acting for the whole
+// app. It is never set from request params.
+func (s Scope) AppScope() bool {
+	return s.PolicyLevel == levelApp && s.PolicyKey != "" && s.PolicyKey == s.AppID
+}
+
+// PolicyScope is where a dashboard policy write lands and the only scope a
+// policy update or delete may touch: the app scope for an app-scope actor
+// (see AppScope), otherwise the actor tenant's org scope. App-level policies
+// are shared by every tenant of the app, so a tenant actor never writes
+// them; it reads the ones assigned to it (see the store's dashboard list and
+// get).
 func (s Scope) PolicyScope() (key, level string) {
-	if s.PolicyKey != "" && (s.PolicyLevel == "app" || s.PolicyLevel == "org") {
+	if s.AppScope() {
+		return s.AppID, levelApp
+	}
+	return s.TenantID, levelOrg
+}
+
+// DashboardWritable reports whether scope may update or delete row, a
+// stored dashboard row of kind: a policy only in the scope's PolicyScope.
+func DashboardWritable(scope Scope, kind string, row map[string]any) bool {
+	if kind != "policies" {
+		return true
+	}
+	key, level := scope.PolicyScope()
+	return row["scope_key"] == key && row["scope_level"] == level
+}
+
+// ReportScope is the scope of dashboard compliance reports: the host's
+// explicit policy scope, else the app.
+func (s Scope) ReportScope() (key, level string) {
+	if s.PolicyKey != "" && (s.PolicyLevel == levelApp || s.PolicyLevel == levelOrg) {
 		return s.PolicyKey, s.PolicyLevel
 	}
-	return s.AppID, "app"
+	return s.AppID, levelApp
 }
 
 // TokenStats includes the entire authorized tenant, independent of pagination.

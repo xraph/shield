@@ -72,6 +72,9 @@ type evaluation struct {
 	// policiesUsed names the policies evaluated.
 	policiesUsed []string
 
+	// context is the on_context view of the input, built once.
+	context map[string]string
+
 	// Every match found, redacted or not, for counting.
 	secretsFound []perception.Match
 	piiFound     []perception.Match

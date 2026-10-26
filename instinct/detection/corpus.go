@@ -162,7 +162,7 @@ var instructionCues = []struct {
 	{[]string{"curl", "wget"}, regexp.MustCompile(`\b(?:run|execute)\b[^.;]{0,40}?\b(?:curl|wget)(?: -\S+){0,4} ['"]?https?://` +
 		`|\b(?:curl|wget)\b[^|]*https?://[^|]*` + shellPipe)},
 	{[]string{"|"}, regexp.MustCompile(`\b(?:run|execute)\b[^|,;]*` + shellPipe)},
-	{[]string{"rm "}, regexp.MustCompile(`(?:^|[.;:!?,] ?|\b(?:run|execute) )` + cueOpeners + `(?:sudo )?rm(?: -[a-z]*[rf][a-z]*| --no-preserve-root)+ (?:/|(?:~|\$home|\$\{home\}|\.\.?|\.?/?\*)/?(?:$|[ ;&|]))`)},
+	{[]string{"rm "}, regexp.MustCompile(`(?:^|[.;:!?,] ?|\b(?:run|execute) )` + cueOpeners + `(?:sudo )?` + rmWholeTree)},
 	{[]string{"download", "fetch"}, regexp.MustCompile(`\b(?:download|fetch) (?:\S+ ){0,3}?https?://\S+,? (?:and )?(?:then )?(?:execute|run|exec|source|install) (?:it|that|this|the (?:script|file|binary))\b`)},
 	{[]string{"push "}, regexp.MustCompile(`(?:^|[.;:!?,] ?)` + cueOpeners + `push (?:the |this |it |these )?(?:[a-z0-9._/-]+ )?to (?:main|master|production|prod)(?: branch)?(?:$|[^a-z0-9 _-]| (?:now|immediately|right|asap|and|then|without|directly|first|please|today|tonight)\b)`)},
 }

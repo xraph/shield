@@ -1,7 +1,11 @@
 // Package principles holds the built-in detectors of the values layer: a
 // curated lexicon for the safety principle (destructive infrastructure
-// commands) and the toxicity principle (abuse and threats aimed at people),
-// and the score that turns pattern matches into a violation score.
+// commands, the shell ones taken from instinct/detection) and the toxicity
+// principle (abuse and threats aimed at people), and the score that turns
+// pattern matches into a violation score.
+//
+// The patterns are written for folded text (see detection.Fold): lower
+// case, one space between words. The engine scores the folded text.
 //
 // Lexicon entries are ASCII case-insensitive. Score counts their matches on
 // a lower-cased copy of the text with a literal-prefix search, so a lexicon
@@ -20,6 +24,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/xraph/shield/instinct/detection"
 	"github.com/xraph/shield/values"
 )
 
@@ -81,7 +86,24 @@ func init() {
 			fast[e.re] = e
 		}
 	}
+	// The shell commands come from the injection detectors, so the safety
+	// principle and the instincts never disagree on what destroys a tree.
+	for _, source := range detection.DestructiveCommands() {
+		if isWord(source[0]) {
+			source = `\b` + source
+		}
+		e, err := newEntry(values.PrincipleSafety, categoryCommands, source)
+		if err != nil {
+			panic(fmt.Sprintf("principles: destructive command %q: %v", source, err))
+		}
+		lexicon = append(lexicon, e)
+		fast[e.re] = e
+	}
 }
+
+// categoryCommands is the safety category of the destructive shell commands
+// taken from instinct/detection.
+const categoryCommands = "commands"
 
 // newEntry compiles one lexicon line.
 func newEntry(p values.Principle, category, source string) (*entry, error) {

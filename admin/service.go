@@ -164,16 +164,31 @@ func (s *Service) Create(ctx context.Context, a Actor, kind string, raw json.Raw
 	if err != nil {
 		return nil, err
 	}
-	s.invalidate(a)
+	s.invalidate(a, kind)
 	return created, nil
 }
 
-// invalidate drops the actor tenant's cached safety profiles after a
-// successful write, so the next scan evaluates the new rows.
-func (s *Service) invalidate(a Actor) {
-	if s.engine != nil {
-		s.engine.InvalidateProfiles(a.Scope.TenantID)
+// invalidate drops cached safety profiles after a successful write, so the
+// next scan evaluates the new rows: the actor tenant's, or every tenant's
+// after an app-level policy write, since any tenant may have it assigned.
+func (s *Service) invalidate(a Actor, kind string) {
+	if s.engine == nil {
+		return
 	}
+	if kind == "policies" && a.Scope.AppScope() {
+		s.engine.InvalidateAllProfiles()
+		return
+	}
+	s.engine.InvalidateProfiles(a.Scope.TenantID)
+}
+
+// readOnly refuses a write to a policy the actor may only read: an
+// app-level policy seen from a tenant scope.
+func readOnly(a Actor, kind string, row map[string]any) error {
+	if !store.DashboardWritable(a.Scope, kind, row) {
+		return fail("PERMISSION_DENIED", "App-level policies are managed by the app operator")
+	}
+	return nil
 }
 func (s *Service) Update(ctx context.Context, a Actor, kind, key string, raw json.RawMessage, expectedRevision ...string) (json.RawMessage, error) {
 	s.mu.Lock()
@@ -188,6 +203,9 @@ func (s *Service) Update(ctx context.Context, a Actor, kind, key string, raw jso
 	before, err := decode(old)
 	if err != nil {
 		return nil, err
+	}
+	if operationErr := readOnly(a, kind, before); operationErr != nil {
+		return nil, operationErr
 	}
 	if len(expectedRevision) > 0 && expectedRevision[0] != "" && expectedRevision[0] != before["updated_at"] {
 		return nil, fail("CONFLICT", "This configuration changed after you opened it. Reload before saving.")
@@ -226,7 +244,7 @@ func (s *Service) Update(ctx context.Context, a Actor, kind, key string, raw jso
 	if err != nil {
 		return nil, err
 	}
-	s.invalidate(a)
+	s.invalidate(a, kind)
 	return updated, nil
 }
 func (s *Service) Delete(ctx context.Context, a Actor, kind, key string) error {
@@ -243,6 +261,9 @@ func (s *Service) Delete(ctx context.Context, a Actor, kind, key string) error {
 	if decodeErr := json.Unmarshal(row, &fields); decodeErr != nil {
 		return decodeErr
 	}
+	if operationErr := readOnly(a, kind, fields); operationErr != nil {
+		return operationErr
+	}
 	if kind != "profiles" && kind != "policies" {
 		refs, err := s.References(ctx, a, kind, fmt.Sprint(fields["name"]))
 		if err != nil {
@@ -255,7 +276,7 @@ func (s *Service) Delete(ctx context.Context, a Actor, kind, key string) error {
 	if deleteErr := s.db.DashboardDelete(ctx, a.Scope, kind, key); deleteErr != nil {
 		return deleteErr
 	}
-	s.invalidate(a)
+	s.invalidate(a, kind)
 	return nil
 }
 func (s *Service) References(ctx context.Context, a Actor, kind, name string) ([]string, error) {
@@ -302,8 +323,9 @@ func referenceNames(kind string, value any) []string {
 }
 func (s *Service) validateReferences(ctx context.Context, a Actor, kind string, row map[string]any) error {
 	if kind != "profiles" {
-		return nil
+		return s.validateReferencingProfiles(ctx, a, kind, row)
 	}
+	total := 0
 	for _, k := range []string{"instincts", "awareness", "boundaries", "values", "judgments", "reflexes"} {
 		for _, name := range referenceNames(k, row[k]) {
 			page, err := s.List(ctx, a, k, store.Filter{Limit: 1, Name: name})
@@ -313,10 +335,62 @@ func (s *Service) validateReferences(ctx context.Context, a Actor, kind string, 
 			if page.Total != 1 {
 				return &Error{Code: "BAD_REQUEST", Message: "Profile references must exist in this tenant and app", Fields: map[string]string{k: "Unknown configuration: " + name}}
 			}
+			var ref map[string]any
+			if decodeErr := json.Unmarshal(page.Items[0], &ref); decodeErr != nil {
+				return decodeErr
+			}
+			total += rowPatterns(k, ref)
+		}
+	}
+	return patternBudget(total)
+}
+
+// validateReferencingProfiles checks that a changed row keeps every profile
+// that references it within the pattern budget.
+func (s *Service) validateReferencingProfiles(ctx context.Context, a Actor, kind string, row map[string]any) error {
+	if !store.ValidReferenceKind(kind) || rowPatterns(kind, row) == 0 {
+		return patternBudget(rowPatterns(kind, row))
+	}
+	name, _ := row["name"].(string) //nolint:errcheck // validate checked the name
+	refs, err := s.References(ctx, a, kind, name)
+	if err != nil {
+		return err
+	}
+	for _, key := range refs {
+		raw, getErr := s.Get(ctx, a, "profiles", key)
+		if getErr != nil {
+			return getErr
+		}
+		var profile map[string]any
+		if decodeErr := json.Unmarshal(raw, &profile); decodeErr != nil {
+			return decodeErr
+		}
+		total := rowPatterns(kind, row)
+		for _, k := range []string{"instincts", "awareness", "values", "reflexes"} {
+			for _, ref := range referenceNames(k, profile[k]) {
+				if k == kind && ref == name {
+					continue
+				}
+				page, listErr := s.List(ctx, a, k, store.Filter{Limit: 1, Name: ref})
+				if listErr != nil {
+					return listErr
+				}
+				for _, item := range page.Items {
+					var other map[string]any
+					if decodeErr := json.Unmarshal(item, &other); decodeErr != nil {
+						return decodeErr
+					}
+					total += rowPatterns(k, other)
+				}
+			}
+		}
+		if budgetErr := patternBudget(total); budgetErr != nil {
+			return budgetErr
 		}
 	}
 	return nil
 }
+
 func (s *Service) Assigned(ctx context.Context, a Actor, key string) (bool, error) {
 	if _, err := s.Get(ctx, a, "policies", key); err != nil {
 		return false, err
@@ -333,6 +407,10 @@ func (s *Service) Assign(ctx context.Context, a Actor, key string, assigned bool
 	if err := a.Check(true); err != nil {
 		return err
 	}
+	// Only the app operator assigns its app-level policies to a tenant.
+	if !a.Scope.AppScope() {
+		return fail("PERMISSION_DENIED", "App-level policies are assigned by the app operator")
+	}
 	if _, err := s.Get(ctx, a, "policies", key); err != nil {
 		return err
 	}
@@ -344,8 +422,10 @@ func (s *Service) Assign(ctx context.Context, a Actor, key string, assigned bool
 		return err
 	}
 	// Assigned app-level policies are part of the tenant's compiled
-	// profiles, so the next scan must load them again.
-	s.invalidate(a)
+	// profiles, so its next scan must load them again.
+	if s.engine != nil {
+		s.engine.InvalidateProfiles(a.Scope.TenantID)
+	}
 	return nil
 }
 func (s *Service) Tokens(ctx context.Context, a Actor, scanID string, f store.Filter) (store.Page, error) {

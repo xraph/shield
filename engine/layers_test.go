@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/xraph/shield"
 	"github.com/xraph/shield/awareness"
@@ -605,7 +606,12 @@ func TestAppPolicyAppliesOnlyWhenAssigned(t *testing.T) {
 	if !ok {
 		t.Fatal("sqlite store does not assign policies")
 	}
-	if err := assign.DashboardAssign(ctx, store.Scope{TenantID: "tenant-a", AppID: testApp}, pol.ID.String(), true); err != nil {
+	// Only an app-scope (operator) actor assigns app-level policies.
+	if err := assign.DashboardAssign(ctx, store.Scope{TenantID: "tenant-a", AppID: testApp}, pol.ID.String(), true); !errors.Is(err, store.ErrReadOnly) {
+		t.Fatalf("tenant actor assigned an app policy: %v", err)
+	}
+	operator := store.Scope{TenantID: "tenant-a", AppID: testApp, PolicyKey: testApp, PolicyLevel: "app"}
+	if err := assign.DashboardAssign(ctx, operator, pol.ID.String(), true); err != nil {
 		t.Fatal(err)
 	}
 	r.eng.InvalidateProfiles("tenant-a")
@@ -616,6 +622,17 @@ func TestAppPolicyAppliesOnlyWhenAssigned(t *testing.T) {
 	res = scanText(tenantCtx("tenant-b"), t, r, &scan.Input{Text: injectionCommit, Profile: "p"})
 	if res.Decision != scan.DecisionFlag || len(res.PoliciesUsed) != 0 {
 		t.Fatalf("tenant-b: %s %q", res.Decision, res.PoliciesUsed)
+	}
+
+	// An operator edit of the app policy reaches every tenant after
+	// InvalidateAllProfiles, cached or not.
+	pol.Rules = []policy.Rule{{CheckType: "instinct", Condition: "finding", Action: "escalate"}}
+	if err := r.st.UpdatePolicy(shield.WithApp(context.Background(), testApp), pol); err != nil {
+		t.Fatal(err)
+	}
+	r.eng.InvalidateAllProfiles()
+	if res := scanText(ctx, t, r, &scan.Input{Text: injectionCommit, Profile: "p"}); res.Decision != scan.DecisionFlag || len(inLayer(res, "policy")) != 1 {
+		t.Fatalf("after the operator edit: %s %+v", res.Decision, res.Findings)
 	}
 }
 
@@ -717,5 +734,159 @@ func TestCapabilitiesAreHonest(t *testing.T) {
 	}
 	if got := c.Supported["unavailable_judgment_assessors"]; !slices.Equal(got, []string{"model"}) {
 		t.Fatalf("unavailable_judgment_assessors = %q", got)
+	}
+}
+
+// Fix round 1 (review minors).
+
+func TestRateThresholdIsAWholeNumberUpToTheCap(t *testing.T) {
+	for _, threshold := range []float64{0.5, engine.MaxRateThreshold + 1, -1} {
+		r := newRig(t, nil)
+		ctx := tenantCtx("tenant-a")
+		r.reflex(ctx, t, "burst", 0, []reflex.Trigger{{Type: reflex.TriggerOnRate, Threshold: threshold, Window: "1m"}}, reflex.Action{Type: reflex.ActionBlock})
+		r.safetyProfile(ctx, t, &profile.SafetyProfile{Name: "p", Reflexes: []string{"burst"}})
+		if _, err := r.eng.ScanInput(ctx, &scan.Input{Text: "x", Profile: "p"}); !errors.Is(err, shield.ErrProfileInvalid) {
+			t.Errorf("threshold %v: err = %v", threshold, err)
+		}
+	}
+}
+
+func TestRateWindowExpiresAndTriggersCombine(t *testing.T) {
+	r := newRig(t, nil)
+	ctx := tenantCtx("tenant-a")
+	r.reflex(ctx, t, "short", 0, []reflex.Trigger{{Type: reflex.TriggerOnRate, Threshold: 1, Window: "200ms"}}, reflex.Action{Type: reflex.ActionBlock})
+	r.reflex(ctx, t, "both", 0, []reflex.Trigger{
+		{Type: reflex.TriggerOnRate, Threshold: 1, Window: "1m"},
+		{Type: reflex.TriggerOnRate, Threshold: 3, Window: "1m"},
+	}, reflex.Action{Type: reflex.ActionFlag})
+	r.safetyProfile(ctx, t, &profile.SafetyProfile{Name: "short", Reflexes: []string{"short"}})
+	r.safetyProfile(ctx, t, &profile.SafetyProfile{Name: "both", Reflexes: []string{"both"}})
+	decide := func(p string) scan.Decision {
+		t.Helper()
+		return scanText(ctx, t, r, &scan.Input{Text: "x", Profile: p}).Decision
+	}
+	if d1, d2 := decide("short"), decide("short"); d1 != scan.DecisionAllow || d2 != scan.DecisionBlock {
+		t.Fatalf("short window: %s then %s", d1, d2)
+	}
+	time.Sleep(300 * time.Millisecond)
+	if d := decide("short"); d != scan.DecisionAllow {
+		t.Fatalf("after the window: %s", d)
+	}
+	// Both rate triggers must exceed their thresholds: only the fourth scan
+	// is more than 3.
+	for i, want := range []scan.Decision{scan.DecisionAllow, scan.DecisionAllow, scan.DecisionAllow, scan.DecisionFlag} {
+		if d := decide("both"); d != want {
+			t.Fatalf("scan %d: %s, want %s", i+1, d, want)
+		}
+	}
+}
+
+func TestScoreConditionNeedsAFinding(t *testing.T) {
+	r := newRig(t, nil)
+	ctx := tenantCtx("tenant-a")
+	r.instinct(ctx, t, "prompt-injection", instinct.ActionFlag)
+	r.safetyProfile(ctx, t, &profile.SafetyProfile{Name: "p", Instincts: []profile.InstinctAssignment{{InstinctName: "prompt-injection"}}})
+	r.policy(t, "low", policy.ScopeOrg, "tenant-a", policy.Rule{CheckType: "instinct", Condition: "score < 0.95", Action: "block"})
+	if res := scanText(ctx, t, r, &scan.Input{Text: cleanCommit, Profile: "p"}); res.Decision != scan.DecisionAllow {
+		t.Fatalf("clean text: %s %+v", res.Decision, res.Findings)
+	}
+	if res := scanText(ctx, t, r, &scan.Input{Text: roleOnly, Profile: "p"}); res.Decision != scan.DecisionBlock {
+		t.Fatalf("a 0.7 finding: %s", res.Decision)
+	}
+}
+
+func TestPolicyRedactRemovesInstinctLinesAndOtherActionsBlock(t *testing.T) {
+	r := newRig(t, nil)
+	ctx := tenantCtx("tenant-a")
+	r.instinct(ctx, t, "prompt-injection", instinct.ActionFlag)
+	r.safetyProfile(ctx, t, &profile.SafetyProfile{Name: "p", Instincts: []profile.InstinctAssignment{{InstinctName: "prompt-injection"}}})
+	pol := r.policy(t, "strip", policy.ScopeOrg, "tenant-a", policy.Rule{CheckType: "instinct", Condition: "finding", Action: "redact"})
+	res := scanText(ctx, t, r, &scan.Input{Text: injectionCommit, Profile: "p"})
+	want := "fix: bump deps\n[shield: removed suspected instruction]\nSigned-off-by: dev"
+	if res.Decision != scan.DecisionRedact || res.Redacted != want {
+		t.Fatalf("redact policy: %s %q", res.Decision, res.Redacted)
+	}
+	pol.Rules[0].Action = "vault"
+	if err := r.st.UpdatePolicy(ctx, pol); err != nil {
+		t.Fatal(err)
+	}
+	r.eng.InvalidateProfiles("tenant-a")
+	if res := scanText(ctx, t, r, &scan.Input{Text: injectionCommit, Profile: "p"}); res.Decision != scan.DecisionBlock {
+		t.Fatalf("store-set vault policy: %s", res.Decision)
+	}
+}
+
+func TestReflexRedactThatMatchesNothingDoesNotFire(t *testing.T) {
+	r := newRig(t, nil)
+	ctx := tenantCtx("tenant-a")
+	r.reflex(ctx, t, "cards", 0, []reflex.Trigger{{Type: reflex.TriggerAlways}}, reflex.Action{Type: reflex.ActionRedact, Target: `\d{16}`})
+	r.safetyProfile(ctx, t, &profile.SafetyProfile{Name: "p", Reflexes: []string{"cards"}})
+	res := scanText(ctx, t, r, &scan.Input{Text: "hello world", Profile: "p"})
+	f := inLayer(res, "reflex")
+	if res.Decision != scan.DecisionAllow || res.Redacted != "" || len(f) != 1 || f[0].Message != "redact target matched nothing" || f[0].Severity != "info" {
+		t.Fatalf("result: %s %q %+v", res.Decision, res.Redacted, f)
+	}
+	if n := r.rec.count("reflex_fired"); n != 0 {
+		t.Fatalf("ReflexFired fired %d times", n)
+	}
+}
+
+func TestContextCountsTowardTheSizeLimit(t *testing.T) {
+	r := newRig(t, func(c *shield.Config) { c.MaxScanBytes = 64 })
+	ctx := tenantCtx("tenant-a")
+	r.safetyProfile(ctx, t, &profile.SafetyProfile{Name: "p"})
+	big := map[string]any{"title": strings.Repeat("x", 60)}
+	if _, err := r.eng.ScanInput(ctx, &scan.Input{Text: "hello", Context: big, Profile: "p"}); !errors.Is(err, shield.ErrInputTooLarge) {
+		t.Fatalf("err = %v", err)
+	}
+	if _, err := r.eng.ScanInput(ctx, &scan.Input{Text: "hello", Context: map[string]any{"n": 1, "title": "short"}, Profile: "p"}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestProfilePatternBudget(t *testing.T) {
+	r := newRig(t, nil)
+	ctx := tenantCtx("tenant-a")
+	detectors := make([]awareness.Detector, 0, 5)
+	for i := range 5 {
+		patterns := make([]string, 52)
+		for j := range patterns {
+			patterns[j] = fmt.Sprintf("marker-%d-%d", i, j)
+		}
+		detectors = append(detectors, awareness.Detector{Name: fmt.Sprint("d", i), Focus: awareness.FocusCustom, Patterns: patterns})
+	}
+	r.awareness(ctx, t, "many", awareness.FocusCustom, "flag", detectors...)
+	r.safetyProfile(ctx, t, &profile.SafetyProfile{Name: "p", Awareness: []profile.AwarenessAssignment{{AwarenessName: "many"}}})
+	if _, err := r.eng.ScanInput(ctx, &scan.Input{Text: "x", Profile: "p"}); !errors.Is(err, shield.ErrProfileInvalid) {
+		t.Fatalf("260 patterns: err = %v", err)
+	}
+}
+
+func TestBoundaryReportsSkippedLimitsAfterAHit(t *testing.T) {
+	r := newRig(t, nil)
+	ctx := tenantCtx("tenant-a")
+	r.boundary(ctx, t, "mixed", "", boundary.Limit{Scope: boundary.ScopeTopic, Deny: []string{"payroll"}}, boundary.Limit{Scope: boundary.ScopeAction, Deny: []string{"x"}})
+	r.safetyProfile(ctx, t, &profile.SafetyProfile{Name: "p", Boundaries: []string{"mixed"}})
+	res := scanText(ctx, t, r, &scan.Input{Text: "payroll", Profile: "p"})
+	found := inLayer(res, "boundary")
+	messages := make([]string, 0, len(found))
+	for _, f := range found {
+		messages = append(messages, f.Message)
+	}
+	if res.Decision != scan.DecisionBlock || !slices.Contains(messages, "action limits apply to tool calls only") || len(messages) != 2 {
+		t.Fatalf("%s %q", res.Decision, messages)
+	}
+}
+
+func TestValuesTermsAreWholeWords(t *testing.T) {
+	r := newRig(t, nil)
+	ctx := tenantCtx("tenant-a")
+	r.values(ctx, t, "words", "flag", "warning", values.Rule{Principle: values.PrincipleCustom, Config: map[string]any{"terms": []any{"ass"}}})
+	r.safetyProfile(ctx, t, &profile.SafetyProfile{Name: "p", Values: []string{"words"}})
+	if res := scanText(ctx, t, r, &scan.Input{Text: "the class passes", Profile: "p"}); res.Decision != scan.DecisionAllow {
+		t.Fatalf("substring matched: %+v", res.Findings)
+	}
+	if res := scanText(ctx, t, r, &scan.Input{Text: "what an ass.", Profile: "p"}); res.Decision != scan.DecisionFlag {
+		t.Fatalf("whole word missed: %s", res.Decision)
 	}
 }

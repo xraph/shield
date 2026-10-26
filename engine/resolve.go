@@ -35,6 +35,9 @@ type profileCache struct {
 	mu          sync.Mutex
 	entries     map[profileKey]cachedProfile
 	generations map[string]uint64
+	// global is bumped by InvalidateAllProfiles; a tenant's generation is
+	// its own plus this one.
+	global uint64
 }
 
 func newProfileCache() *profileCache {
@@ -54,14 +57,14 @@ func (c *profileCache) get(k profileKey, now time.Time) (*compiledProfile, bool)
 func (c *profileCache) generation(tenant string) uint64 {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.generations[tenant]
+	return c.global + c.generations[tenant]
 }
 
 // put stores p unless the tenant was invalidated since generation gen.
 func (c *profileCache) put(k profileKey, p *compiledProfile, expires time.Time, gen uint64) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.generations[k.tenant] != gen {
+	if c.global+c.generations[k.tenant] != gen {
 		return
 	}
 	c.entries[k] = cachedProfile{profile: p, expires: expires}
@@ -76,6 +79,21 @@ func (c *profileCache) invalidate(tenant string) {
 			delete(c.entries, k)
 		}
 	}
+}
+
+func (c *profileCache) invalidateAll() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.global++
+	clear(c.entries)
+}
+
+// InvalidateAllProfiles drops every tenant's cached profiles, so each
+// tenant's next scan loads its profile and policies again. Call it after
+// changing an app-level policy outside the admin service, which calls it for
+// you: every tenant the policy is assigned to compiles it in.
+func (e *Engine) InvalidateAllProfiles() {
+	e.profiles.invalidateAll()
 }
 
 // InvalidateProfiles drops every cached profile of tenantID, so the next

@@ -88,6 +88,8 @@ func mapError(err error) error {
 		return &dash.Error{Code: dash.CodeNotFound, Message: "Resource not found in this scope"}
 	case errors.Is(err, store.ErrConflict):
 		return &dash.Error{Code: dash.CodeConflict, Message: "Resource conflicts with existing configuration"}
+	case errors.Is(err, store.ErrReadOnly):
+		return &dash.Error{Code: dash.CodePermissionDenied, Message: "This configuration is read-only in your scope"}
 	case errors.Is(err, store.ErrScope):
 		return &dash.Error{Code: dash.CodePermissionDenied, Message: "Authorized scope is required"}
 	case errors.Is(err, store.ErrCollection):

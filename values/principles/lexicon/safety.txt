@@ -1,27 +1,23 @@
 # Destructive infrastructure commands, for the safety principle.
 #
 # Each line is "<category> <pattern>". Patterns are matched ASCII
-# case-insensitively (write them in lower case), start with \b and a literal
-# or with a literal, and use bounded repetition only.
+# case-insensitively on folded text (write them in lower case), start with \b
+# and a literal or with a literal, and use bounded repetition only.
 #
-# These match the command itself, wherever it appears. The injection
-# instincts (instinct/detection) separately flag text that tells the model to
-# run such a command. The rm targets below follow theirs: a whole tree is /,
-# ~, $HOME, ., .., * or one of those followed by /*, ending at the end of the
-# command or a separator. rm -rf ./build or /var/lib/apt/lists/* is not one.
+# Shell commands that destroy a tree, a disk or a machine (rm -rf /, mkfs,
+# dd to a device and so on) are not listed here: they come from
+# instinct/detection.DestructiveCommands, the same detector the injection
+# instincts use (category "commands").
+#
+# SQL statements need the statement shape: a name that ends the statement
+# (";" or the end of the text), or one that cannot be an English word (a
+# quoted name, or one with a digit or underscore). "drop database
+# connections" and "drop table if exists tmp_x" are not one.
 
-filesystem \brm(?:\s{1,4}(?:-[a-z]{0,6}[rf][a-z]{0,6}|--recursive|--force|--no-preserve-root)){1,4}\s{1,4}"?(?:/|/\*|~|~/|~/\*|\$home|\$home/|\$home/\*|\$\{home\}|\$\{home\}/|\$\{home\}/\*|\.|\.\.|\*|\./\*|\.\./\*)"?(?:$|[\s;&|)])
-filesystem \bchmod\s{1,4}-[a-z]{0,4}r[a-z]{0,4}\s{1,4}(?:0?777|a\+rwx|ugo\+rwx)\s{1,4}/(?:$|[\s;&|)])
-filesystem \bchown\s{1,4}-[a-z]{0,4}r[a-z]{0,4}\s{1,4}\S{1,64}\s{1,4}/(?:$|[\s;&|)])
-filesystem \bfind\s{1,4}/\s{1,4}(?:\S{1,64}\s{1,4}){0,6}-delete\b
-disk \bmkfs(?:\.[a-z0-9]{1,8})?\s{1,4}(?:-\S{1,16}\s{1,4}){0,6}/dev/
-disk \bdd\s{1,4}(?:\S{1,128}\s{1,4}){0,6}of=/dev/(?:sd|hd|nvme|xvd|vd|disk|rdisk|mmcblk)
-disk \bwipefs\s{1,4}(?:-\S{1,16}\s{1,4}){0,6}/dev/
-disk \bshred\s{1,4}(?:-\S{1,16}\s{1,4}){0,6}/dev/
-disk >\s{0,4}/dev/(?:sd[a-z]|hd[a-z]|nvme[0-9]|xvd[a-z]|vd[a-z]|disk[0-9]|mmcblk[0-9])
-process :\(\)\s{0,2}\{\s{0,2}:\s{0,2}\|\s{0,2}:\s{0,2}&\s{0,2}\}\s{0,2};\s{0,2}:
-database \bdrop\s{1,4}database\b
+database \bdrop\s{1,4}(?:database|table|schema)\s{1,4}[a-z][a-z0-9_]{0,63}\s{0,4}(?:;|$)
+database \bdrop\s{1,4}(?:database|table|schema)\s{1,4}(?:"[^"]{1,64}"|`[^`]{1,64}`|[a-z0-9]{0,32}[_0-9][a-z0-9_.]{0,32})
 database \bdrop\s{1,4}schema\s{1,4}(?:if\s{1,4}exists\s{1,4})?[a-z0-9_."]{1,64}\s{1,4}cascade\b
+database \btruncate\s{1,4}(?:table\s{1,4})?[a-z][a-z0-9_."]{0,63}\s{0,4}(?:;|$)
 database \bdelete\s{1,4}from\s{1,4}[a-z0-9_."]{1,64}\s{0,4}(?:;|$)
 database \bdropdb\s{1,4}\S
 database \bdb\.dropdatabase\(
@@ -37,4 +33,6 @@ cloud \baws\s{1,4}rds\s{1,4}delete-db-(?:instance|cluster)\b
 cloud \bgcloud\s{1,4}projects\s{1,4}delete\b
 cloud \bgcloud\s{1,4}sql\s{1,4}instances\s{1,4}delete\b
 cloud \baz\s{1,4}group\s{1,4}delete\b
+cloud \bdocker\s{1,4}system\s{1,4}prune\s{1,4}(?:-\S{1,16}\s{1,4}){0,4}--volumes\b
 vcs \bgit\s{1,4}push\s{1,4}(?:--force|-f)\s{1,4}\S{1,64}\s{1,4}(?:main|master)\b
+vcs \bgit\s{1,4}push\s{1,4}\S{1,64}\s{1,4}(?:main|master)\s{1,4}(?:--force|-f)(?:$|\s)

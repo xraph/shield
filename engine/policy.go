@@ -48,7 +48,9 @@ func (e *Engine) loadPolicies(ctx context.Context, tenant, app string) ([]*polic
 	if err != nil {
 		return nil, fmt.Errorf("shield: load policies: %w", err)
 	}
-	scope := store.Scope{TenantID: tenant, AppID: app}
+	// An app-scope view of the policy, so the check reads the assignment of
+	// any app-level policy, assigned or not.
+	scope := store.Scope{TenantID: tenant, AppID: app, PolicyKey: app, PolicyLevel: string(policy.ScopeApp)}
 	for _, p := range appLevel {
 		assigned, assignedErr := assignments.DashboardAssigned(ctx, scope, p.ID.String())
 		if assignedErr != nil {
@@ -92,7 +94,8 @@ func compilePolicies(policies []*policy.Policy) ([]string, []compiledPolicyRule,
 
 // runPolicies is the last step: the tenant's policies, rule by rule in
 // priority order, over every finding so far. A rule whose condition holds
-// adds a finding with its action and error message. A redact rule forces
+// adds a finding with its action and error message. A score condition holds
+// only when the rule's check type has at least one finding. A redact rule forces
 // the redaction of what the matching findings found, and blocks when they
 // found nothing it can redact.
 func (e *Engine) runPolicies(ctx context.Context, ev *evaluation) {
@@ -109,8 +112,11 @@ func (e *Engine) runPolicies(ctx context.Context, ev *evaluation) {
 		if !holds {
 			continue
 		}
-		action := r.action
-		if scan.ActionDecision(action) == scan.DecisionRedact && !ev.forceRedaction(matched) {
+		// Only redact forces a redaction; another redacting action set
+		// through the store (vault, quote, rewrite) blocks, as does a redact
+		// with nothing to redact.
+		action := applicable(r.action, "redact")
+		if action == "redact" && !ev.forceRedaction(matched) {
 			action = actionBlock
 		}
 		ev.add(&scan.Finding{
@@ -146,12 +152,12 @@ func (ev *evaluation) ruleMatches(r compiledPolicyRule) (matched []*scan.Finding
 	if !slices.Contains(policyCheckTypes, r.checkType) {
 		return nil, false, false
 	}
-	best := 0.0
+	best, seen := 0.0, false
 	for _, f := range ev.detections() {
 		if f.Layer != r.checkType {
 			continue
 		}
-		best = max(best, f.Score)
+		best, seen = max(best, f.Score), true
 		if r.condition.Kind == policy.ConditionFinding || r.condition.Holds(f.Score) {
 			matched = append(matched, f)
 		}
@@ -159,7 +165,9 @@ func (ev *evaluation) ruleMatches(r compiledPolicyRule) (matched []*scan.Finding
 	if r.condition.Kind == policy.ConditionFinding {
 		return matched, len(matched) > 0, true
 	}
-	return matched, r.condition.Holds(best), true
+	// A score condition needs a finding to score: "score < 0.2" on a layer
+	// that found nothing does not hold.
+	return matched, seen && r.condition.Holds(best), true
 }
 
 // forceRedaction queues the redaction of what the findings found: the

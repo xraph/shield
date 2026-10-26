@@ -3,11 +3,13 @@ package admin
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"reflect"
 	"regexp"
 	"strings"
 	"time"
 
+	"github.com/xraph/shield/engine"
 	"github.com/xraph/shield/policy"
 )
 
@@ -66,7 +68,7 @@ func rateThreshold() Field {
 }
 
 // rateThresholdMax is the largest on_rate threshold.
-const rateThresholdMax = 1000000
+const rateThresholdMax = engine.MaxRateThreshold
 
 var sensitivity = []string{"paranoid", "cautious", "balanced", "relaxed", "permissive"}
 var domains = []string{"grounding", "relevance", "consistency", "compliance", "custom"}
@@ -142,13 +144,107 @@ func validateSemantics(kind string, row map[string]any) error {
 			}
 		}
 	case "reflexes":
-		return validateReflex(row)
+		if err := validateReflex(row); err != nil {
+			return err
+		}
+	case "judgments":
+		if err := validateAssessors(row); err != nil {
+			return err
+		}
 	case "policies":
 		for i, r := range entries(row["rules"]) {
 			if _, err := policy.ParseCondition(text(r, "condition")); err != nil {
 				return fieldError(fmt.Sprintf("rules.%d.condition", i), "Use pii_detected, secret_detected, finding, or score with >, >=, < or <= and a number")
 			}
 		}
+	}
+	return patternBudget(rowPatterns(kind, row))
+}
+
+// validateAssessors checks the config the engine reads from judgment
+// assessors: layer_score layers (a list of text), finding_count layer (text)
+// and saturate (a whole number).
+func validateAssessors(row map[string]any) error {
+	for i, a := range entries(row["assessors"]) {
+		config, ok := a["config"].(map[string]any)
+		if !ok {
+			continue
+		}
+		key := fmt.Sprintf("assessors.%d.config.", i)
+		switch text(a, "name") {
+		case "layer_score":
+			if !textList(config["layers"]) {
+				return fieldError(key+"layers", "Expected a list of layer names")
+			}
+		case "finding_count":
+			if v, present := config["layer"]; present {
+				if _, isText := v.(string); !isText {
+					return fieldError(key+"layer", "Expected a layer name")
+				}
+			}
+			if v, present := config["saturate"]; present {
+				n, isNumber := v.(float64)
+				if !isNumber || n < 0 || n != math.Trunc(n) {
+					return fieldError(key+"saturate", "Use a whole number")
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// rowPatterns counts the operator regexes and globs a row adds to a
+// compiled profile, as engine.MaxProfilePatterns counts them.
+func rowPatterns(kind string, row map[string]any) int {
+	count := func(v any) int {
+		items, _ := v.([]any) //nolint:errcheck // absent or invalid counts as none
+		return len(items)
+	}
+	n := 0
+	switch kind {
+	case "instincts":
+		for _, s := range entries(row["strategies"]) {
+			if config, ok := s["config"].(map[string]any); ok {
+				n += count(config["patterns"])
+			}
+		}
+	case "awareness":
+		for _, d := range entries(row["detectors"]) {
+			n += count(d["patterns"])
+		}
+	case "values":
+		for _, r := range entries(row["rules"]) {
+			if config, ok := r["config"].(map[string]any); ok {
+				n += count(config["patterns"])
+			}
+		}
+	case "reflexes":
+		for _, t := range entries(row["triggers"]) {
+			pattern := text(t, "pattern")
+			switch text(t, "type") {
+			case "on_pattern":
+				n++
+			case "on_finding", "on_score":
+				if pattern != "" {
+					n++
+				}
+			case "on_context":
+				n += len(strings.Split(pattern, ","))
+			}
+		}
+		for _, a := range entries(row["actions"]) {
+			if text(a, "target") != "" {
+				n++
+			}
+		}
+	}
+	return n
+}
+
+// patternBudget refuses more operator patterns than one profile may hold.
+func patternBudget(n int) error {
+	if n > engine.MaxProfilePatterns {
+		return fieldError("patterns", fmt.Sprintf("A profile may hold at most %d regular expressions and globs; this adds up to %d", engine.MaxProfilePatterns, n))
 	}
 	return nil
 }
@@ -174,6 +270,9 @@ func validateReflex(row map[string]any) error {
 		case "on_rate":
 			if d, err := time.ParseDuration(text(t, "window")); err != nil || d <= 0 {
 				return fieldError(key+"window", "Use a duration such as 30s or 5m")
+			}
+			if threshold, ok := t["threshold"].(float64); ok && threshold != math.Trunc(threshold) {
+				return fieldError(key+"threshold", "Use a whole number of scans")
 			}
 		case "on_score":
 			if threshold, ok := t["threshold"].(float64); ok && threshold > 1 {
