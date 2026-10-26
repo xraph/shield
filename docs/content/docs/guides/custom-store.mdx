@@ -54,7 +54,7 @@ eng, err := engine.New(engine.WithStore(&mystore.MyStore{}))
 
 or to the Forge extension with `extension.WithStore`. In a Forge app, a `*grove.DB` in the container takes precedence over `WithStore` (see [Forge extension](/docs/guides/forge-extension#store-resolution)).
 
-The engine itself calls only `CreateScan` (once per scan) and `Ping` (from `Health`). Everything else is there for your own code and the dashboard.
+The engine reads a scan's profile through `ListProfiles` and the `List*` method of each primitive kind the profile names, filtered on the app and tenant, plus `GetPoliciesForScope` for the tenant's org-level and the app's app-level policies. It writes each result with `CreateScan`, and `Health` calls `Ping`. When your store also implements `store.AssignmentStore`, the engine asks it through `DashboardAssigned` which app-level policies are assigned to the tenant; without it, no app-level policy applies.
 
 ## Subsystem store interfaces
 
@@ -132,13 +132,18 @@ type DashboardStore interface {
 }
 ```
 
-These calls are strict. Validate the `store.Scope` on every call and return `store.ErrScope` for an empty tenant or app instead of widening the query. Return `store.ErrNotFound` for a row outside the scope, and `store.ErrConflict` when an update's expected `updated_at` doesn't match. Policy assignment, PII token listing and retention, and PII stats come from the optional `store.AssignmentStore`, `store.PrivacyStore` and `store.PrivacyStatsStore` interfaces; without them those dashboard features report themselves unavailable.
+These calls are strict. Validate the `store.Scope` on every call and return `store.ErrScope` for an empty tenant or app instead of widening the query. Return `store.ErrNotFound` for a row outside the scope, and `store.ErrConflict` when an update's expected `updated_at` doesn't match. `DashboardCreate` must return `store.ErrConflict` when the name is already taken in the scope's app and tenant, so map your database's unique-constraint error to it.
 
-The `store/storetest` package has a shared suite for all of this. `storetest.Run(t, factory)` takes a factory returning a `storetest.Backend` (the store plus all four dashboard interfaces) and runs the same checks the built-in stores pass.
+Policies follow the scope's `PolicyScope()`: a tenant scope creates org-level policies keyed by its tenant, and only a scope where `AppScope()` is true (`PolicyLevel "app"`, `PolicyKey` equal to the `AppID`) touches app-level ones. A tenant scope lists and gets its own org-level policies plus the app-level policies assigned to its tenant, and an update or delete of one of those returns `store.ErrReadOnly`. `store.DashboardWritable` tells you whether a stored row is writable from a scope. Compliance reports are read from the same `PolicyScope()` only.
+
+Policy assignment, PII token listing and retention, and PII stats come from the optional `store.AssignmentStore`, `store.PrivacyStore` and `store.PrivacyStatsStore` interfaces; without them those dashboard features report themselves unavailable.
+
+The `store/storetest` package has a shared suite for all of this, tenancy included. `storetest.Run(t, factory)` takes a factory returning a `storetest.Backend` (the store plus all four dashboard interfaces) and runs the same checks the built-in stores pass.
 
 ## Tips
 
 - Use compile-time interface checks: `var _ store.Store = (*MyStore)(nil)`.
 - Return the subsystem's not-found sentinel (`shield.ErrScanNotFound` and so on) when a row is missing, as the built-in stores do, so `errors.Is` works for callers.
-- The plain `store.Store` methods aren't scoped by context in the built-in stores; they filter by the IDs in the filter. You can be stricter in yours.
+- Every `store.Store` method must follow the [store rules](/docs/concepts/multi-tenancy#the-store-rules): resolve the tenant with `store.Tenant(ctx, want)`, return the not-found sentinel for another tenant's row, and check policy and report scopes with `store.ScopeVisible`, `store.ScopeLevels`, `store.ScopeWritable`, `store.ReportScope` and `store.ReportLevels`. The engine relies on this to keep one tenant's scans away from another's rows.
+- Make primitive and profile names unique per app, tenant and name, and policy names unique per scope key.
 - Keep slice fields such as `Strategies`, `Detectors`, `Rules`, `Triggers` and `Actions` in JSON or JSONB columns, as the built-in SQL stores do.

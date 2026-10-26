@@ -55,7 +55,9 @@ Pass `":memory:"` to `drv.Open` for a store that lives only as long as the proce
 | `shield_pii_tokens` | pii | PII tokens (placeholder, type, your encrypted value, expiry) |
 | `shield_compliance_reports` | compliance | Compliance report records |
 
-Safety primitive and profile names are unique per `app_id`; policy names are unique per `scope_key`.
+Safety primitive and profile names are unique per `app_id` and `tenant_id`, so two tenants of one app can each use the same name. Policy names are unique per `scope_key`, which for an org-level policy is its tenant.
+
+Migration `20261024000001` (`unique_names_per_tenant`) rebuilds the seven primitive and profile tables with `UNIQUE (app_id, tenant_id, name)` in place of `UNIQUE (app_id, name)`, since SQLite can't drop an inline constraint. Its down-migration puts the old key back, and fails if two tenants already share a name in one app.
 
 ## When to use
 

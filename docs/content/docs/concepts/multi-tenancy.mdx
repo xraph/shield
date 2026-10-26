@@ -1,85 +1,97 @@
 ---
 title: Multi-Tenancy
-description: How Shield scopes scans, policies and safety entities to apps and tenants, and where you have to do it yourself.
+description: How Shield scopes scans, safety rows, policies and reports to tenants and apps, and the rules every store call follows.
 ---
 
-Shield entities carry an **app** ID (logical application boundary) and a **tenant** ID (user or organization boundary). How strictly that's enforced depends on which API you call. The engine stamps scope from the context, the plain `store.Store` methods filter only by the IDs you hand them, and the dashboard store contract refuses to run without a scope.
-
-## Context injection
-
-Put scope on the Go context with helpers from the root `shield` package:
+Every scan and every store call runs for one tenant, and a tenant never sees another tenant's rows. Put the tenant on the context before you call Shield:
 
 ```go
 import "github.com/xraph/shield"
 
 ctx = shield.WithTenant(ctx, "org-123")
 ctx = shield.WithApp(ctx, "myapp")
-```
 
-## Extraction
-
-Read it back from any context:
-
-```go
 tenantID := shield.TenantFromContext(ctx) // "org-123"
 appID    := shield.AppFromContext(ctx)    // "myapp"
 ```
 
-Both return an empty string if no value is set.
+Both readers return an empty string when no value is set. A scan without a tenant fails with `shield.ErrTenantRequired`.
+
+If your product has only one tenant, pick a constant and use it everywhere, such as `shield.WithTenant(ctx, "default")`. There's no "no tenant" mode.
 
 ## AppID vs TenantID
 
-| Scope | Where it lives | Example |
+| Scope | What it is | Example |
 |-------|---------|---------|
-| **AppID** | A field on instincts, awareness, boundaries, values, judgments, reflexes, profiles and scans. Names are unique per app. | `"myapp"`, `"staging"` |
-| **TenantID** | A field on the same rows plus PII tokens. It defaults to empty on the safety primitives and profiles. | `"org-123"`, `"user-456"` |
+| **TenantID** | The customer boundary: an organization or workspace. Every safety primitive, profile, scan and PII token carries one | `"org-123"` |
+| **AppID** | The application the rows belong to. Several tenants usually share one app | `"myapp"` |
 
-Policies use `ScopeKey` and `ScopeLevel` (`app` or `org`) instead, with names unique per scope key, and you assign them to tenants with `AssignToTenant`.
+Names of instincts, awareness detectors, boundaries, values, judgments, reflexes and profiles are unique per app and tenant, so two tenants can each have a profile called `default`. Policies use `ScopeKey` and `ScopeLevel` instead, with names unique per scope key.
 
-## What the engine does
+A host that gives every workspace the same app ID (Loomplane uses `"loomplane"`) and the workspace ID as the tenant gets one set of rows per workspace with no extra work.
 
-`ScanInput` and `ScanOutput` read the tenant and app from the context and write them onto the `scan.Result` they persist. A scan on a context without them is stored with empty IDs.
+## What a scan reads
 
-## What `store.Store` does
+A scan reads only the rows of its own tenant, in the context's app: the profile, every primitive it names and the tenant's policies. A row with an empty tenant is never read. The result is stored with the tenant and app on it.
 
-The subsystem store methods don't read the context at all:
+The policies that apply to a tenant are:
 
-- `Get<Thing>(ctx, id)` looks a row up by ID only, whatever its tenant or app. `GetScan` returns another tenant's scan if you pass its ID.
-- `Get<Thing>ByName(ctx, appID, name)` filters by the app ID you pass.
-- `List*` methods filter by the `AppID` and `TenantID` fields you set on the filter. Leave them empty (or pass a `nil` filter) and you get every row.
-- PII methods such as `DeletePIITokensByTenant` and `PIIStats` take the tenant ID as an argument.
+- its org-level policies, the ones with `ScopeLevel` `org` and `ScopeKey` equal to the tenant, always;
+- app-level policies, with `ScopeLevel` `app` and `ScopeKey` equal to the app, only when they're assigned to the tenant with `AssignToTenant`.
 
-So if your own code serves Shield data to callers, take the tenant and app from your auth layer and pass them into every filter and name lookup, and check the `TenantID` and `AppID` on rows you fetch by ID.
+An app-level policy is shared by every tenant of the app, so it applies to nobody until an operator assigns it. That keeps one tenant's admin from writing a rule that blocks every other tenant.
+
+## The store rules
+
+Every `store.Store` method follows these rules, in all three backends. A rule that resolves the tenant uses `store.Tenant(ctx, want)`: an empty `want` takes the context tenant, both empty is `shield.ErrTenantRequired`, and both set but different is `shield.ErrTenantMismatch`.
+
+| Methods | Rule |
+|---|---|
+| `List*` for the seven primitives, `ListScans`, `ScanStats` | The tenant is the filter's `TenantID` or the context's. A nil filter counts as empty |
+| `Get*` by ID, `GetScan` | The context tenant. A row of another tenant returns that kind's not-found error (`shield.ErrInstinctNotFound`, `shield.ErrScanNotFound` and so on), never a mismatch, so you can't probe for it |
+| `Get*ByName(ctx, appID, name)` | The context tenant, matched on app, tenant and name |
+| `Create*`, `CreateScan` | An empty `TenantID` on the row takes the context tenant. A different one is `ErrTenantMismatch` |
+| `Update*` | As create, and only a row of that tenant changes. Another tenant's row returns not-found |
+| `Delete*` | Only a row of the context tenant is deleted. Anything else is a no-op that returns `nil` |
+| `ListPolicies`, `GetPoliciesForScope`, `GetPolicyByName` | An empty scope key is `ErrTenantRequired`. With a tenant on the context, the key must be that tenant (org level) or the context app (app level), else `ErrTenantMismatch` |
+| `GetPolicy`, `UpdatePolicy`, `DeletePolicy` | The policy must be visible from the context, else `shield.ErrPolicyNotFound` (and a delete is a no-op) |
+| `CreatePolicy`, `UpdatePolicy`, `DeletePolicy` | With a tenant on the context, only that tenant's org scope is writable: an app-level write or another tenant's key is `ErrTenantMismatch`. With no tenant on the context, the call is an operator call and may write any scope |
+| `AssignToTenant`, `UnassignFromTenant` | The tenant argument resolves through `store.Tenant`. Assigning a policy the tenant can't see is `ErrPolicyNotFound`; unassigning one is a no-op |
+| `GetReport`, `ListReports`, `CreateReport` | A tenant reads and writes only its own org-level reports. App-level reports need a context with no tenant |
+| `StorePIITokens`, `LoadPIITokens`, `LoadPIITokensByScan`, `DeletePIITokens`, `DeletePIITokensByTenant`, `PIIStats` | Per token or per call, the tenant resolves through `store.Tenant` |
+| `PurgePIITokens(olderThan)` | An operator retention sweep across every tenant, by design |
+
+A list filter that carries `TenantID` works without a tenant on the context. That's how filter-only callers, such as cortex's catalogs, read one tenant's rows.
 
 ```go
-tenantID := shield.TenantFromContext(ctx)
-appID := shield.AppFromContext(ctx)
+// Under ctx for tenant-1, this lists only tenant-1's scans.
+scans, err := eng.Store().ListScans(ctx, &scan.ListFilter{AppID: "myapp", Limit: 20})
 
-scans, err := eng.Store().ListScans(ctx, &scan.ListFilter{
-    AppID:    appID,
-    TenantID: tenantID,
-    Limit:    20,
-})
+// Asking for another tenant under the same ctx is an error.
+_, err = eng.Store().ListScans(ctx, &scan.ListFilter{TenantID: "tenant-2"})
+// errors.Is(err, shield.ErrTenantMismatch) == true
 ```
 
 ## What the dashboard does
 
-The Forge dashboard contributor goes through a stricter contract, `store.DashboardStore`. Every call takes a `store.Scope{TenantID, AppID}`. An empty tenant or app fails with `store.ErrScope` and is never widened to every row, and a row outside the scope reads as `store.ErrNotFound`. The default resolver builds that scope from the signed-in user's `tenant_id` and `app_id` claims, never from request parameters. See the [Forge extension guide](/docs/guides/forge-extension#dashboard).
+The Forge dashboard contributor goes through the stricter `store.DashboardStore` contract. Every call takes a `store.Scope{TenantID, AppID}`. An empty tenant or app fails with `store.ErrScope` and is never widened to every row, a row outside the scope reads as `store.ErrNotFound`, and a duplicate name returns `store.ErrConflict`. The default resolver builds that scope from the signed-in user's `tenant_id` and `app_id` claims, never from request parameters.
+
+That resolver gives you a tenant actor. A tenant actor writes org-level policies only, and can't assign or unassign. It sees the app-level policies assigned to it, read-only, and only its own compliance reports. App-level policies are operator-owned: the host's resolver grants the app scope (`PolicyLevel "app"`, with `PolicyKey` equal to the `AppID`) to the people who run the app. See the [Forge extension guide](/docs/guides/forge-extension#tenant-actors-and-the-app-scope).
 
 ## Example: two tenants
 
 ```go
-// Tenant 1 scans content.
-ctx1 := shield.WithApp(context.Background(), "myapp")
-ctx1 = shield.WithTenant(ctx1, "tenant-1")
-result1, _ := eng.ScanInput(ctx1, &scan.Input{Text: "hello"})
+// Each tenant has its own "default" profile under the same app.
+ctx1 := shield.WithApp(shield.WithTenant(context.Background(), "tenant-1"), "myapp")
+ctx2 := shield.WithApp(shield.WithTenant(context.Background(), "tenant-2"), "myapp")
 
-// Tenant 2 scans content.
-ctx2 := shield.WithApp(context.Background(), "myapp")
-ctx2 = shield.WithTenant(ctx2, "tenant-2")
-result2, _ := eng.ScanInput(ctx2, &scan.Input{Text: "hello"})
+result1, _ := eng.ScanInput(ctx1, &scan.Input{Text: "hello", Profile: "default"})
+result2, _ := eng.ScanInput(ctx2, &scan.Input{Text: "hello", Profile: "default"})
 
-// result1.TenantID is "tenant-1" and result2.TenantID is "tenant-2".
-// To list only tenant 1's history, filter on it:
-history, _ := eng.Store().ListScans(ctx1, &scan.ListFilter{AppID: "myapp", TenantID: "tenant-1"})
+// result1 ran tenant-1's profile and result2 ran tenant-2's.
+// Each tenant's history lists only its own scans:
+history, _ := eng.Store().ListScans(ctx1, &scan.ListFilter{AppID: "myapp"})
+
+// And tenant-2 can't read tenant-1's scan by ID:
+_, err := eng.Store().GetScan(ctx2, result1.ID) // shield.ErrScanNotFound
 ```

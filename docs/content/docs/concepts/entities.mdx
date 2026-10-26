@@ -5,7 +5,7 @@ description: The core data types in Shield, from scans and the six safety primit
 
 All Shield entities embed the `shield.Entity` base type and carry a TypeID identifier. This page gives an overview of every entity and how they relate. The struct listings are trimmed: each safety primitive and profile also has `Description`, `AppID`, `TenantID` and `Metadata` fields.
 
-The safety primitives and profiles are configuration records. You can store, list and edit them today, but the engine doesn't evaluate them yet, so the layer descriptions below are what each one is for, not what a scan does now.
+The safety primitives and profiles are configuration records that the engine runs on every scan. [Evaluation](/docs/concepts/evaluation) covers exactly what each field does during a scan.
 
 ## Base entity
 
@@ -30,25 +30,25 @@ type Instinct struct {
     ID          id.InstinctID
     Name        string
     Category    Category       // injection, exfiltration, manipulation, jailbreak
-    Strategies  []Strategy     // classifier, canary, perplexity, hierarchy
+    Strategies  []Strategy     // patterns, heuristics, canary (none means patterns + heuristics)
     Sensitivity Sensitivity    // paranoid, cautious, balanced, relaxed, permissive
-    Action      string         // block, flag, alert
+    Action      string         // block, flag, alert, redact, quote
     Enabled     bool
 }
 ```
 
 ### Awareness
 
-Perception: what the system notices. PII detection, topic classification, sentiment analysis, intent detection, and language identification.
+Perception: what the system notices. PII and secret detection, topic classification, and your own patterns for sentiment, intent, language or anything else.
 
 ```go
 type Awareness struct {
     shield.Entity
     ID          id.AwarenessID
     Name        string
-    Focus       Focus          // pii, topic, sentiment, intent, language, custom
-    Detectors   []Detector     // named detectors with patterns and config
-    Action      string         // redact, flag, block, vault
+    Focus       Focus          // pii, secrets, topic, sentiment, intent, language, custom
+    Detectors   []Detector     // built-in detector names, or your own with patterns
+    Action      string         // redact, flag, block, vault (vault redacts, stores no token)
     Enabled     bool
 }
 ```
@@ -94,7 +94,7 @@ type Judgment struct {
     ID          id.JudgmentID
     Name        string
     Domain      Domain         // grounding, relevance, consistency, compliance
-    Assessors   []Assessor     // named assessors with weights and config
+    Assessors   []Assessor     // layer_score, finding_count, model (the optional judge)
     Threshold   float64        // risk threshold for action
     Action      string         // flag, block, warn
     Enabled     bool
@@ -110,7 +110,7 @@ type Reflex struct {
     shield.Entity
     ID          id.ReflexID
     Name        string
-    Triggers    []Trigger      // on_score, on_finding, on_pattern, on_rate, etc.
+    Triggers    []Trigger      // on_score, on_finding, on_pattern, on_context, on_rate, always
     Actions     []Action       // block, redact, flag, rewrite, escalate, log, throttle
     Priority    int
     Enabled     bool
@@ -147,8 +147,8 @@ type Policy struct {
     shield.Entity
     ID          id.PolicyID
     Name        string
-    ScopeKey    string         // tenant/app identifier
-    ScopeLevel  ScopeLevel     // "app" or "org"
+    ScopeKey    string         // the tenant (org level) or the app (app level)
+    ScopeLevel  ScopeLevel     // "org" applies to its tenant; "app" only where assigned
     Rules       []Rule         // check_type + condition + action
     Enabled     bool
 }
@@ -161,19 +161,30 @@ type Policy struct {
 ```go
 type Input struct {
     Text      string
-    Direction Direction      // "input" or "output"
-    Context   map[string]any // additional context for judgment
-    Metadata  map[string]any
+    Direction Direction      // set by ScanInput or ScanOutput
+    Context   map[string]any // string values feed on_context reflexes
+    Metadata  map[string]any // copied onto the stored scan
+    Profile   string         // the profile to run; empty uses Config.DefaultProfile
+    Source    string         // where untrusted text came from, such as "log_line"
+    Untrusted bool           // quote the text for a model
+}
+
+type ToolCallInput struct {
+    Tool      string
+    Arguments json.RawMessage
+    RiskClass string            // empty means "unknown"
+    Metadata  map[string]string
+    Profile   string
 }
 
 type Result struct {
     shield.Entity
     ID            id.ScanID
     Direction     Direction
-    Decision      Decision       // allow, block, flag, redact
+    Decision      Decision       // allow, flag, redact, require_approval, block
     Blocked       bool
     Findings      []*Finding
-    Redacted      string         // PII-redacted text
+    Redacted      string         // the text to use in place of the input, see Evaluation
     PIICount      int
     ProfileUsed   string
     PoliciesUsed  []string
@@ -185,7 +196,7 @@ type Result struct {
 
 ### PII Token
 
-A PII placeholder and its encrypted value, with an optional expiry for retention. Shield stores `EncryptedValue` as the bytes you give it; it doesn't encrypt or decrypt anything itself, and no code writes tokens during a scan yet.
+A PII placeholder and its encrypted value, with an optional expiry for retention. Shield stores `EncryptedValue` as the bytes you give it; it doesn't encrypt or decrypt anything itself. A scan redacts PII with placeholders and writes no token, even with the `vault` action.
 
 ```go
 type Token struct {
@@ -219,7 +230,7 @@ SafetyProfile
                                  └── Action[]
 
 Engine
-  └── ScanInput / ScanOutput
+  └── ScanInput / ScanOutput / ScanToolCall
         └── Result
               ├── Finding[]
               └── PII Token[] (by ScanID)

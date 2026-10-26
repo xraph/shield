@@ -1,9 +1,9 @@
 ---
 title: Configuration
-description: Options and defaults for the Shield engine and Forge extension, and which ones are read today.
+description: Options and defaults for the Shield engine and Forge extension.
 ---
 
-Most of Shield's engine configuration describes how the evaluation layers will behave once they exist. The layers aren't implemented yet, so the engine stores these values and never reads them. This page says which settings do something today.
+Most settings have a default you can leave alone. The ones you'll usually touch are `DefaultProfile`, so a scan without a `Profile` still has one to run, and `MaxScanBytes`, if you scan long logs.
 
 ## Engine configuration
 
@@ -11,14 +11,33 @@ Most of Shield's engine configuration describes how the evaluation layers will b
 
 ```go
 type Config struct {
-    DefaultProfile     string        // safety profile to use when none is specified
-    ShutdownTimeout    time.Duration // graceful shutdown timeout (default: 30s)
-    ScanConcurrency    int           // max parallel scans (default: 10)
-    EnableShortCircuit bool          // skip deeper layers on block (default: true)
+    DefaultProfile     string        // profile to run when Input.Profile is empty
+    ShutdownTimeout    time.Duration // default 30s; not read yet
+    ScanConcurrency    int           // default 10; not read yet
+    EnableShortCircuit bool          // default true: a block ends the scan after its layer
+    MaxScanBytes       int           // default 1 MiB (1048576)
+    ProfileCacheTTL    time.Duration // default 30s; negative turns the cache off
+    StoreRedacted      bool          // default false: stored scans drop Result.Redacted
+    ModelJudge         bool          // default false: the model judge is never called
+    JudgeTimeout       time.Duration // default 5s
+    JudgeConcurrency   int           // default 8
 }
 ```
 
-None of these four fields is read anywhere. The engine keeps the struct and returns it from `eng.Config()` (the dashboard shows it through its `config.detail` query), but scans don't resolve a default profile, there's no concurrency limit, no layer runs that could short-circuit, and `Stop` doesn't wait on a timeout.
+| Field | Default | What it does |
+|---|---|---|
+| `DefaultProfile` | `""` | The profile a scan runs when `Input.Profile` (or `ToolCallInput.Profile`) is empty. With neither, the scan fails with `shield.ErrNoProfile` |
+| `EnableShortCircuit` | `true` | A block ends the scan after the layer that found it, so later layers and policies don't run |
+| `MaxScanBytes` | `1048576` (1 MiB) | The largest scan. Text plus the string values of `Input.Context` count toward it, and for a tool call the arguments, tool, risk class and metadata do. A larger one fails with `shield.ErrInputTooLarge` before any layer runs |
+| `ProfileCacheTTL` | `30s` | How long a compiled profile is reused. A negative value turns the cache off, so every scan loads its profile. The nexus guard's verdict cache uses the same TTL |
+| `StoreRedacted` | `false` | Keep `Result.Redacted` on the stored scan. By default the row drops it |
+| `ModelJudge` | `false` | Let a judgment's `model` assessor call the judge registered with `engine.WithJudge`. Without both, the assessor is skipped with an info finding |
+| `JudgeTimeout` | `5s` | The bound on one judge call. A slow judge gives an info finding and the deterministic result stands |
+| `JudgeConcurrency` | `8` | The judge calls in flight across the engine. A scan that can't get a slot before its context or `JudgeTimeout` ends goes without the judge |
+| `ScanConcurrency` | `10` | Not read yet. There's no limit on parallel scans |
+| `ShutdownTimeout` | `30s` | Not read yet. `Stop` doesn't wait |
+
+Zero for `MaxScanBytes`, `ProfileCacheTTL`, `JudgeTimeout` or `JudgeConcurrency` means the default, so a `Config` literal that leaves them out still behaves. `eng.Config()` returns the effective values, and the dashboard shows them through its `config.detail` query.
 
 ### Defaults
 
@@ -28,18 +47,22 @@ shield.DefaultConfig() // returns:
 //     ShutdownTimeout:    30 * time.Second,
 //     ScanConcurrency:    10,
 //     EnableShortCircuit: true,
+//     MaxScanBytes:       shield.DefaultMaxScanBytes,     // 1 << 20
+//     ProfileCacheTTL:    shield.DefaultProfileCacheTTL,  // 30 * time.Second
+//     JudgeTimeout:       shield.DefaultJudgeTimeout,     // 5 * time.Second
+//     JudgeConcurrency:   shield.DefaultJudgeConcurrency, // 8
 // }
 ```
 
-`engine.New` starts from `shield.DefaultConfig()`. Pass `engine.WithConfig` to replace it:
+`engine.New` starts from `shield.DefaultConfig()`. `engine.WithConfig` replaces the whole struct, so start from the defaults when you change one field. A literal leaves `EnableShortCircuit` false:
 
 ```go
+cfg := shield.DefaultConfig()
+cfg.DefaultProfile = "strict"
+cfg.MaxScanBytes = 4 << 20
+
 eng, err := engine.New(
-    engine.WithConfig(shield.Config{
-        DefaultProfile:     "strict",
-        ScanConcurrency:    20,
-        EnableShortCircuit: true,
-    }),
+    engine.WithConfig(cfg),
     engine.WithStore(pgStore),
 )
 ```
@@ -48,9 +71,10 @@ eng, err := engine.New(
 
 | Option | Description |
 |--------|-------------|
-| `engine.WithStore(s)` | Sets the composite `store.Store`. Scans are persisted only when a store is set |
-| `engine.WithConfig(cfg)` | Replaces the `shield.Config` (stored, not read) |
+| `engine.WithStore(s)` | Sets the composite `store.Store`. Scans read their profile from it and are stored in it; without one, every scan returns `shield.ErrNoStore` |
+| `engine.WithConfig(cfg)` | Replaces the `shield.Config` |
 | `engine.WithPlugin(p)` | Registers a lifecycle plugin |
+| `engine.WithJudge(j)` | Registers the model judge. It's called only when `Config.ModelJudge` is true |
 | `engine.WithLogger(l)` | Sets the go-utils `log.Logger` the engine uses to warn when a scan can't be persisted. The plugin registry logs hook errors on it too |
 | `engine.WithMetrics(m)` | Records scan and plugin-hook metrics on a go-utils `metrics.Metrics`. `nil`, the default, records nothing. See [Observability](/docs/guides/observability) |
 
@@ -73,7 +97,7 @@ type Options struct {
 }
 ```
 
-with `shield.WithConfig`, `shield.WithProfile`, `shield.WithInstincts`, `shield.WithAwareness`, `shield.WithValues`, `shield.WithBoundaries`, `shield.WithJudgments` and `shield.WithReflexes`. Nothing in Shield accepts these options: there's no `shield.New`, and the engine takes `engine.Option` values instead. Ignore them for now.
+with `shield.WithConfig`, `shield.WithProfile`, `shield.WithInstincts`, `shield.WithAwareness`, `shield.WithValues`, `shield.WithBoundaries`, `shield.WithJudgments` and `shield.WithReflexes`. Nothing in Shield accepts these options: there's no `shield.New`, and the engine takes `engine.Option` values instead. Ignore them.
 
 ## Forge extension options
 
@@ -117,27 +141,39 @@ extensions:
     disable_migrate: false
     grove_database: ""
     default_profile: ""
-    scan_concurrency: 10
     enable_short_circuit: true
+    max_scan_bytes: 1048576
+    profile_cache_ttl: 30s
+    store_redacted: false
+    model_judge: false
+    judge_timeout: 5s
+    judge_concurrency: 8
+    scan_concurrency: 10
     shutdown_timeout: 30s
     base_path: ""
 ```
 
-| YAML key | Type | Default | What it does today |
+| YAML key | Type | Default | What it does |
 |----------|------|---------|-------------|
 | `disable_routes` | `bool` | `false` | `true` stops the dashboard contributor from registering |
 | `disable_migrate` | `bool` | `false` | `true` skips migrations on `Start` |
 | `grove_database` | `string` | `""` | Named `*grove.DB` to resolve from DI |
-| `default_profile` | `string` | `""` | Passed to the engine config, never read |
-| `scan_concurrency` | `int` | `10` | Passed to the engine config, never read |
-| `enable_short_circuit` | `bool` | `true` | Passed to the engine config, never read |
-| `shutdown_timeout` | `duration` | `30s` | Passed to the engine config, never read |
+| `default_profile` | `string` | `""` | `Config.DefaultProfile` |
+| `enable_short_circuit` | `bool` | `true` | `Config.EnableShortCircuit` |
+| `max_scan_bytes` | `int` | `1048576` | `Config.MaxScanBytes` |
+| `profile_cache_ttl` | `duration` | `30s` | `Config.ProfileCacheTTL`; negative turns the cache off |
+| `store_redacted` | `bool` | `false` | `Config.StoreRedacted` |
+| `model_judge` | `bool` | `false` | `Config.ModelJudge`. Register the judge with `WithEngineOption(engine.WithJudge(j))` |
+| `judge_timeout` | `duration` | `5s` | `Config.JudgeTimeout` |
+| `judge_concurrency` | `int` | `8` | `Config.JudgeConcurrency` |
+| `scan_concurrency` | `int` | `10` | Passed to the engine config, not read yet |
+| `shutdown_timeout` | `duration` | `30s` | Passed to the engine config, not read yet |
 | `base_path` | `string` | `""` | Read and logged, never used |
 
 `WithRequireConfig` has no YAML key.
 
 ### Merge behaviour
 
-File-based configuration is merged with programmatic options. `DisableRoutes`, `DisableMigrate` and `EnableShortCircuit` set to `true` in code always win, and because `EnableShortCircuit` defaults to `true`, YAML can't turn it off. For the other fields the file wins, then programmatic values, then defaults.
+File-based configuration is merged with programmatic options. `DisableRoutes`, `DisableMigrate`, `EnableShortCircuit`, `StoreRedacted` and `ModelJudge` set to `true` in code always win, and because `EnableShortCircuit` defaults to `true`, YAML can't turn it off. For the other fields the file wins, then programmatic values, then defaults.
 
 The [Forge extension guide](/docs/guides/forge-extension) covers store resolution and the dashboard claims.

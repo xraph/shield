@@ -1,94 +1,84 @@
 ---
 title: Introduction
-description: AI safety policies and guardrail configuration for Go.
+description: AI safety scanning, guardrails and per-tenant safety configuration for Go.
 ---
 
-Shield is a Go library for managing the safety rules around an LLM app or AI agent. You describe **Instincts**, **Awareness**, **Boundaries**, **Values**, **Judgment** and **Reflexes**, compose them into safety profiles and policies, and store them per tenant and app in PostgreSQL, SQLite or MongoDB.
+Shield is a Go library that checks what goes into and comes out of an LLM app or AI agent. You describe **Instincts**, **Awareness**, **Boundaries**, **Values**, **Judgment** and **Reflexes**, compose them into safety profiles and policies, store them per tenant and app in PostgreSQL, SQLite or MongoDB, and scan text and tool calls against them.
 
 Shield is a library, not a service. You bring your own LLM provider, database and HTTP server.
 
-## Status
+## What a scan does
 
-The six evaluation layers aren't implemented yet. `ScanInput` and `ScanOutput` run no detectors: every scan returns `allow` with no findings, and Shield stores the scan record and fires the scan hooks. `engine.Capabilities()` reports this in code, with `Evaluation: false` and all six layers listed as unavailable. What works now is the configuration side: storing, scoping and editing every safety primitive, profile and policy, keeping scan history and PII tokens, and managing them from the Forge dashboard.
+`ScanInput`, `ScanOutput` and `ScanToolCall` run the tenant's safety profile through six layers, then the tenant's policies, and return a decision: `allow`, `flag`, `redact` or `block`, plus `require_approval` for tool calls. Detection is deterministic: a prompt-injection corpus, PII and secret detectors with validators and entropy checks, lexicons for destructive commands and abuse, and your own patterns. A model judge is optional, off by default, and can only raise risk. [Evaluation](/docs/concepts/evaluation) walks through every layer.
 
 ## The human safety model
 
-Shield models AI safety the way you would describe human cognition. The speeds are design targets for when the layers are implemented.
+Shield models AI safety the way you would describe human cognition.
 
-| Layer | What it represents | Target speed | Go package |
+| Layer | What it represents | What runs | Go package |
 |-------|-------------------|-------|------------|
-| **Instincts** | Pre-conscious threat detection (flinch response) | `<10ms` | `instinct` |
-| **Awareness** | Perception: what you notice (PII, topics, intent) | `<50ms` | `awareness` |
-| **Boundaries** | Hard limits that cannot be crossed (binary) | `<5ms` | `boundary` |
-| **Values** | Ethical evaluation (toxicity, brand safety, honesty) | `<100ms` | `values` |
-| **Judgment** | Contextual risk assessment (grounding, relevance) | `<500ms` | `judgment` |
-| **Reflexes** | Trained condition-action responses (policy rules) | `<10ms` | `reflex` |
+| **Instincts** | Pre-conscious threat detection (flinch response) | Injection, jailbreak, exfiltration and manipulation patterns, hidden and encoded text, canary tokens | `instinct` |
+| **Awareness** | Perception: what you notice | PII and secret detectors, topic and custom patterns | `awareness` |
+| **Boundaries** | Hard limits that cannot be crossed | Topic, data, output and tool-call deny and allow lists | `boundary` |
+| **Values** | Ethical evaluation | Destructive-command and toxicity lexicons, your own terms and patterns | `values` |
+| **Judgment** | Contextual risk assessment | Scores over the findings so far, and the optional model judge | `judgment` |
+| **Reflexes** | Trained condition-action responses | Pattern, finding, score, context and rate triggers | `reflex` |
 
 ## What it does
 
-- Six safety primitives, each a package with a model and a `Store` interface, plus full CRUD in every backend.
-- Safety profiles that compose instincts, awareness, boundaries, values, judgments and reflexes, with per-assignment sensitivity and threshold overrides.
-- A scan record for every `ScanInput` and `ScanOutput` call, with direction, decision, findings, PII count, tenant and app.
-- A PII token store (placeholder, type, an encrypted value you supply, expiry) with per-tenant deletion and age-based purge. Shield doesn't detect or encrypt PII itself yet.
-- Tenant and app on the context through `shield.WithTenant` and `shield.WithApp`. The engine stamps them on scans; the subsystem stores filter by the IDs you pass them.
-- Policies with ordered rules, assigned at app or org level and to tenants.
+- Scans text going into a model, text going out, and tool calls an agent proposes, against a safety profile stored per tenant.
+- Quotes untrusted text (a build log, an issue body) so a model reads it as data, with injected instructions removed line by line.
+- Redacts PII and secrets with numbered placeholders such as `[EMAIL_1]`.
+- Ships `presets.InfraAgent`, a ready-made bundle for an infrastructure agent, and `redteam`, the injection fixtures Shield is tested against. See [Agent safety](/docs/guides/agent-safety).
+- Puts Shield behind [nexus](https://github.com/xraph/nexus) guards with the separate `integrations/nexusguard` module. See [Nexus guard](/docs/guides/nexus-guard).
+- Requires a tenant on every scan and every store call, so one tenant never reads another's rows. Names are unique per app and tenant.
+- Policies with ordered rules: org-level policies a tenant owns, and app-level policies an operator assigns to tenants.
+- A scan record for every scan, with direction, decision, findings, PII count, profile, policies, tenant and app.
+- A PII token store (placeholder, type, an encrypted value you supply, expiry) with per-tenant deletion and age-based purge. Shield redacts PII but doesn't encrypt or vault it.
 - Compliance report records for the EU AI Act, NIST AI RMF and SOC 2. Shield stores reports; it doesn't generate them.
-- 15 lifecycle hook interfaces for plugins, and an audit plugin. Only the scan started, scan completed and shutdown hooks fire today.
-- OpenTelemetry spans for scans, plugin hooks and PII purges, and scan and hook metrics that a Forge app scrapes on `/_/metrics`. See [Observability](/docs/guides/observability).
+- 15 lifecycle hooks for plugins, all of which fire, and an audit plugin.
+- OpenTelemetry spans for scans, layers, the judge, plugin hooks and PII purges, and scan and hook metrics that a Forge app scrapes on `/_/metrics`. See [Observability](/docs/guides/observability).
 - A `forge.Extension` that provides `*engine.Engine` in the DI container, runs migrations and registers an authenticated dashboard contributor.
 
 ## Design philosophy
 
-**Library, not service.** Shield is a set of Go packages you import. You control `main`, the database connection and the process lifecycle.
+Shield is a set of Go packages you import, not a service. You control `main`, the database connection and the process lifecycle.
 
-**Human-centric.** Safety primitives are modeled after human cognition (instincts, awareness, boundaries, values, judgment and reflexes), so the configuration reads the way you'd describe the rules.
+Detection comes first from deterministic code you can read and test, and a decision never needs a model. The primitives are named after human cognition (instincts, awareness, boundaries, values, judgment and reflexes), so the configuration reads the way you'd describe the rules out loud.
 
-**Interfaces over implementations.** Every subsystem defines a Go interface, and `store.Store` composes them. Swap the backend by passing a different store.
-
-**TypeID everywhere.** All entities use type-prefixed, K-sortable, UUIDv7-based identifiers (`scan_`, `pol_`, `inst_`, `jdg_`, `sprf_` and so on).
+Every subsystem defines a Go interface, and `store.Store` composes them, so you swap the backend by passing a different store. All entities use type-prefixed, K-sortable, UUIDv7-based identifiers (`scan_`, `pol_`, `inst_`, `jdg_`, `sprf_` and so on).
 
 ## Quick look
 
 ```go
-package main
+ctx := shield.WithTenant(context.Background(), "acme")
+ctx = shield.WithApp(ctx, "support-bot")
 
-import (
-    "context"
-    "log"
-
-    "github.com/xraph/shield"
-    "github.com/xraph/shield/engine"
-    "github.com/xraph/shield/scan"
-)
-
-func main() {
-    ctx := shield.WithTenant(context.Background(), "acme")
-    ctx = shield.WithApp(ctx, "support-bot")
-
-    // No store: the scan still runs, but nothing is persisted.
-    eng, err := engine.New()
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    result, err := eng.ScanInput(ctx, &scan.Input{
-        Text: "What is your return policy?",
-    })
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    // Today this always prints "allow" and 0 findings.
-    log.Printf("Decision: %s, Findings: %d", result.Decision, len(result.Findings))
-    log.Printf("Evaluation implemented: %v", eng.Capabilities().Evaluation)
+// st is a store with a "customer-facing" profile for acme; see Getting started.
+eng, err := engine.New(engine.WithStore(st))
+if err != nil {
+    log.Fatal(err)
 }
+
+result, err := eng.ScanOutput(ctx, &scan.Input{
+    Text:    "Sure, I've emailed jane@example.com with the details.",
+    Profile: "customer-facing",
+})
+if err != nil {
+    log.Fatal(err) // a scan error means you don't know: treat it as a block
+}
+
+log.Printf("Decision: %s", result.Decision) // redact
+log.Printf("Send: %s", result.Redacted)     // Sure, I've emailed [EMAIL_1] with the details.
 ```
 
 ## Where to go next
 
 <Cards>
   <Card title="Getting started" href="/docs/getting-started" description="Install Shield, store some configuration and run a scan." />
+  <Card title="Evaluation" href="/docs/concepts/evaluation" description="What each layer runs and how findings become a decision." />
+  <Card title="Agent safety" href="/docs/guides/agent-safety" description="Untrusted input, outbound redaction and tool calls with the InfraAgent preset." />
   <Card title="Architecture" href="/docs/architecture" description="How the six safety layers and packages fit together." />
-  <Card title="Configuration" href="/docs/concepts/configuration" description="Engine and extension options, and which ones are read today." />
+  <Card title="Configuration" href="/docs/concepts/configuration" description="Engine and extension options with their defaults." />
   <Card title="Go package reference" href="/docs/api-reference/go-packages" description="API reference for every Shield package." />
 </Cards>

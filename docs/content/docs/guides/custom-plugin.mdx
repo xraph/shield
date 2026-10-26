@@ -5,7 +5,7 @@ description: Build plugins that react to Shield lifecycle events with audit trai
 
 Shield uses an opt-in plugin system. Implement the `plugin.Plugin` base interface and any combination of 15 lifecycle hook interfaces to receive only the events you care about.
 
-Only three hooks fire today: `OnScanStarted`, `OnScanCompleted` and `OnShutdown`. The evaluation layers aren't implemented, so nothing triggers an instinct, detects PII, evaluates a policy, resolves a profile or fails a scan, and no scan is ever blocked. The other twelve interfaces are defined so your plugin is ready when those events exist.
+The engine emits all 15. A hook gets names, counts, scores and decisions, never matched text, with one exception: `OnScanStarted` receives the text being scanned (for a tool call, its arguments one per line), so keep that hook away from your logs unless you mean to log content.
 
 ## The base interface
 
@@ -51,40 +51,36 @@ func (p *MyPlugin) OnInstinctTriggered(
 
 ## Available hooks
 
-The "Fires today" column is what the engine emits now.
-
 ### Scan lifecycle
 
-| Interface | Method | Called when | Fires today |
-|-----------|--------|------------|-----|
-| `plugin.ScanStarted` | `OnScanStarted(ctx, scanID, direction, text)` | A scan begins | yes |
-| `plugin.ScanCompleted` | `OnScanCompleted(ctx, scanID, decision, findingCount, elapsed)` | A scan finishes | yes |
-| `plugin.ScanBlocked` | `OnScanBlocked(ctx, scanID, reason)` | Content is blocked | no |
-| `plugin.ScanFailed` | `OnScanFailed(ctx, scanID, err)` | A scan fails with error | no |
+| Interface | Method | Called when |
+|-----------|--------|------------|
+| `plugin.ScanStarted` | `OnScanStarted(ctx, scanID, direction, text)` | A scan begins, before the tenant, size and profile checks (a tool call's arguments are checked first) |
+| `plugin.ScanCompleted` | `OnScanCompleted(ctx, scanID, decision, findingCount, elapsed)` | A scan finishes with a verdict |
+| `plugin.ScanBlocked` | `OnScanBlocked(ctx, scanID, reason)` | The verdict is `block`. `reason` is `Result.Reason()`, a fixed message |
+| `plugin.ScanFailed` | `OnScanFailed(ctx, scanID, err)` | A scan returns an error, such as `shield.ErrTenantRequired` or `shield.ErrNoProfile` |
 
 ### Safety primitive lifecycle
 
-None of these fire yet.
-
 | Interface | Method | Called when |
 |-----------|--------|------------|
-| `plugin.InstinctTriggered` | `OnInstinctTriggered(ctx, scanID, name, score)` | Instinct fires |
-| `plugin.AwarenessDetected` | `OnAwarenessDetected(ctx, scanID, detector, count)` | Awareness notices something |
-| `plugin.BoundaryEnforced` | `OnBoundaryEnforced(ctx, scanID, boundary)` | Boundary blocks content |
-| `plugin.ValueViolated` | `OnValueViolated(ctx, scanID, value, severity)` | Value rule violated |
-| `plugin.JudgmentAssessed` | `OnJudgmentAssessed(ctx, scanID, assessor, risk, confidence)` | Judgment completes |
-| `plugin.ReflexFired` | `OnReflexFired(ctx, scanID, reflex, action)` | Reflex triggers action |
+| `plugin.InstinctTriggered` | `OnInstinctTriggered(ctx, scanID, name, score)` | An instinct fires, with its score |
+| `plugin.AwarenessDetected` | `OnAwarenessDetected(ctx, scanID, name, count)` | An awareness primitive finds something, with the number of distinct values |
+| `plugin.BoundaryEnforced` | `OnBoundaryEnforced(ctx, scanID, boundary)` | A boundary is crossed |
+| `plugin.ValueViolated` | `OnValueViolated(ctx, scanID, value, severity)` | A values rule is violated |
+| `plugin.JudgmentAssessed` | `OnJudgmentAssessed(ctx, scanID, judgment, riskLevel, risk)` | Every judgment in the profile, fired or not, with its risk level (`none` to `critical`) and score |
+| `plugin.ReflexFired` | `OnReflexFired(ctx, scanID, reflex, action)` | Once per action of a reflex that fired |
 
 ### Data lifecycle
 
-None of these fire yet.
-
 | Interface | Method | Called when |
 |-----------|--------|------------|
-| `plugin.PIIDetected` | `OnPIIDetected(ctx, scanID, piiType, count)` | PII found |
-| `plugin.PIIRedacted` | `OnPIIRedacted(ctx, scanID, piiType, count)` | PII redacted |
-| `plugin.PolicyEvaluated` | `OnPolicyEvaluated(ctx, scanID, policy, decision)` | Policy applied |
-| `plugin.SafetyProfileResolved` | `OnSafetyProfileResolved(ctx, scanID, profile)` | Profile loaded |
+| `plugin.PIIDetected` | `OnPIIDetected(ctx, scanID, detector, count)` | A PII detector matches, whatever the action |
+| `plugin.PIIRedacted` | `OnPIIRedacted(ctx, scanID, detector, count)` | A text scan that isn't blocked redacts PII |
+| `plugin.PolicyEvaluated` | `OnPolicyEvaluated(ctx, scanID, policy, decision)` | Once per policy that applies to the tenant, with the strictest decision its rules asked for |
+| `plugin.SafetyProfileResolved` | `OnSafetyProfileResolved(ctx, scanID, profile)` | The scan's profile is loaded, from the cache or the store |
+
+With `EnableShortCircuit` on (the default), a block ends the scan after its layer, so the hooks of later layers and of the policies don't fire for that scan.
 
 ### System
 
@@ -134,7 +130,7 @@ A panic in a hook isn't recovered. It propagates out of `ScanInput`, `ScanOutput
 
 ## Example: Slack alerting plugin
 
-This plugin listens for blocked scans and high-scoring instincts. Neither event fires yet, so it stays quiet until the evaluation layers land.
+This plugin listens for blocked scans and high-scoring instincts.
 
 ```go
 type SlackAlertPlugin struct {

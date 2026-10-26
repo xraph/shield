@@ -1,9 +1,9 @@
 ---
 title: End-to-End Safety Pipeline
-description: Wire the engine, a store and plugins around your agent, and handle scan results.
+description: Wire the engine, a store and plugins around your agent, and act on every scan result.
 ---
 
-This guide puts Shield around an agent: scan the user's message, scan the agent's reply, and record both. The result-handling code is written for when evaluation ships. Today the six layers aren't implemented, so every scan returns `allow` with no findings, `Blocked` is `false` and `Redacted` is empty. The `if` branches below never run yet, and `eng.Capabilities().Evaluation` tells you when that changes.
+This guide puts Shield around a support agent: scan the user's message, scan the agent's reply, and record both. It assumes the `customer-facing` profile from [Getting started](/docs/getting-started) is stored for the tenant, with an instinct that blocks prompt injection and an awareness detector that redacts PII. For an agent that reads logs and calls tools, the [agent safety guide](/docs/guides/agent-safety) is the better starting point.
 
 ## 1. Set up the engine
 
@@ -48,11 +48,7 @@ func main() {
         log.Fatal(err)
     }
 
-    if !eng.Capabilities().Evaluation {
-        log.Println("shield: evaluation is not implemented; scans are recorded but always allow")
-    }
-
-    // Set tenant scope. The engine stamps it on every scan.
+    // Set tenant scope. Every scan and store call needs the tenant.
     ctx = shield.WithTenant(ctx, "acme-corp")
     ctx = shield.WithApp(ctx, "support-bot")
 
@@ -66,7 +62,8 @@ func main() {
 func run(ctx context.Context, eng *engine.Engine) {
     // Scan the incoming user message.
     input := &scan.Input{
-        Text: "Can you help me with my account? My email is john@example.com",
+        Text:    "Can you help me with my account? My email is john@example.com",
+        Profile: "customer-facing",
         Context: map[string]any{
             "channel": "chat",
             "user_id": "user-42",
@@ -75,10 +72,12 @@ func run(ctx context.Context, eng *engine.Engine) {
 
     result, err := eng.ScanInput(ctx, input)
     if err != nil {
-        log.Fatal("scan input:", err)
+        // No verdict means no answer: don't pass the text on.
+        log.Printf("scan input: %v", err)
+        return
     }
 
-    log.Printf("Decision: %s", result.Decision) // allow, for now
+    log.Printf("Decision: %s", result.Decision) // redact
     log.Printf("Findings: %d", len(result.Findings))
     log.Printf("Has PII: %v", result.HasPII())
 ```
@@ -86,19 +85,20 @@ func run(ctx context.Context, eng *engine.Engine) {
 ## 3. Handle scan results
 
 ```go
-    // Not reached today: no layer can block yet.
     if result.Blocked {
-        log.Printf("Content blocked: %s", result.Decision)
+        // Reason is a fixed message, safe to log or show.
+        log.Printf("Content blocked: %s", result.Reason())
         return
     }
 
-    // Not reached today: no PII detection runs yet.
-    if result.HasPII() {
-        log.Printf("PII detected: %d instances", result.PIICount)
-        log.Printf("Redacted text: %s", result.Redacted)
+    // What the model should see: the redacted text when Shield redacted it.
+    userText := input.Text
+    if result.Decision == scan.DecisionRedact {
+        userText = result.Redacted // ... my email is [EMAIL_1]
     }
+    log.Printf("Model input: %s", userText)
 
-    // Empty today.
+    // Findings carry names, scores and counts, never the matched text.
     for _, finding := range result.Findings {
         log.Printf("[%s] %s: %s (score: %.2f)",
             finding.Layer,
@@ -116,20 +116,21 @@ func run(ctx context.Context, eng *engine.Engine) {
     agentResponse := "Here is your account information..."
 
     outputResult, err := eng.ScanOutput(ctx, &scan.Input{
-        Text: agentResponse,
+        Text:    agentResponse,
+        Profile: "customer-facing",
     })
     if err != nil {
-        log.Fatal("scan output:", err)
-    }
-
-    if outputResult.Blocked {
-        log.Printf("Agent response blocked: %s", outputResult.Decision)
+        log.Printf("scan output: %v", err)
         return
     }
 
-    // Use the redacted output once redaction exists.
+    if outputResult.Blocked {
+        log.Printf("Agent response blocked: %s", outputResult.Reason())
+        return
+    }
+
     finalResponse := agentResponse
-    if outputResult.HasPII() {
+    if outputResult.Decision == scan.DecisionRedact {
         finalResponse = outputResult.Redacted
     }
 
@@ -172,22 +173,23 @@ eng, err := engine.New(
 )
 ```
 
-Today the recorder sees `shield.scan.started` and `shield.scan.completed` for every scan, and nothing else.
+The recorder sees every scan start and finish, plus each block, instinct trigger, PII detection and the other layer events. Pass `audithook.WithActions(...)` to keep only the ones you want.
 
 ## Scan result decisions
 
-`scan.Decision` has four values. Only `allow` is produced today.
+`scan.Decision` has five values. The strictest finding decides, in the order `allow < flag < redact < require_approval < block`.
 
-| Decision | Meaning |
+| Decision | What you do |
 |----------|---------|
-| `allow` | Content is safe to proceed |
-| `block` | Content is blocked, do not send |
-| `flag` | Content is flagged for review but allowed |
-| `redact` | Content contains PII that was redacted |
+| `allow` | Use the text. For untrusted input, use `Redacted`, which is the quoted text |
+| `flag` | Use the text, and look at the findings |
+| `redact` | Use `Redacted` in place of the text |
+| `block` | Don't use the text. `Redacted` is empty |
+| `require_approval` | Tool calls only: ask a person before the call runs |
 
 ## Finding layers
 
-Each `scan.Finding` names the layer that produced it in its `Layer` field. No findings are produced yet.
+Each `scan.Finding` names the layer that produced it in its `Layer` field and the primitive in `Source`.
 
 | Layer | Description |
 |-------|-------------|
@@ -196,4 +198,5 @@ Each `scan.Finding` names the layer that produced it in its `Layer` field. No fi
 | `boundary` | Hard limit violation |
 | `values` | Ethical rule violation |
 | `judgment` | Contextual risk assessment |
-| `reflex` | Policy rule triggered |
+| `reflex` | Reflex fired |
+| `policy` | Policy rule matched |
