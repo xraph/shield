@@ -115,9 +115,10 @@ func Stricter(a, b Decision) Decision {
 }
 
 // ActionDecision returns the decision a finding's action asks for on a text
-// scan (ToolCallActionDecision maps a tool call's): block and throttle block; redact, vault, quote and rewrite redact;
+// scan: block and throttle block; redact, vault, quote and rewrite redact;
 // flag, alert, warn and escalate flag; log and info allow. Any other action
-// blocks, so an unknown action fails closed.
+// blocks, so an unknown action fails closed. ToolCallActionDecision maps
+// the actions of a tool call.
 func ActionDecision(action string) Decision {
 	switch action {
 	case "block", "throttle":

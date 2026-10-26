@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"slices"
 
 	"github.com/xraph/shield/awareness"
 	"github.com/xraph/shield/awareness/perception"
@@ -14,11 +15,12 @@ var awarenessMessages = map[awareness.Focus]string{
 	awareness.FocusSecrets: "secret detected",
 }
 
-// detected is what one awareness detector found.
+// detected is what one awareness detector found, and in which units.
 type detected struct {
 	detector string
 	focus    awareness.Focus
 	matches  []perception.Match
+	units    []int
 }
 
 // runAwareness is layer 2. Personal data and secret detectors run the
@@ -46,42 +48,28 @@ func (e *Engine) runAwareness(ctx context.Context, ev *evaluation) {
 	}
 }
 
-// runDetector runs one detector and returns its matches grouped by
-// detector name.
+// runDetector runs one detector over every unit and returns its matches,
+// offsets in the whole text, grouped by detector name.
 func (ev *evaluation) runDetector(a *compiledAwareness, d compiledDetector) []detected {
-	text := ev.input.Text
 	switch d.focus {
 	case awareness.FocusPII, awareness.FocusSecrets:
 		if !d.builtin && len(d.patterns) == 0 {
 			ev.info(layerAwareness, a.name, "unsupported detector "+d.name)
 			return nil
 		}
-		var matches []perception.Match
-		if d.builtin {
-			var names []string
-			if !d.all {
-				names = []string{d.name}
-			}
-			if d.focus == awareness.FocusPII {
-				matches = perception.PII(text, names)
-			} else {
-				matches = perception.Secrets(text, names)
-			}
-		}
-		if len(d.patterns) > 0 {
-			matches = append(matches, perception.Custom(text, d.name, d.patterns)...)
-		}
-		if !d.all {
-			return []detected{{detector: d.name, focus: d.focus, matches: matches}}
-		}
-		return byDetector(d.focus, matches)
 	case awareness.FocusTopic:
 		if len(d.patterns) == 0 {
 			ev.info(layerAwareness, a.name, "unsupported detector "+d.name)
 			return nil
 		}
-		if perception.Topic(text, d.patterns) {
-			ev.labels = append(ev.labels, d.name)
+		for _, group := range ev.distinct {
+			if perception.Topic(ev.unitText(group[0]), d.patterns) {
+				ev.labels = append(ev.labels, d.name)
+				for _, u := range group {
+					ev.unitHits[u] = true
+				}
+				break
+			}
 		}
 		return nil
 	default:
@@ -89,25 +77,60 @@ func (ev *evaluation) runDetector(a *compiledAwareness, d compiledDetector) []de
 			ev.info(layerAwareness, a.name, "unsupported detector "+d.name)
 			return nil
 		}
-		return []detected{{detector: d.name, focus: d.focus, matches: perception.Custom(text, d.name, d.patterns)}}
 	}
-}
-
-// byDetector splits the matches of an all-built-ins run by detector, in
-// order of first appearance.
-func byDetector(focus awareness.Focus, matches []perception.Match) []detected {
 	var out []detected
 	index := map[string]int{}
-	for _, m := range matches {
-		i, ok := index[m.Detector]
-		if !ok {
-			i = len(out)
-			index[m.Detector] = i
-			out = append(out, detected{detector: m.Detector, focus: focus})
+	for _, group := range ev.distinct {
+		found := unitMatches(ev.unitText(group[0]), d)
+		for _, u := range group {
+			for _, m := range found {
+				m.Start += ev.units[u].start
+				m.End += ev.units[u].start
+				name := d.name
+				if d.all {
+					name = m.Detector
+				}
+				k, ok := index[name]
+				if !ok {
+					k = len(out)
+					index[name] = k
+					out = append(out, detected{detector: name, focus: d.focus})
+				}
+				out[k].matches = append(out[k].matches, m)
+				if n := len(out[k].units); n == 0 || out[k].units[n-1] != u {
+					out[k].units = append(out[k].units, u)
+				}
+			}
 		}
-		out[i].matches = append(out[i].matches, m)
+	}
+	if !d.all && len(out) == 0 {
+		out = append(out, detected{detector: d.name, focus: d.focus})
+	}
+	for i := range out {
+		slices.Sort(out[i].units)
 	}
 	return out
+}
+
+// unitMatches runs detector d over one unit of text.
+func unitMatches(text string, d compiledDetector) []perception.Match {
+	var matches []perception.Match
+	if d.builtin {
+		var names []string
+		if !d.all {
+			names = []string{d.name}
+		}
+		switch d.focus {
+		case awareness.FocusPII:
+			matches = perception.PII(text, names)
+		case awareness.FocusSecrets:
+			matches = perception.Secrets(text, names)
+		}
+	}
+	if len(d.patterns) > 0 {
+		matches = append(matches, perception.Custom(text, d.name, d.patterns)...)
+	}
+	return matches
 }
 
 // recordAwareness adds the finding for one detector's matches and queues
@@ -128,6 +151,7 @@ func (ev *evaluation) recordAwareness(ctx context.Context, e *Engine, a *compile
 		Details: map[string]any{"detector": f.detector, "count": len(spans), "spans": spans},
 	}
 	ev.add(finding)
+	ev.noteUnits(finding, f.units)
 	hit := &awarenessHit{focus: f.focus, detector: f.detector, matches: f.matches}
 	ev.hits[finding] = hit
 	switch f.focus {

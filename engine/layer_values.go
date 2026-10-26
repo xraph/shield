@@ -4,6 +4,7 @@ import (
 	"context"
 	"math"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/xraph/shield/instinct/detection"
@@ -34,6 +35,8 @@ type compiledValueRule struct {
 	lexicon   []*regexp.Regexp // built in, matched on the folded text
 	patterns  []*regexp.Regexp // Config["patterns"], matched on the text as given
 	terms     []string         // Config["terms"], folded, matched on the folded text
+
+	lexiconScorer, patternScorer *principles.Scorer
 }
 
 func compileValues(v *values.Values) (*compiledValues, error) {
@@ -66,15 +69,16 @@ func compileValues(v *values.Values) (*compiledValues, error) {
 				cr.terms = append(cr.terms, folded)
 			}
 		}
+		cr.lexiconScorer, cr.patternScorer = principles.NewScorer(cr.lexicon), principles.NewScorer(cr.patterns)
 		cv.rules = append(cv.rules, cr)
 	}
 	return cv, nil
 }
 
-// runValues is layer 4. Each rule counts the matches of its detectors: the
-// built-in lexicon of its principle and categories and its literal terms
-// (as whole words or phrases) on the folded text, its own patterns on the
-// text as given. The score is the
+// runValues is layer 4. Each rule counts the matches of its detectors in
+// each unit of the text: the built-in lexicon of its principle and
+// categories and its literal terms (as whole words or phrases) on the
+// folded unit, its own patterns on the unit as given. The score is the
 // noisy-or of 0.5 per match (see principles.Score), and the rule is violated
 // when the score reaches its threshold. A rule with no detector gives an
 // info finding.
@@ -85,13 +89,20 @@ func (e *Engine) runValues(ctx context.Context, ev *evaluation) {
 				ev.info(layerValues, v.name, "no detector for principle "+string(r.principle))
 				continue
 			}
-			folded := ev.foldedText().Folded
-			_, n := principles.Score(folded, r.lexicon)
-			_, custom := principles.Score(ev.input.Text, r.patterns)
-			n += custom
-			for _, term := range r.terms {
-				n += countWords(folded, term, 0)
+			n := 0
+			var units []int
+			for _, group := range ev.distinct {
+				folded := ev.unitFolded(group[0]).Folded
+				found := r.lexiconScorer.Count(folded) + r.patternScorer.Count(ev.unitText(group[0]))
+				for _, term := range r.terms {
+					found += countWords(folded, term, 0)
+				}
+				if found > 0 {
+					n += found * len(group)
+					units = append(units, group...)
+				}
 			}
+			slices.Sort(units)
 			score := 1 - math.Pow(0.5, float64(n))
 			if n == 0 || score < r.threshold-scoreTolerance {
 				continue
@@ -101,6 +112,7 @@ func (e *Engine) runValues(ctx context.Context, ev *evaluation) {
 				Score: score, Action: v.action, Details: map[string]any{"principle": string(r.principle), "count": n},
 			}
 			ev.add(f)
+			ev.noteUnits(f, units)
 			f.Severity = v.severity
 			e.registry.EmitValueViolated(ctx, ev.scanID, v.name, v.severity)
 		}

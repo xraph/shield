@@ -20,8 +20,13 @@ import (
 	"github.com/xraph/grove"
 	"github.com/xraph/grove/drivers/sqlitedriver"
 
+	"github.com/xraph/shield"
 	"github.com/xraph/shield/admin"
 	"github.com/xraph/shield/engine"
+	"github.com/xraph/shield/id"
+	"github.com/xraph/shield/profile"
+	"github.com/xraph/shield/reflex"
+	"github.com/xraph/shield/scan"
 	"github.com/xraph/shield/store/sqlite"
 )
 
@@ -76,6 +81,20 @@ func TestAuthenticatedHTTPReadsCommandsAndReplay(t *testing.T) {
 	}
 	if body := send("scans.stats", dash.KindQuery, `{}`, "", "", user).Body.String(); !strings.Contains(body, `"require_approval":0`) {
 		t.Fatalf("scans.stats does not count require_approval: %s", body)
+	}
+	tenantA := shield.WithApp(shield.WithTenant(ctx, "a"), "a")
+	if err := st.CreateReflex(tenantA, &reflex.Reflex{ID: id.NewReflexID(), Name: "hold", AppID: "a", Enabled: true,
+		Triggers: []reflex.Trigger{{Type: reflex.TriggerAlways}}, Actions: []reflex.Action{{Type: reflex.ActionEscalate}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateProfile(tenantA, &profile.SafetyProfile{ID: id.NewSafetyProfileID(), Name: "tools", AppID: "a", Enabled: true, Reflexes: []string{"hold"}}); err != nil {
+		t.Fatal(err)
+	}
+	if res, err := eng.ScanToolCall(tenantA, &scan.ToolCallInput{Tool: "deploy", RiskClass: "change", Profile: "tools"}); err != nil || res.Decision != scan.DecisionRequireApproval {
+		t.Fatalf("tool call: %+v %v", res, err)
+	}
+	if body := send("scans.stats", dash.KindQuery, `{}`, "", "", user).Body.String(); !strings.Contains(body, `"require_approval":1`) {
+		t.Fatalf("scans.stats does not count the held tool call: %s", body)
 	}
 	w := send("instincts.create", dash.KindCommand, `{"row":{"name":"guard","category":"injection","sensitivity":"balanced","action":"block"}}`, "create-guard", "bad", user)
 	if !strings.Contains(w.Body.String(), "UNAUTHENTICATED") {

@@ -323,27 +323,61 @@ func Lexicon(p values.Principle, categories []string) []*regexp.Regexp {
 // It returns the score and the match count. Matches of one pattern do not
 // overlap; matches of different patterns may.
 func Score(text string, patterns []*regexp.Regexp) (score float64, count int) {
-	var groups map[string][]*entry
+	count = NewScorer(patterns).Count(text)
+	return 1 - math.Pow(0.5, float64(count)), count
+}
+
+// Scorer counts the matches of a fixed set of patterns, as Score does. It
+// groups the built-in lexicon once, so counting many short texts against
+// the same patterns stays cheap.
+type Scorer struct {
+	slow   []*regexp.Regexp
+	groups []literalGroup
+}
+
+// literalGroup is the lexicon entries that share one literal.
+type literalGroup struct {
+	literal string
+	entries []*entry
+}
+
+// NewScorer prepares patterns for Count. Nil patterns are skipped.
+func NewScorer(patterns []*regexp.Regexp) *Scorer {
+	s := &Scorer{}
+	index := map[string]int{}
 	for _, re := range patterns {
 		if re == nil {
 			continue
 		}
-		if e, ok := fast[re]; ok {
-			if groups == nil {
-				groups = map[string][]*entry{}
-			}
-			groups[e.literal] = append(groups[e.literal], e)
+		e, ok := fast[re]
+		if !ok {
+			s.slow = append(s.slow, re)
 			continue
 		}
+		k, seen := index[e.literal]
+		if !seen {
+			k = len(s.groups)
+			index[e.literal] = k
+			s.groups = append(s.groups, literalGroup{literal: e.literal})
+		}
+		s.groups[k].entries = append(s.groups[k].entries, e)
+	}
+	return s
+}
+
+// Count returns the number of matches of the scorer's patterns in text.
+func (s *Scorer) Count(text string) int {
+	count := 0
+	for _, re := range s.slow {
 		count += len(re.FindAllStringIndex(text, -1))
 	}
-	if groups != nil {
+	if len(s.groups) > 0 {
 		lower := asciiLower(text)
-		for literal, entries := range groups {
-			count += countLiteralGroup(lower, literal, entries)
+		for _, g := range s.groups {
+			count += countLiteralGroup(lower, g.literal, g.entries)
 		}
 	}
-	return 1 - math.Pow(0.5, float64(count)), count
+	return count
 }
 
 // countLiteralGroup counts the matches of entries that share literal in the

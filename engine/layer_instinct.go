@@ -19,24 +19,50 @@ var instinctMessages = map[instinct.Category]string{
 	instinct.CategoryJailbreak:    "suspected jailbreak attempt",
 }
 
-// runInstincts is layer 1. Each instinct scores the text with its
-// strategies, combined as 1 - Π(1 - weight·score), and fires when the score
-// reaches the threshold of its sensitivity.
+// runInstincts is layer 1. Each instinct scores each unit of the text with
+// its strategies, combined as 1 - Π(1 - weight·score), and fires when a
+// unit's score reaches the threshold of its sensitivity. The finding takes
+// the highest unit score and the lines of every unit that reached it.
 func (e *Engine) runInstincts(ctx context.Context, ev *evaluation) {
 	for _, inst := range ev.profile.instincts {
-		score, matches := ev.scoreInstinct(inst)
-		if len(matches) == 0 || score < inst.threshold {
+		for _, s := range inst.strategies {
+			if !slices.Contains([]string{strategyPatterns, strategyHeuristics, strategyCanary}, s.name) {
+				ev.info(layerInstinct, inst.name, "unsupported strategy "+s.name)
+			}
+		}
+		best := 0.0
+		var matches []detection.Match
+		var units []int
+		for _, group := range ev.distinct {
+			score, found := scoreInstinct(inst, ev.unitFolded(group[0]))
+			if len(found) == 0 || score < inst.threshold {
+				continue
+			}
+			best = max(best, score)
+			for _, u := range group {
+				units = append(units, u)
+				for _, m := range found {
+					m.Start += ev.units[u].start
+					m.End += ev.units[u].start
+					matches = append(matches, m)
+				}
+			}
+		}
+		if len(units) == 0 {
 			continue
 		}
+		slices.Sort(units)
 		spans := lineSpans(matches)
 		message, ok := instinctMessages[inst.category]
 		if !ok {
 			message = "suspected unsafe instruction"
 		}
-		ev.add(&scan.Finding{
-			Layer: layerInstinct, Source: inst.name, Message: message, Score: score, Action: inst.action,
+		f := &scan.Finding{
+			Layer: layerInstinct, Source: inst.name, Message: message, Score: best, Action: inst.action,
 			Details: map[string]any{"families": families(matches), "count": len(spans), "spans": spans},
-		})
+		}
+		ev.add(f)
+		ev.noteUnits(f, units)
 		switch inst.action {
 		case instinct.ActionRedact:
 			for _, s := range spans {
@@ -45,27 +71,25 @@ func (e *Engine) runInstincts(ctx context.Context, ev *evaluation) {
 		case instinct.ActionQuote:
 			ev.quote = true
 		}
-		e.registry.EmitInstinctTriggered(ctx, ev.scanID, inst.name, score)
+		e.registry.EmitInstinctTriggered(ctx, ev.scanID, inst.name, best)
 	}
 }
 
-// scoreInstinct runs the instinct's strategies and returns the combined
-// score and every match. An unsupported strategy scores 0 and is reported
-// as an info finding.
-func (ev *evaluation) scoreInstinct(inst *compiledInstinct) (float64, []detection.Match) {
+// scoreInstinct runs the instinct's strategies over t and returns the
+// combined score and every match. An unsupported strategy scores 0.
+func scoreInstinct(inst *compiledInstinct, t detection.Text) (float64, []detection.Match) {
 	weighted := make([]float64, 0, len(inst.strategies))
 	var matches []detection.Match
 	for _, s := range inst.strategies {
 		var res detection.Result
 		switch s.name {
 		case strategyPatterns:
-			res = detection.Patterns(ev.foldedText(), inst.category, s.patterns, s.patternWeight)
+			res = detection.Patterns(t, inst.category, s.patterns, s.patternWeight)
 		case strategyHeuristics:
-			res = detection.Heuristics(ev.foldedText())
+			res = detection.Heuristics(t)
 		case strategyCanary:
-			res = detection.Canary(ev.foldedText(), s.token)
+			res = detection.Canary(t, s.token)
 		default:
-			ev.info(layerInstinct, inst.name, "unsupported strategy "+s.name)
 			continue
 		}
 		weighted = append(weighted, s.weight*res.Score)

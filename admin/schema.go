@@ -166,21 +166,24 @@ func validateSemantics(kind string, row map[string]any) error {
 	return patternBudget(rowPatterns(kind, row))
 }
 
-// validateActionGlobs checks the deny entries of action limits, which the
-// engine matches with path.Match against the tool name or, after a risk:
-// prefix, the risk class. The engine treats a glob that does not parse as a
-// match, so one bad entry would block every tool call under the profile.
+// validateActionGlobs checks the allow and deny entries of action limits,
+// which the engine matches with path.Match (see engine.ActionGlob). The
+// engine treats a deny glob that does not parse as a match and an allow glob
+// that does not parse as no match, so one bad entry would block every tool
+// call under the profile.
 func validateActionGlobs(row map[string]any) error {
 	for i, l := range entries(row["limits"]) {
 		if text(l, "scope") != "action" {
 			continue
 		}
-		items, _ := l["deny"].([]any) //nolint:errcheck // validateFields has already checked the shape
-		for _, item := range items {
-			entry, _ := item.(string) //nolint:errcheck // validateFields has already checked the shape
-			glob := strings.TrimPrefix(strings.TrimSpace(entry), "risk:")
-			if _, err := globpath.Match(glob, ""); err != nil {
-				return fieldError(fmt.Sprintf("limits.%d.deny", i), "Invalid glob: use *, ? and [ ] with a closing bracket")
+		for _, key := range []string{"deny", "allow"} {
+			items, _ := l[key].([]any) //nolint:errcheck // validateFields has already checked the shape
+			for _, item := range items {
+				entry, _ := item.(string) //nolint:errcheck // validateFields has already checked the shape
+				glob, _ := engine.ActionGlob(entry)
+				if _, err := globpath.Match(glob, ""); err != nil {
+					return fieldError(fmt.Sprintf("limits.%d.%s", i, key), "Invalid glob: use *, ? and [ ] with a closing bracket")
+				}
 			}
 		}
 	}

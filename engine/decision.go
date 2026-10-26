@@ -51,6 +51,17 @@ type evaluation struct {
 	folded     detection.Text
 	haveFolded bool
 
+	// units are the pieces the text layers scan one at a time, each as a
+	// text scan would see it: the whole text on a text scan, each key and
+	// value on a tool call. unitHits marks the units a layer found
+	// something in, and findingUnits the units behind a finding, for its
+	// paths.
+	units        []unit
+	distinct     [][]int // the units grouped by text, so equal texts are scanned once
+	unitHits     []bool
+	findingUnits map[*scan.Finding][]int
+	reflexUnits  []int // the units the on_pattern triggers of the running reflex matched
+
 	findings []*scan.Finding
 	blocked  bool // a finding blocks
 
@@ -92,6 +103,65 @@ type evaluation struct {
 type piiTally struct {
 	typ   string
 	count int
+}
+
+// unit is one piece of the scanned text, by byte range.
+type unit struct {
+	start, end int
+	folded     detection.Text
+	haveFolded bool
+}
+
+// setUnits sets the units of the scan: the call's arguments on a tool call,
+// the whole text otherwise.
+func (ev *evaluation) setUnits() {
+	if ev.call != nil {
+		ev.units = ev.call.args.units
+	} else {
+		ev.units = []unit{{start: 0, end: len(ev.input.Text)}}
+	}
+	ev.unitHits = make([]bool, len(ev.units))
+	ev.findingUnits = map[*scan.Finding][]int{}
+	index := make(map[string]int, len(ev.units))
+	for u := range ev.units {
+		text := ev.unitText(u)
+		k, seen := index[text]
+		if !seen {
+			k = len(ev.distinct)
+			index[text] = k
+			ev.distinct = append(ev.distinct, nil)
+		}
+		ev.distinct[k] = append(ev.distinct[k], u)
+	}
+}
+
+// unitText returns the text of unit i.
+func (ev *evaluation) unitText(i int) string {
+	return ev.input.Text[ev.units[i].start:ev.units[i].end]
+}
+
+// unitFolded returns the folded text of unit i, folding it once per scan.
+func (ev *evaluation) unitFolded(i int) detection.Text {
+	if ev.call == nil {
+		return ev.foldedText()
+	}
+	u := &ev.units[i]
+	if !u.haveFolded {
+		u.folded = detection.Fold(ev.unitText(i))
+		u.haveFolded = true
+	}
+	return u.folded
+}
+
+// noteUnits records that finding f came from units, which also marks them
+// as hits.
+func (ev *evaluation) noteUnits(f *scan.Finding, units []int) {
+	for _, u := range units {
+		ev.unitHits[u] = true
+	}
+	if ev.call != nil && len(units) > 0 {
+		ev.findingUnits[f] = units
+	}
 }
 
 // foldedText returns the folded input, folding it once per scan.

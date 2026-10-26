@@ -7,9 +7,11 @@ import (
 	"errors"
 	"io"
 	"path"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/xraph/shield"
 	"github.com/xraph/shield/scan"
@@ -31,18 +33,24 @@ const riskPrefix = "risk:"
 // own risk table first and combines with scan.Stricter, so nothing here can turn
 // a host refusal into an allow.
 //
-// The arguments are flattened into one line path=value for each string,
-// number and bool, keys sorted (items.0.name=x), and the text layers run over
-// that text with Direction tool_call. Action boundaries match the tool name,
-// or with a risk: prefix the risk class. on_context reflexes see tool,
-// risk_class (unknown when empty) and every Metadata key. The result never
-// carries text, and the stored scan keeps the tool, the risk class and the
-// metadata but no argument value.
+// Every object key, whatever its value, and every string and number value
+// of the arguments is a unit, scanned on its own and unchanged, the way
+// ScanInput would see that text, with Direction tool_call. Keys come sorted,
+// each before what it holds. A finding from a unit lists the JSON path of
+// each unit in its paths details (a.b.0, key:a.b for a key, $ for a
+// top-level value); a key that is not a short identifier, or that a layer
+// found something in, shows as #N, its place among its sorted siblings.
+// Topic and data boundaries match the units joined by newlines. Action
+// boundaries match the tool name, or with a risk: prefix the risk class.
+// on_context reflexes see tool, risk_class (unknown when empty) and every
+// Metadata key. The result never carries text, and the stored scan keeps the
+// tool, the risk class and the metadata but no argument.
 //
-// Besides the errors of ScanInput, a nil input, an empty Tool, arguments that
-// are not one JSON value or nest deeper than MaxArgumentDepth are
-// shield.ErrInvalidInput, and arguments, flattened text or metadata over
-// Config.MaxScanBytes are shield.ErrInputTooLarge.
+// Besides the errors of ScanInput, a nil input, a blank Tool or one holding a
+// control or invisible rune, and arguments that are not one JSON value or
+// nest deeper than MaxArgumentDepth are shield.ErrInvalidInput. Arguments,
+// tool, risk class and metadata over Config.MaxScanBytes are
+// shield.ErrInputTooLarge.
 func (e *Engine) ScanToolCall(ctx context.Context, in *scan.ToolCallInput) (*scan.Result, error) {
 	if in == nil {
 		return nil, shield.ErrInvalidInput
@@ -50,22 +58,27 @@ func (e *Engine) ScanToolCall(ctx context.Context, in *scan.ToolCallInput) (*sca
 	return e.executeScan(ctx, &scan.Input{Direction: scan.DirectionToolCall, Profile: in.Profile}, in)
 }
 
-// toolCall is what the layers read of a tool call besides its flattened
-// arguments.
+// toolCall is what the layers read of a tool call.
 type toolCall struct {
-	tool      string
+	tool      string // trimmed
 	riskClass string // RiskUnknown when the input names none
+	args      *flatArguments
 }
 
+// hiddenRune reports a rune a tool name may not hold: one that does not
+// print, or a format rune such as a zero-width space.
+func hiddenRune(r rune) bool { return !unicode.IsGraphic(r) || unicode.Is(unicode.Cf, r) }
+
 // prepareToolCall checks the call and fills input with what the layers
-// scan: the flattened arguments as the text, and the tool, risk class and
+// scan: the argument units joined as the text, and the tool, risk class and
 // metadata as both context and metadata. The tool and class win over
 // metadata keys of the same name.
 func (e *Engine) prepareToolCall(ctx context.Context, in *scan.ToolCallInput, input *scan.Input) (*toolCall, error) {
 	if _, err := store.Tenant(ctx, ""); err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(in.Tool) == "" {
+	tool := strings.TrimSpace(in.Tool)
+	if tool == "" || strings.IndexFunc(tool, hiddenRune) >= 0 {
 		return nil, shield.ErrInvalidInput
 	}
 	limit := e.config.MaxScanBytes
@@ -76,15 +89,15 @@ func (e *Engine) prepareToolCall(ctx context.Context, in *scan.ToolCallInput, in
 	if size > limit {
 		return nil, shield.ErrInputTooLarge
 	}
-	text, err := flattenArguments(in.Arguments, limit)
+	flat, err := flattenArguments(in.Arguments, limit)
 	if err != nil {
 		return nil, err
 	}
-	call := &toolCall{tool: in.Tool, riskClass: strings.TrimSpace(in.RiskClass)}
+	call := &toolCall{tool: tool, riskClass: strings.TrimSpace(in.RiskClass), args: flat}
 	if call.riskClass == "" {
 		call.riskClass = scan.RiskUnknown
 	}
-	input.Text = text
+	input.Text = flat.text
 	input.Context = make(map[string]any, len(in.Metadata)+2)
 	input.Metadata = make(map[string]any, len(in.Metadata)+2)
 	for k, v := range in.Metadata {
@@ -98,37 +111,78 @@ func (e *Engine) prepareToolCall(ctx context.Context, in *scan.ToolCallInput, in
 	return call, nil
 }
 
+// leafKind is the kind of a JSON leaf.
+type leafKind uint8
+
+const (
+	leafNull leafKind = iota
+	leafString
+	leafNumber
+	leafBool
+)
+
 // jsonNode is one parsed JSON value. An object keeps every key, duplicates
 // included, so a value a host parser would keep is never skipped.
 type jsonNode struct {
 	leaf     string
+	kind     leafKind
 	isLeaf   bool
 	isObject bool
 	keys     []string // object keys, parallel to kids
 	kids     []*jsonNode
 }
 
-// flattenArguments parses raw as one JSON value and returns its leaves as
-// lines path=value. Empty and null arguments give no text. Text longer than
-// limit is shield.ErrInputTooLarge.
-func flattenArguments(raw json.RawMessage, limit int) (string, error) {
+// argPath locates an argument unit: an object member (its key, and the
+// key's place among its sorted siblings) or an array element under parent.
+// It is rendered only into finding details, never into the scanned text.
+type argPath struct {
+	parent  *argPath
+	key     string
+	place   int  // index among the sorted members, or the array index
+	isIndex bool // an array element
+	keyUnit int  // the unit holding the key, for a member
+}
+
+// argUnit is what a scan unit of a tool call is: a key, or a string or
+// number value, at path (nil for a top-level value).
+type argUnit struct {
+	path  *argPath
+	isKey bool
+}
+
+// flatArguments is a tool call's arguments as the layers scan them: every
+// key and every string and number value is its own unit, its text
+// unchanged, and the text is the units joined by newlines.
+type flatArguments struct {
+	text  string
+	units []unit
+	args  []argUnit
+}
+
+// flattenArguments parses raw as one JSON value and splits it into units:
+// each object key whatever its value, and each string and number value.
+// Booleans and nulls carry no text. Empty and null arguments give no units.
+// A text longer than limit is shield.ErrInputTooLarge.
+func flattenArguments(raw json.RawMessage, limit int) (*flatArguments, error) {
+	out := &flatArguments{}
 	if len(bytes.TrimSpace(raw)) == 0 {
-		return "", nil
+		return out, nil
 	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.UseNumber()
 	root, err := parseJSON(dec, 0)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	if _, err = dec.Token(); !errors.Is(err, io.EOF) {
-		return "", shield.ErrInvalidInput
+		return nil, shield.ErrInvalidInput
 	}
-	f := &flattener{limit: limit}
-	if !f.walk(root) {
-		return "", shield.ErrInputTooLarge
+	f := &flattener{limit: limit, out: out}
+	if !f.walk(root, nil) {
+		return nil, shield.ErrInputTooLarge
 	}
-	return f.b.String(), nil
+	out.text = f.b.String()
+	return out, nil
 }
 
 // parseJSON reads one value from dec. depth is the number of objects and
@@ -170,13 +224,13 @@ func parseJSON(dec *json.Decoder, depth int) (*jsonNode, error) {
 		}
 		return n, nil
 	case string:
-		return &jsonNode{leaf: v, isLeaf: true}, nil
+		return &jsonNode{leaf: v, kind: leafString, isLeaf: true}, nil
 	case json.Number:
-		return &jsonNode{leaf: v.String(), isLeaf: true}, nil
+		return &jsonNode{leaf: v.String(), kind: leafNumber, isLeaf: true}, nil
 	case bool:
-		return &jsonNode{leaf: strconv.FormatBool(v), isLeaf: true}, nil
-	default: // null
-		return &jsonNode{}, nil
+		return &jsonNode{leaf: strconv.FormatBool(v), kind: leafBool, isLeaf: true}, nil
+	default:
+		return &jsonNode{isLeaf: true, kind: leafNull}, nil
 	}
 }
 
@@ -194,71 +248,122 @@ func sortKeys(n *jsonNode) {
 	n.keys, n.kids = keys, kids
 }
 
-// flattener writes leaves as lines. The path is a stack of segments, joined
-// only when a leaf is written, so empty containers under a long key cost
-// nothing and the work stays within limit.
+// flattener writes units. Each unit is written once, so the text is no
+// longer than the keys and values it holds plus a newline each.
 type flattener struct {
 	b     strings.Builder
-	path  []string
+	out   *flatArguments
 	limit int
 }
 
-// walk writes the leaves under n. It reports false once the text would
-// pass the limit.
-func (f *flattener) walk(n *jsonNode) bool {
+// walk writes the units under n, which sits at path. It reports false once
+// the text would pass the limit.
+func (f *flattener) walk(n *jsonNode, at *argPath) bool {
 	if n.isLeaf {
-		return f.line(n.leaf)
+		if n.kind != leafString && n.kind != leafNumber {
+			return true
+		}
+		return f.unit(n.leaf, argUnit{path: at})
 	}
 	for i, kid := range n.kids {
-		seg := strconv.Itoa(i)
+		p := &argPath{parent: at, place: i, isIndex: !n.isObject, keyUnit: -1}
 		if n.isObject {
-			seg = n.keys[i]
+			p.key = n.keys[i]
+			p.keyUnit = len(f.out.units)
+			if !f.unit(p.key, argUnit{path: p, isKey: true}) {
+				return false
+			}
 		}
-		f.path = append(f.path, seg)
-		ok := f.walk(kid)
-		f.path = f.path[:len(f.path)-1]
-		if !ok {
+		if !f.walk(kid, p) {
 			return false
 		}
 	}
 	return true
 }
 
-// line writes path=value, or the value alone for a top-level leaf.
-func (f *flattener) line(value string) bool {
-	n := len(value)
-	if f.b.Len() > 0 {
-		n++
+// unit writes one unit on its own line. An empty one is not written.
+func (f *flattener) unit(text string, au argUnit) bool {
+	if text == "" {
+		return true
 	}
-	for _, seg := range f.path {
-		n += len(seg) + 1
+	start := f.b.Len()
+	if start > 0 {
+		start++
 	}
-	if f.b.Len()+n > f.limit {
+	if start+len(text) > f.limit {
 		return false
 	}
 	if f.b.Len() > 0 {
 		f.b.WriteByte('\n')
 	}
-	for i, seg := range f.path {
-		if i > 0 {
-			f.b.WriteByte('.')
-		}
-		f.b.WriteString(seg)
-	}
-	if len(f.path) > 0 {
-		f.b.WriteByte('=')
-	}
-	f.b.WriteString(value)
+	f.b.WriteString(text)
+	f.out.units = append(f.out.units, unit{start: start, end: start + len(text)})
+	f.out.args = append(f.out.args, au)
 	return true
 }
 
+// maxFindingPaths bounds the paths one finding lists.
+const maxFindingPaths = 16
+
+// plainKey matches a key shown by name in a finding path: a short
+// identifier. Any other key is shown by its place among its sorted
+// siblings, as is a key a layer found something in, so a path never
+// carries matched or free text.
+var plainKey = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_-]{0,31}$`)
+
+// renderPaths sets the paths details of the findings that name units: the
+// JSON path of each unit (key units as key:<path>), a top-level value as $.
+func (ev *evaluation) renderPaths() {
+	for f, units := range ev.findingUnits {
+		seen := map[string]bool{}
+		paths := []string{}
+		for _, u := range units {
+			p := ev.unitPath(u)
+			if seen[p] {
+				continue
+			}
+			seen[p] = true
+			paths = append(paths, p)
+			if len(paths) == maxFindingPaths {
+				break
+			}
+		}
+		f.Details["paths"] = paths
+	}
+}
+
+// unitPath renders the path of unit u.
+func (ev *evaluation) unitPath(u int) string {
+	au := ev.call.args.args[u]
+	var segs []string
+	for p := au.path; p != nil; p = p.parent {
+		switch {
+		case p.isIndex:
+			segs = append(segs, strconv.Itoa(p.place))
+		case plainKey.MatchString(p.key) && !ev.unitHits[p.keyUnit]:
+			segs = append(segs, p.key)
+		default:
+			segs = append(segs, "#"+strconv.Itoa(p.place))
+		}
+	}
+	slices.Reverse(segs)
+	at := strings.Join(segs, ".")
+	if at == "" {
+		at = "$"
+	}
+	if au.isKey {
+		return "key:" + at
+	}
+	return at
+}
+
 // actionCrossed reports whether call crosses an action limit: a deny entry
-// matches, or the limit is an allowlist and no allow entry does. An entry
-// is a path.Match glob on the tool name, or with a risk: prefix on the risk
-// class. Deny entries also match ignoring case and surrounding space, and
-// one that does not parse counts as a match (the admin service refuses
-// such an entry; one written through the store fails closed); allow entries must match
-// exactly. Both ways an odd entry or name restricts the call.
+// matches, or the limit is an allowlist and no allow entry does (see
+// ActionGlob for the entry forms). Deny entries also match ignoring case and
+// surrounding space, and one that does not parse counts as a match: the
+// admin service refuses such an entry, and one written straight to the
+// store fails closed. Allow entries must match exactly. Both ways an odd
+// entry or name restricts the call.
 func (l compiledLimit) actionCrossed(call *toolCall) bool {
 	for _, entry := range l.deny {
 		glob, value := actionTarget(entry, call)
@@ -281,11 +386,24 @@ func (l compiledLimit) actionCrossed(call *toolCall) bool {
 	return true
 }
 
-// actionTarget splits an action entry into its glob and the value it
-// matches.
-func actionTarget(entry string, call *toolCall) (glob, value string) {
-	if g, ok := strings.CutPrefix(entry, riskPrefix); ok {
-		return g, call.riskClass
+// ActionGlob splits an action-scope boundary entry into its path.Match
+// glob and what it matches: the risk class for an entry with a risk:
+// prefix (in any case), the tool name otherwise. The entry and the glob
+// after the prefix are trimmed.
+func ActionGlob(entry string) (glob string, risk bool) {
+	entry = strings.TrimSpace(entry)
+	if len(entry) >= len(riskPrefix) && strings.EqualFold(entry[:len(riskPrefix)], riskPrefix) {
+		return strings.TrimSpace(entry[len(riskPrefix):]), true
 	}
-	return entry, call.tool
+	return entry, false
+}
+
+// actionTarget returns the glob of an action entry and the value of call
+// it matches.
+func actionTarget(entry string, call *toolCall) (glob, value string) {
+	glob, risk := ActionGlob(entry)
+	if risk {
+		return glob, call.riskClass
+	}
+	return glob, call.tool
 }

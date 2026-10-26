@@ -242,6 +242,7 @@ func (e *Engine) evaluate(ctx context.Context, scanID id.ScanID, input *scan.Inp
 		scanID: scanID, tenant: tenant, app: app, input: input, call: call, profile: compiled,
 		hits: map[*scan.Finding]*awarenessHit{},
 	}
+	ev.setUnits()
 	for _, layer := range []struct {
 		name string
 		run  func(context.Context, *evaluation)
@@ -260,6 +261,9 @@ func (e *Engine) evaluate(ctx context.Context, scanID id.ScanID, input *scan.Inp
 		}
 	}
 
+	if call != nil {
+		ev.renderPaths()
+	}
 	result := &scan.Result{
 		ID:           scanID,
 		Direction:    input.Direction,

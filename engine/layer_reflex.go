@@ -4,6 +4,7 @@ import (
 	"context"
 	"math"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -142,6 +143,7 @@ func (e *Engine) runReflexes(ctx context.Context, ev *evaluation) {
 			ev.info(layerReflex, r.name, r.unsupported)
 			continue
 		}
+		ev.reflexUnits = ev.reflexUnits[:0]
 		if len(r.triggers) == 0 || !e.reflexTriggered(ev, r) {
 			continue
 		}
@@ -183,7 +185,15 @@ func (e *Engine) reflexTriggered(ev *evaluation, r *compiledReflex) bool {
 func (ev *evaluation) triggerMatches(t compiledTrigger) bool {
 	switch t.kind {
 	case reflex.TriggerOnPattern:
-		return t.pattern.MatchString(ev.input.Text)
+		matched := false
+		for _, group := range ev.distinct {
+			if t.pattern.MatchString(ev.unitText(group[0])) {
+				ev.reflexUnits = append(ev.reflexUnits, group...)
+				matched = true
+			}
+		}
+		slices.Sort(ev.reflexUnits)
+		return matched
 	case reflex.TriggerOnFinding:
 		for _, f := range ev.detections() {
 			if globMatch(t.glob, f.Layer+":"+f.Source) {
@@ -246,10 +256,16 @@ func (ev *evaluation) applyReflexAction(r *compiledReflex, a compiledAction) boo
 	switch a.kind {
 	case string(reflex.ActionRedact):
 		masked := 0
-		for _, loc := range a.target.FindAllStringIndex(ev.input.Text, -1) {
-			if loc[1] > loc[0] {
-				ev.masks = append(ev.masks, perception.Span{Start: loc[0], End: loc[1], Placeholder: redactedMask})
-				masked++
+		for _, group := range ev.distinct {
+			locs := a.target.FindAllStringIndex(ev.unitText(group[0]), -1)
+			for _, u := range group {
+				start := ev.units[u].start
+				for _, loc := range locs {
+					if loc[1] > loc[0] {
+						ev.masks = append(ev.masks, perception.Span{Start: start + loc[0], End: start + loc[1], Placeholder: redactedMask})
+						masked++
+					}
+				}
 			}
 		}
 		if masked == 0 {
@@ -262,10 +278,12 @@ func (ev *evaluation) applyReflexAction(r *compiledReflex, a compiledAction) boo
 			ev.rewrite = &fallback
 		}
 	}
-	ev.add(&scan.Finding{
+	f := &scan.Finding{
 		Layer: layerReflex, Source: r.name, Message: "reflex fired", Action: a.kind,
 		Details: map[string]any{"action": a.kind},
-	})
+	}
+	ev.add(f)
+	ev.noteUnits(f, ev.reflexUnits)
 	return true
 }
 

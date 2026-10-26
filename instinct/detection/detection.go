@@ -100,6 +100,20 @@ type Result struct {
 	Matches []Match `json:"matches,omitempty"`
 }
 
+// corpusFor holds, for each category, the corpus patterns of its families
+// in corpus order, so Patterns does not filter the corpus on every call.
+var corpusFor = func() map[instinct.Category][]pattern {
+	out := make(map[instinct.Category][]pattern, len(categories))
+	for cat, run := range categories {
+		for _, p := range corpus {
+			if slices.Contains(run, p.family) {
+				out[cat] = append(out[cat], p)
+			}
+		}
+	}
+	return out
+}()
+
 // Families returns the pattern families a category runs, or nil for an
 // unknown category.
 func Families(cat instinct.Category) []Family {
@@ -112,13 +126,10 @@ func Families(cat instinct.Category) []Family {
 func Patterns(t Text, cat instinct.Category, extra []*regexp.Regexp, extraWeight float64) Result {
 	var c collector
 	s := &scan{t: t}
-	run := categories[cat]
-	for _, p := range corpus {
-		if slices.Contains(run, p.family) {
-			p.each(s, func(start, end int) {
-				c.add(t, p.family, weights[p.family], start, end)
-			})
-		}
+	for _, p := range corpusFor[cat] {
+		p.each(s, func(start, end int) {
+			c.add(t, p.family, weights[p.family], start, end)
+		})
 	}
 	if extraWeight <= 0 {
 		extraWeight = DefaultCustomWeight
