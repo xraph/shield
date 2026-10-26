@@ -4,10 +4,11 @@ on:
   push:
     tags:
       - "v*"
+      - "integrations/nexusguard/v*"
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag (e.g., v1.0.0)'
+        description: 'Release tag (e.g., v1.0.0, or integrations/nexusguard/v1.0.0 for the nexusguard module)'
         required: true
         type: string
 
@@ -39,6 +40,20 @@ jobs:
             TAG="${{ github.ref_name }}"
           fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          # A tag under integrations/nexusguard/ releases that module; any
+          # other tag releases shield itself.
+          case "$TAG" in
+            integrations/nexusguard/*)
+              echo "module=github.com/xraph/shield/integrations/nexusguard" >> "$GITHUB_OUTPUT"
+              echo "version=${TAG#integrations/nexusguard/}" >> "$GITHUB_OUTPUT"
+              echo "match=integrations/nexusguard/v*" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "module=github.com/xraph/shield" >> "$GITHUB_OUTPUT"
+              echo "version=$TAG" >> "$GITHUB_OUTPUT"
+              echo "match=v*" >> "$GITHUB_OUTPUT"
+              ;;
+          esac
 
       - name: Set up Go
         uses: actions/setup-go@v6
@@ -53,10 +68,23 @@ jobs:
           go build ./...
           go test -race -count=1 ./...
 
+      # The released module must build on its own, against the shield and
+      # nexus versions its go.mod pins, so no workspace here.
+      - name: Verify nexusguard module
+        if: startsWith(steps.set-tag.outputs.tag, 'integrations/nexusguard/')
+        working-directory: integrations/nexusguard
+        env:
+          GOWORK: "off"
+        run: |
+          go mod download
+          go build ./...
+          go vet ./...
+          go test -race -count=1 ./...
+
       - name: Generate release notes
         id: notes
         run: |
-          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          PREV_TAG=$(git describe --tags --abbrev=0 --match '${{ steps.set-tag.outputs.match }}' HEAD^ 2>/dev/null || echo "")
           if [ -z "$PREV_TAG" ]; then
             NOTES=$(git log --pretty=format:"- %s (%h)" HEAD)
           else
@@ -82,6 +110,6 @@ jobs:
             ### Installation
 
             ```bash
-            go get github.com/xraph/shield@${{ steps.set-tag.outputs.tag }}
+            go get ${{ steps.set-tag.outputs.module }}@${{ steps.set-tag.outputs.version }}
             ```
           generate_release_notes: true
