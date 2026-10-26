@@ -244,6 +244,8 @@ func TestAdminRejectsInvalidPatternsAndConditions(t *testing.T) {
 		{"reflexes", `{"name":"score-range","triggers":[{"type":"on_score","threshold":2}],"actions":[{"type":"block"}]}`, "triggers.0.threshold"},
 		{"policies", `{"name":"p8","rules":[{"check_type":"instinct","condition":"score >>> 1","action":"block"}]}`, "rules.0.condition"},
 		{"policies", `{"name":"p9","rules":[{"check_type":"instinct","action":"block"}]}`, "rules.0.condition"},
+		{"boundaries", `{"name":"b10","limits":[{"scope":"action","deny":["delete_["]}]}`, "limits.0.deny"},
+		{"boundaries", `{"name":"b11","limits":[{"scope":"topic","deny":["x"]},{"scope":"action","deny":["list_*","risk:destroy_\\"]}]}`, "limits.1.deny"},
 	}
 	for _, tc := range cases {
 		_, err := s.Create(ctx, a, tc.kind, json.RawMessage(tc.raw))
@@ -256,6 +258,7 @@ func TestAdminRejectsInvalidPatternsAndConditions(t *testing.T) {
 		{"reflexes", `{"name":"glob","triggers":[{"type":"on_finding","pattern":"*"},{"type":"on_rate","threshold":20,"window":"1m"},{"type":"on_context","pattern":"source=issue_*, untrusted=true"}],"actions":[{"type":"redact","target":"\\d+"}]}`},
 		{"values", `{"name":"terms","severity":"warning","action":"flag","rules":[{"principle":"brand_safety","config":{"terms":["competitorx"],"patterns":["(?i)rival"]}}]}`},
 		{"policies", `{"name":"ok","rules":[{"check_type":"instinct","condition":"score >= 0.9","action":"escalate"},{"check_type":"awareness","condition":"pii_detected","action":"redact"}]}`},
+		{"boundaries", `{"name":"actions","limits":[{"scope":"action","deny":["delete_*","risk:destroy_?roduction","[a-c]*"]},{"scope":"data","deny":["delete_["]}]}`},
 	}
 	for _, tc := range valid {
 		if _, err := s.Create(ctx, a, tc.kind, json.RawMessage(tc.raw)); err != nil {

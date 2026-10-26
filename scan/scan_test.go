@@ -102,7 +102,8 @@ func TestToolCallActionDecision(t *testing.T) {
 	for action, want := range map[string]Decision{
 		"block": DecisionBlock, "throttle": DecisionBlock,
 		"redact": DecisionRequireApproval, "vault": DecisionRequireApproval, "quote": DecisionRequireApproval, "rewrite": DecisionRequireApproval,
-		"flag": DecisionRequireApproval, "alert": DecisionRequireApproval, "warn": DecisionRequireApproval, "escalate": DecisionRequireApproval,
+		"escalate": DecisionRequireApproval,
+		"flag":     DecisionAllow, "alert": DecisionAllow, "warn": DecisionAllow,
 		"log": DecisionAllow, "info": DecisionAllow,
 		"future": DecisionBlock, "": DecisionBlock,
 	} {

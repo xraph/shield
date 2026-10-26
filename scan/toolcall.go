@@ -26,14 +26,20 @@ type ToolCallInput struct {
 
 // ToolCallActionDecision returns the decision a finding's action asks for on
 // a tool call, which is only ever allow, block or require_approval. Actions
-// that block a text scan block the call, and actions that allow it allow the
-// call. Every action a text scan answers by redacting, quoting, rewriting or
-// flagging the text asks a person instead, since none of them can change a
-// call. An unknown action blocks, as ActionDecision does.
+// that block a text scan block the call. Flag, alert and warn allow it, so
+// the finding reaches the host without sending every flag to a person; log
+// and info allow it too. Escalate, and every action a text scan answers by
+// redacting, quoting or rewriting the text, asks a person, since none of
+// them can change a call. An unknown action blocks, as ActionDecision does.
 func ToolCallActionDecision(action string) Decision {
+	if action == "escalate" {
+		return DecisionRequireApproval
+	}
 	switch d := ActionDecision(action); d {
 	case DecisionBlock, DecisionAllow:
 		return d
+	case DecisionFlag:
+		return DecisionAllow
 	default:
 		return DecisionRequireApproval
 	}

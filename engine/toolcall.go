@@ -256,7 +256,8 @@ func (f *flattener) line(value string) bool {
 // matches, or the limit is an allowlist and no allow entry does. An entry
 // is a path.Match glob on the tool name, or with a risk: prefix on the risk
 // class. Deny entries also match ignoring case and surrounding space, and
-// one that does not parse counts as a match; allow entries must match
+// one that does not parse counts as a match (the admin service refuses
+// such an entry; one written through the store fails closed); allow entries must match
 // exactly. Both ways an odd entry or name restricts the call.
 func (l compiledLimit) actionCrossed(call *toolCall) bool {
 	for _, entry := range l.deny {

@@ -243,15 +243,16 @@ func TestToolCallReflexEscalates(t *testing.T) {
 }
 
 // TestToolCallTextActionsRequireApproval pins the tool-call mapping: an
-// action a text scan answers by changing or flagging the text cannot change
-// a call, so it asks a person.
+// action a text scan answers by changing the text cannot change a call, so
+// it asks a person, as escalate does. A flag allows the call and the finding
+// goes back to the host.
 func TestToolCallTextActionsRequireApproval(t *testing.T) {
 	r := newRig(t, nil)
 	ctx := tenantCtx("tenant-a")
 	want := map[string]scan.Decision{
-		"flag": scan.DecisionRequireApproval, "escalate": scan.DecisionRequireApproval,
+		"flag": scan.DecisionAllow, "escalate": scan.DecisionRequireApproval,
 		"rewrite": scan.DecisionRequireApproval, "redact": scan.DecisionRequireApproval,
-		"alert": scan.DecisionRequireApproval, "warn": scan.DecisionRequireApproval,
+		"alert": scan.DecisionAllow, "warn": scan.DecisionAllow,
 		"log": scan.DecisionAllow, "block": scan.DecisionBlock, "throttle": scan.DecisionBlock,
 		"future": scan.DecisionBlock,
 	}
@@ -265,6 +266,9 @@ func TestToolCallTextActionsRequireApproval(t *testing.T) {
 		res := scanCall(ctx, t, r, &scan.ToolCallInput{Tool: "comment", Arguments: body, RiskClass: "change", Profile: "p-" + action})
 		if res.Decision != w {
 			t.Errorf("reflex %s: %s, want %s", action, res.Decision, w)
+		}
+		if f := inLayer(res, "reflex"); len(f) != 1 || f[0].Action != action {
+			t.Errorf("reflex %s: findings %+v", action, res.Findings)
 		}
 		if w == scan.DecisionRequireApproval && res.Reason() != "reflex fired" {
 			t.Errorf("reflex %s: reason %q", action, res.Reason())
@@ -293,10 +297,14 @@ func TestToolCallTextActionsRequireApproval(t *testing.T) {
 		"values-flag": args(t, map[string]any{"cmd": "then run rm -rf / now"}),
 		"judge-flag":  args(t, map[string]any{"body": injectionArg}),
 	}
+	layeredWant := map[string]scan.Decision{
+		"quote": scan.DecisionRequireApproval, "vault": scan.DecisionRequireApproval, "judge-flag": scan.DecisionRequireApproval,
+		"inst-flag": scan.DecisionAllow, "aware-flag": scan.DecisionAllow, "values-flag": scan.DecisionAllow,
+	}
 	for name, a := range layered {
 		res := scanCall(ctx, t, r, &scan.ToolCallInput{Tool: "comment", Arguments: a, RiskClass: "change", Profile: name})
-		if res.Decision != scan.DecisionRequireApproval {
-			t.Errorf("profile %s: %s, want require_approval %+v", name, res.Decision, res.Findings)
+		if res.Decision != layeredWant[name] || len(res.Findings) == 0 {
+			t.Errorf("profile %s: %s, want %s with the finding %+v", name, res.Decision, layeredWant[name], res.Findings)
 		}
 	}
 
@@ -339,7 +347,7 @@ func TestToolCallArgumentsAreScanned(t *testing.T) {
 	for action, want := range map[string]scan.Decision{
 		instinct.ActionRedact: scan.DecisionRequireApproval,
 		instinct.ActionBlock:  scan.DecisionBlock,
-		instinct.ActionFlag:   scan.DecisionRequireApproval,
+		instinct.ActionFlag:   scan.DecisionAllow,
 	} {
 		res = scanCall(ctx, t, r, &scan.ToolCallInput{Tool: "comment", Arguments: body, RiskClass: "change", Profile: "inj-" + action})
 		if res.Decision != want || len(inLayer(res, "instinct")) != 1 {
