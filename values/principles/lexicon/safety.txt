@@ -10,14 +10,27 @@
 # instincts use (category "commands").
 #
 # SQL statements need the statement shape: a name that ends the statement
-# (";" or the end of the text), or one that cannot be an English word (a
-# quoted name, or one with a digit or underscore). "drop database
-# connections" and "drop table if exists tmp_x" are not one.
+# (";" or the end of the text), one that cannot be an English word (quoted,
+# schema-qualified, or with a digit or underscore), or CASCADE after it.
+# "drop database connections on restart" is prose.
+#
+# After IF EXISTS a plain name needs ";" or CASCADE, except for a database or
+# schema, where the end of the text will do. "DROP TABLE IF EXISTS tmp_x" with
+# nothing after it is the migration-log idiom and is not counted. TRUNCATE
+# needs TABLE before a qualified or quoted name that does not end the
+# statement, so a file name after the verb ("truncate output.log before
+# archiving") is prose.
 
 database \bdrop\s{1,4}(?:database|table|schema)\s{1,4}[a-z][a-z0-9_]{0,63}\s{0,4}(?:;|$)
 database \bdrop\s{1,4}(?:database|table|schema)\s{1,4}(?:"[^"]{1,64}"|`[^`]{1,64}`|[a-z0-9]{0,32}[_0-9][a-z0-9_.]{0,32})
-database \bdrop\s{1,4}schema\s{1,4}(?:if\s{1,4}exists\s{1,4})?[a-z0-9_."]{1,64}\s{1,4}cascade\b
-database \btruncate\s{1,4}(?:table\s{1,4})?[a-z][a-z0-9_."]{0,63}\s{0,4}(?:;|$)
+database \bdrop\s{1,4}(?:database|table|schema)\s{1,4}(?:if\s{1,4}exists\s{1,4})?(?:[a-z_][a-z0-9_$]{1,63}|"[^"]{1,64}"|`[^`]{1,64}`)\.(?:[a-z_][a-z0-9_$]{1,63}|"[^"]{1,64}"|`[^`]{1,64}`)
+database \bdrop\s{1,4}(?:database|table|schema)\s{1,4}if\s{1,4}exists\s{1,4}(?:"[^"]{1,64}"|`[^`]{1,64}`)
+database \bdrop\s{1,4}(?:database|table|schema)\s{1,4}if\s{1,4}exists\s{1,4}[a-z0-9_$."`]{1,128}\s{0,4};
+database \bdrop\s{1,4}(?:database|schema)\s{1,4}if\s{1,4}exists\s{1,4}[a-z0-9_$."`]{1,128}\s{0,4}$
+database \bdrop\s{1,4}(?:database|table|schema)\s{1,4}(?:if\s{1,4}exists\s{1,4})?[a-z0-9_$."`]{1,128}\s{1,4}cascade\b
+database \btruncate\s{1,4}(?:table\s{1,4})?[a-z_"`][a-z0-9_$."`]{0,127}(?:\s{1,4}(?:restart|continue)\s{1,4}identity)?\s{0,4}(?:;|$)
+database \btruncate\s{1,4}table\s{1,4}(?:(?:[a-z_][a-z0-9_$]{1,63}|"[^"]{1,64}"|`[^`]{1,64}`)\.(?:[a-z_][a-z0-9_$]{1,63}|"[^"]{1,64}"|`[^`]{1,64}`)|"[^"]{1,64}"|`[^`]{1,64}`)
+database \btruncate\s{1,4}(?:table\s{1,4})?[a-z0-9_$."`]{1,128}(?:\s{1,4}(?:restart|continue)\s{1,4}identity)?\s{1,4}cascade\b
 database \bdelete\s{1,4}from\s{1,4}[a-z0-9_."]{1,64}\s{0,4}(?:;|$)
 database \bdropdb\s{1,4}\S
 database \bdb\.dropdatabase\(

@@ -87,6 +87,115 @@ func TestSafetyLexicon(t *testing.T) {
 	}
 }
 
+// TestSafetySQLStatementShapes builds DROP and TRUNCATE statements from
+// parts and checks which ones the safety lexicon counts. A statement counts
+// when it has the SQL shape: a schema-qualified or quoted name, CASCADE, a
+// closing ";", or a bare name that ends the text. The one bare shape left out
+// is "DROP TABLE IF EXISTS <name>" with a plain name and nothing after it,
+// the migration-log idiom pinned benign since Task 7; a TRUNCATE needs TABLE
+// before a qualified or quoted name that does not end the statement, so a
+// file name after the verb ("truncate output.log before ...") stays prose.
+func TestSafetySQLStatementShapes(t *testing.T) {
+	lex := Lexicon(values.PrincipleSafety, []string{"database"})
+	type name struct {
+		text              string
+		qualified, quoted bool
+	}
+	names := []name{
+		{text: "users"},
+		{text: "public.users", qualified: true},
+		{text: "app.public.users", qualified: true},
+		{text: "analytics_v2.events", qualified: true},
+		{text: `"Users"`, quoted: true},
+		{text: `"public"."users"`, qualified: true, quoted: true},
+		{text: "`shop`.`orders`", qualified: true, quoted: true},
+	}
+	cases := []func(string) string{strings.ToLower, strings.ToUpper, func(s string) string { return s }}
+	// suffix "" ends the text after the statement; the other keeps it going.
+	suffixes := []string{"", " (migration 0042)"}
+	check := func(text string, want bool) {
+		t.Helper()
+		for _, c := range cases {
+			in := c(text)
+			if _, n := Score(in, lex); (n > 0) != want {
+				t.Errorf("%q: %d matches, want counted=%v", in, n, want)
+			}
+		}
+	}
+	for _, object := range []string{"DATABASE", "SCHEMA", "TABLE"} {
+		for _, ifExists := range []bool{false, true} {
+			for _, nm := range names {
+				for _, cascade := range []bool{false, true} {
+					for _, semi := range []string{"", ";", " ;"} {
+						for _, suffix := range suffixes {
+							var b strings.Builder
+							b.WriteString("Drop " + object + " ")
+							if ifExists {
+								b.WriteString("If Exists ")
+							}
+							b.WriteString(nm.text)
+							if cascade {
+								b.WriteString(" Cascade")
+							}
+							b.WriteString(semi + suffix)
+							shaped := nm.qualified || nm.quoted || cascade || semi != ""
+							ends := suffix == "" && (!ifExists || object != "TABLE")
+							check(b.String(), shaped || ends)
+							check("Step 3: "+b.String(), shaped || ends)
+						}
+					}
+				}
+			}
+		}
+	}
+	for _, table := range []bool{false, true} {
+		for _, nm := range names {
+			for _, identity := range []string{"", " RESTART IDENTITY", " CONTINUE IDENTITY"} {
+				for _, cascade := range []bool{false, true} {
+					for _, semi := range []string{"", ";", " ;"} {
+						for _, suffix := range suffixes {
+							var b strings.Builder
+							b.WriteString("Truncate ")
+							if table {
+								b.WriteString("Table ")
+							}
+							b.WriteString(nm.text + identity)
+							if cascade {
+								b.WriteString(" Cascade")
+							}
+							b.WriteString(semi + suffix)
+							want := table && (nm.qualified || nm.quoted) || cascade || semi != "" || suffix == ""
+							check(b.String(), want)
+						}
+					}
+				}
+			}
+		}
+	}
+	// Prose that mentions the words without the statement shape.
+	for _, text := range []string{
+		"pgbouncer will drop database connections on restart",
+		// A bare "drop database <word>" that ends the text counts: it is
+		// "DROP DATABASE prod" in shape. In a sentence it is prose.
+		"drop database connections on restart",
+		"Drop database support in v3.",
+		"We decided to drop database support for MySQL 5.6",
+		"We can drop schema changes from this PR.",
+		"drop table e.g. users from the list",
+		"Drop database.yml into config/ and restart.",
+		"drop table if exists in a migration is idempotent",
+		"drop schema if exists checks before the migration runs",
+		"the drop cascade feature",
+		"truncate output.log before archiving",
+		"truncate table names to 63 characters",
+		"Use truncate `str` to cut long names.",
+		"Truncate the log, then cascade the change to the replicas.",
+		"Truncate logs, then cascade the change to the replicas.",
+	} {
+		check(text, false)
+	}
+}
+
 // TestSafetyCommandsAreTheInstinctCue pins ruling I4: the safety
 // principle's shell commands are the injection detector's, so a command
 // counts as destructive for one exactly when it does for the other.
@@ -206,6 +315,7 @@ func TestLexiconMatchesAgreeWithTheRegexps(t *testing.T) {
 		" complete", " IDIOT", "kill", " yourself", "I", " will", " kill", " you", "\n", ";", ".", "x", "é", "K",
 		" ", "  ", " --recursive", " --force", " -v", " --", ` "/"`, " '/'", " /etc", " -r", " -R", " $HOME", " ./build",
 		" &&", "delete from t;", "Kys", "terraform destroy", "kubectl delete ns x", "_", "1",
+		"TRUNCATE", " TABLE", " IF EXISTS", " CASCADE", " public.users", ` "Users"`, " `t`", " RESTART IDENTITY", "$",
 	}
 	r := rand.New(rand.NewSource(7))
 	for range 3000 {
