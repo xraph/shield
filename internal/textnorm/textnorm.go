@@ -508,3 +508,59 @@ func (t Text) HiddenAt() []int {
 func offset(i int) int32 {
 	return int32(i) //nolint:gosec // G115: scan input is capped far below 2 GiB
 }
+
+// Visible is a string with its invisible runes (see IsHidden) removed and a
+// map back to the original. Unlike Text it keeps case, width and
+// whitespace, for detectors whose formats depend on them, such as secret
+// tokens. Build it with Strip.
+type Visible struct {
+	// Original is the text as given.
+	Original string
+	// Text is Original without its invisible runes.
+	Text string
+
+	// removed lists the dropped runes in order; cut[i] is the byte count of
+	// removed[:i+1].
+	removed []removal
+	cut     []int
+}
+
+// Strip removes the invisible runes of s, so a zero-width space cannot split
+// a token a detector looks for.
+func Strip(s string) Visible {
+	kept, removed := stripHidden(s)
+	v := Visible{Original: s, Text: kept, removed: removed}
+	if len(removed) > 0 {
+		v.cut = make([]int, len(removed))
+		total := 0
+		for i, r := range removed {
+			total += r.size
+			v.cut[i] = total
+		}
+	}
+	return v
+}
+
+// Span maps the byte range [start, end) of Text to the original byte range,
+// which includes any invisible runes inside it. Offsets are clamped to Text.
+func (v Visible) Span(start, end int) (origStart, origEnd int) {
+	n := len(v.Text)
+	start = min(max(start, 0), n)
+	end = min(max(end, start), n)
+	return start + v.before(start, true), end + v.before(end, false)
+}
+
+// before returns the bytes removed ahead of kept offset k: the runes that sat
+// before the byte at k, plus, when inclusive, those right at k.
+func (v Visible) before(k int, inclusive bool) int {
+	i, _ := slices.BinarySearchFunc(v.removed, k, func(r removal, k int) int {
+		if r.kept < k || inclusive && r.kept == k {
+			return -1
+		}
+		return 1
+	})
+	if i == 0 {
+		return 0
+	}
+	return v.cut[i-1]
+}

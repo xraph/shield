@@ -19,6 +19,9 @@ type Focus string
 const (
 	// FocusPII detects personal identifiable information.
 	FocusPII Focus = "pii"
+	// FocusSecrets detects credentials: API keys, tokens, private keys and
+	// passwords in connection strings or assignments.
+	FocusSecrets Focus = "secrets"
 	// FocusTopic classifies conversation topics.
 	FocusTopic Focus = "topic"
 	// FocusSentiment analyzes emotional tone.

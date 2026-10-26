@@ -261,3 +261,29 @@ func TestConfusablesFoldInsideLatinWords(t *testing.T) {
 		}
 	}
 }
+
+func TestStripKeepsCaseAndMapsBack(t *testing.T) {
+	original := "id A\u200bK\u2060IA\u200b\u200bX9 Done"
+	v := textnorm.Strip(original)
+	if v.Text != "id AKIAX9 Done" {
+		t.Fatalf("Text = %q", v.Text)
+	}
+	start := strings.Index(v.Text, "AKIAX9")
+	os, oe := v.Span(start, start+len("AKIAX9"))
+	if got := original[os:oe]; got != "A\u200bK\u2060IA\u200b\u200bX9" {
+		t.Fatalf("Original[%d:%d] = %q", os, oe, got)
+	}
+	// Hidden runes just outside a range stay outside it.
+	edge := "a\u200bbc\u200bd"
+	ev := textnorm.Strip(edge)
+	if s, e := ev.Span(1, 3); edge[s:e] != "bc" {
+		t.Fatalf("Span(1, 3) = %q, want %q", edge[s:e], "bc")
+	}
+	if s, e := ev.Span(-1, 99); s != 0 || e != len(edge) {
+		t.Fatalf("Span clamps to (0, %d), got (%d, %d)", len(edge), s, e)
+	}
+	plain := textnorm.Strip("plain")
+	if s, e := plain.Span(1, 4); plain.Text != "plain" || s != 1 || e != 4 {
+		t.Fatalf("plain Span = (%d, %d)", s, e)
+	}
+}
