@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"math"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -479,5 +480,75 @@ func TestJudgeCanRaiseAToolCall(t *testing.T) {
 	res := scanCall(ctx, t, r, &scan.ToolCallInput{Tool: "deploy", Arguments: json.RawMessage(`{"target":"prod"}`), RiskClass: "change", Profile: "p"})
 	if res.Decision != scan.DecisionBlock {
 		t.Fatalf("decision = %s", res.Decision)
+	}
+}
+
+// A secret short enough to pass for an identifier never shows by name when
+// it is a JSON key: not in the finding paths, the stored scan or the
+// judge's request, whatever the profile runs.
+func TestToolCallSecretKeysNeverShowByName(t *testing.T) {
+	keys := map[string]string{
+		"aws access key id": "AKIA" + "Q3ZP7RXW2M5NVK4T",
+		"short stripe key":  "sk_" + "live_" + strings.Repeat("a1B2", 6),
+	}
+	leaks := func(t *testing.T, r *rig, ctx context.Context, res *scan.Result, key string) {
+		t.Helper()
+		stored, err := r.st.GetScan(ctx, res.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for what, v := range map[string]any{"result": res, "stored scan": stored} {
+			b, marshalErr := json.Marshal(v)
+			if marshalErr != nil {
+				t.Fatal(marshalErr)
+			}
+			if strings.Contains(string(b), key) {
+				t.Errorf("the %s carries the key: %s", what, b)
+			}
+		}
+	}
+	for name, key := range keys {
+		// The key's place among the sorted keys {key, "body"}.
+		place := "#1"
+		if key < "body" {
+			place = "#0"
+		}
+		t.Run(name+" instinct only", func(t *testing.T) {
+			r := newRig(t, nil)
+			ctx := tenantCtx("tenant-a")
+			r.instinct(ctx, t, "inj", instinct.ActionBlock)
+			r.profile(ctx, t, "inj", []string{"inj"}, nil)
+			raw := args(t, map[string]any{key: injectionArg, "body": "ok"})
+			res := scanCall(ctx, t, r, &scan.ToolCallInput{Tool: "t", Arguments: raw, RiskClass: "read", Profile: "inj"})
+			found := inLayer(res, "instinct")
+			if res.Decision != scan.DecisionBlock || len(found) == 0 {
+				t.Fatalf("decision %s, findings %+v", res.Decision, res.Findings)
+			}
+			for _, f := range found {
+				paths, _ := f.Details["paths"].([]string)
+				if !slices.Equal(paths, []string{place}) {
+					t.Errorf("paths = %v, want [%s]", paths, place)
+				}
+			}
+			leaks(t, r, ctx, res, key)
+		})
+		t.Run(name+" judgment only", func(t *testing.T) {
+			j := answer(0.95, "")
+			r, ctx := judgeRig(t, true, j, time.Second, 0.9, modelOnly)
+			r.safetyProfile(ctx, t, &profile.SafetyProfile{Name: "judge-only", Judgments: []profile.JudgmentAssignment{{JudgmentName: "judge"}}})
+			raw := args(t, map[string]any{key: "x", "body": "ok"})
+			res := scanCall(ctx, t, r, &scan.ToolCallInput{Tool: "t", Arguments: raw, RiskClass: "read", Profile: "judge-only"})
+			if res.Decision != scan.DecisionBlock {
+				t.Fatalf("decision %s, findings %+v", res.Decision, res.Findings)
+			}
+			req := j.last(t)
+			if strings.Contains(req.Text, key) || slices.ContainsFunc(req.Findings, func(f string) bool { return strings.Contains(f, key) }) {
+				t.Fatalf("judge request leaks the key: %+v", req)
+			}
+			if !strings.Contains(req.Text, "key:"+place+": [") || !strings.Contains(req.Text, "\n"+place+": x") || !strings.Contains(req.Text, "key:body: body") {
+				t.Fatalf("judge text = %q", req.Text)
+			}
+			leaks(t, r, ctx, res, key)
+		})
 	}
 }

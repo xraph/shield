@@ -38,8 +38,10 @@ const riskPrefix = "risk:"
 // ScanInput would see that text, with Direction tool_call. Keys come sorted,
 // each before what it holds. A finding from a unit lists the JSON path of
 // each unit in its paths details (a.b.0, key:a.b for a key, $ for a
-// top-level value); a key that is not a short identifier, or that a layer
-// found something in, shows as #N, its place among its sorted siblings.
+// top-level value); a key that is not a short identifier, that a layer
+// found something in, or that a built-in secret or personal data detector
+// matches whatever the profile runs, shows as #N, its place among its
+// sorted siblings. The judge's lines name units the same way.
 // Topic and data boundaries match the units joined by newlines. Action
 // boundaries match the tool name, or with a risk: prefix the risk class.
 // on_context reflexes see tool, risk_class (unknown when empty) and every
@@ -307,7 +309,8 @@ const maxFindingPaths = 16
 
 // plainKey matches a key shown by name in a finding path: a short
 // identifier. Any other key is shown by its place among its sorted
-// siblings, as is a key a layer found something in, so a path never
+// siblings, as is a key a layer found something in or a built-in secret or
+// personal data detector matches (hideSensitiveKeys), so a path never
 // carries matched or free text.
 var plainKey = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_-]{0,31}$`)
 

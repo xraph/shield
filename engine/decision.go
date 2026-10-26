@@ -55,8 +55,9 @@ type evaluation struct {
 	// units are the pieces the text layers scan one at a time, each as a
 	// text scan would see it: the whole text on a text scan, each key and
 	// value on a tool call. unitHits marks the units a layer found
-	// something in, and findingUnits the units behind a finding, for its
-	// paths.
+	// something in, and the keys a built-in secret or personal data
+	// detector matches, and findingUnits the units behind a finding, for
+	// its paths.
 	units        []unit
 	distinct     [][]int // the units grouped by text, so equal texts are scanned once
 	unitHits     []bool
@@ -138,6 +139,29 @@ func (ev *evaluation) setUnits() {
 			ev.distinct = append(ev.distinct, nil)
 		}
 		ev.distinct[k] = append(ev.distinct[k], u)
+	}
+	if ev.call != nil {
+		ev.hideSensitiveKeys()
+	}
+}
+
+// hideSensitiveKeys marks as hits the key units a built-in secret or
+// personal data detector matches, whatever the profile runs, so the paths
+// of findings and the judge's text show such a key as #N and never by its
+// text. Only a key that would otherwise be shown by name is checked, once
+// per distinct text.
+func (ev *evaluation) hideSensitiveKeys() {
+	for _, group := range ev.distinct {
+		text := ev.unitText(group[0])
+		if !plainKey.MatchString(text) || !slices.ContainsFunc(group, func(u int) bool { return ev.call.args.args[u].isKey }) {
+			continue
+		}
+		if len(perception.Secrets(text, nil)) == 0 && len(perception.PII(text, perception.BuiltinPII())) == 0 {
+			continue
+		}
+		for _, u := range group {
+			ev.unitHits[u] = true
+		}
 	}
 }
 
