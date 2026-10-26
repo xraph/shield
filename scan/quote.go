@@ -61,7 +61,7 @@ func quoteSource(source string) string {
 
 // lessThans are the runes that can open a tag after folding: "<" and its
 // lookalikes. The fullwidth and small forms fold to "<".
-const lessThans = "<˂‹ᐸ〈⟨＜﹤〈"
+const lessThans = "<\u02c2\u2039\u1438\u3008\u27e8\uff1c\ufe64\u2329"
 
 // writeEscaped writes text with a backslash after the "<" of every tag a
 // model could read as the wrapper's. Text without any "<" is written as is.
@@ -121,7 +121,7 @@ func word(folded string, i int, w string) (int, bool) {
 	for k := range len(w) {
 		i = skip(folded, i, false)
 		r, size := utf8.DecodeRuneInString(folded[i:])
-		if size == 0 || latinOf(r) != w[k] {
+		if size == 0 || latinOf(r) != rune(w[k]) {
 			return i, false
 		}
 		i += size
@@ -181,7 +181,7 @@ func isSeparator(r rune) bool {
 // for runes Fold leaves alone: Cyrillic, Greek and Armenian letters outside
 // a Latin word, and small capitals. Fold has already lowered the case and
 // mapped the fullwidth, mathematical and circled forms.
-var tagLookalikes = map[rune]byte{
+var tagLookalikes = map[rune]rune{
 	// Cyrillic
 	0x0441: 'c', 0x043E: 'o', 0x0435: 'e', 0x0455: 's', 0x0501: 'd', 0x0442: 't',
 	0x0433: 'r', 0x043F: 'n', 0x04BD: 'e',
@@ -197,9 +197,9 @@ var tagLookalikes = map[rune]byte{
 
 // latinOf returns the ASCII letter r reads as, or 0. A letter that composed
 // with a mark after folding ("o" and U+0301 to "\u00f3") reads as its base.
-func latinOf(r rune) byte {
+func latinOf(r rune) rune {
 	if r < utf8.RuneSelf {
-		return byte(r)
+		return r
 	}
 	if c, ok := tagLookalikes[r]; ok {
 		return c
@@ -207,7 +207,7 @@ func latinOf(r rune) byte {
 	if d := norm.NFD.String(string(r)); d != string(r) {
 		base, _ := utf8.DecodeRuneInString(d)
 		if base < utf8.RuneSelf {
-			return byte(base)
+			return base
 		}
 		return tagLookalikes[base]
 	}

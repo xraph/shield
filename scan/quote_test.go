@@ -88,32 +88,32 @@ func spell(letters func(rune) rune, sep string) string {
 // undo maps every rune the parts put in a tag back to the part it spells;
 // skipped holds the invisible runes.
 var undo, skipped = func() (map[rune]rune, map[rune]bool) {
-	undo := map[rune]rune{}
+	u := map[rune]rune{}
 	for _, m := range letterMaps {
 		for _, r := range "untrustedcontent" {
-			undo[m(r)] = r
+			u[m(r)] = r
 		}
 	}
 	for _, sep := range separators {
 		for _, r := range sep {
-			undo[r] = '_'
+			u[r] = '_'
 		}
 	}
 	for _, op := range append(slices.Clone(closeOpeners), openOpeners...) {
 		for i, r := range []rune(op) {
 			switch {
 			case i == 0:
-				undo[r] = '<'
+				u[r] = '<'
 			case !unicode.IsSpace(r):
-				undo[r] = '/'
+				u[r] = '/'
 			}
 		}
 	}
-	skipped := map[rune]bool{}
+	sk := map[rune]bool{}
 	for _, r := range invisibles {
-		skipped[r] = true
+		sk[r] = true
 	}
-	return undo, skipped
+	return u, sk
 }()
 
 // tagCount reads s the way the variants were built, undoing each part, and
