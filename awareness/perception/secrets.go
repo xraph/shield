@@ -81,7 +81,10 @@ type format struct {
 	// hints are literals of which at least one must be in the text for the
 	// pattern to run, which keeps clean text cheap.
 	hints []string
-	re    *regexp.Regexp
+	// prefix, when set, is a literal host prefix found with a plain string
+	// search. re is then anchored with ^ and runs on the text after it.
+	prefix string
+	re     *regexp.Regexp
 	// glued rejects a match right after a letter or digit.
 	glued bool
 	// exact rejects a fixed-length match followed by a letter, a digit or
@@ -101,8 +104,8 @@ var formats = []format{
 		re: regexp.MustCompile(`gl(?:pat|dt|rt|ptt|soat|cbt)-[A-Za-z0-9_\-]{20,}`), glued: true},
 	{name: detSlack, typ: "SLACK_TOKEN", hints: []string{"xox", "xapp-"},
 		re: regexp.MustCompile(`xox[abposre]-[A-Za-z0-9\-]{10,}|xapp-\d-[A-Za-z0-9\-]{10,}`), glued: true},
-	{name: detSlack, typ: "SLACK_TOKEN", hints: []string{"hooks.slack.com"},
-		re: regexp.MustCompile(`hooks\.slack\.com/(?:services|workflows|triggers)/(?P<secret>[A-Za-z0-9_/]{20,})`)},
+	{name: detSlack, typ: "SLACK_TOKEN", prefix: "hooks.slack.com/",
+		re: regexp.MustCompile(`^(?:services|workflows|triggers)/(?P<secret>[A-Za-z0-9_/]{20,})`)},
 	{name: detStripe, typ: "STRIPE_KEY", hints: []string{"sk_live_", "sk_test_", "rk_live_", "rk_test_", "whsec_"},
 		re: regexp.MustCompile(`[sr]k_(?:live|test)_[A-Za-z0-9]{24,}|whsec_[A-Za-z0-9+/=]{32,}`), glued: true},
 	{name: detGoogle, typ: "GOOGLE_API_KEY", hints: []string{"AIza"},
@@ -120,6 +123,10 @@ var formats = []format{
 // scan records every match of f that passes its edge checks.
 func (f format) scan(c *collector) {
 	s := c.s
+	if f.prefix != "" {
+		f.scanAfterPrefix(c)
+		return
+	}
 	if !containsAny(s, f.hints) {
 		return
 	}
@@ -136,6 +143,34 @@ func (f format) scan(c *collector) {
 			start, end = loc[2*group], loc[2*group+1]
 		}
 		c.add(f.name, f.typ, scoreKnown, start, end)
+	}
+}
+
+// scanAfterPrefix finds each occurrence of f.prefix and matches the anchored
+// f.re on the text right after it, so the pattern itself never has to search.
+// Offsets are shifted back to the full text. A pattern without a "secret"
+// group records the prefix too.
+func (f format) scanAfterPrefix(c *collector) {
+	s := c.s
+	group := f.re.SubexpIndex(redactGroup)
+	for from := 0; from < len(s); {
+		i := strings.Index(s[from:], f.prefix)
+		if i < 0 {
+			return
+		}
+		i += from
+		base := i + len(f.prefix)
+		loc := f.re.FindStringSubmatchIndex(s[base:])
+		if loc == nil {
+			from = base
+			continue
+		}
+		start, end := i, base+loc[1]
+		if group > 0 && loc[2*group] >= 0 {
+			start, end = base+loc[2*group], base+loc[2*group+1]
+		}
+		c.add(f.name, f.typ, scoreKnown, start, end)
+		from = base + loc[1]
 	}
 }
 
