@@ -149,4 +149,4 @@ Only a judgment with a `model` assessor uses it. The InfraAgent preset has none,
 
 ## nexus versions
 
-The module needs nexus v1.9.0 or later. There, `CheckInput.Metadata` holds a copy of the request's metadata in both phases, and the guards copy it onto each stored scan, leaving out the keys Shield owns (`source`, `untrusted`, `secret_count`). Output guards run on streamed replies too, not only on non-streamed ones.
+The module needs nexus v1.9.0 or later. There, `CheckInput.Metadata` holds a copy of the request's metadata in both phases, and the guards copy it onto each stored scan, leaving out the keys Shield owns (`source`, `untrusted`, `secret_count`). Output guards run on streamed and non-streamed replies alike.
