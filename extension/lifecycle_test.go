@@ -3,7 +3,10 @@ package extension
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/xraph/forge"
 	dashcontract "github.com/xraph/forge/extensions/dashboard/contract"
@@ -87,5 +90,63 @@ func TestContractContributorRegistration(t *testing.T) {
 	}
 	if _, ok := reg.Contributor("shield"); !ok {
 		t.Fatal("Shield contributor missing")
+	}
+}
+
+func TestExtensionPassesScanLimits(t *testing.T) {
+	dir := t.TempDir()
+	yaml := "extensions:\n  shield:\n    max_scan_bytes: 2048\n    profile_cache_ttl: 5s\n    store_redacted: true\n"
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(yaml), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	app := forge.New(forge.WithAppName("shield-limits"), forge.WithConfigSearchPaths(dir))
+	e := New()
+	if err := e.Register(app); err != nil {
+		t.Fatal(err)
+	}
+	cfg := e.Engine().Config()
+	if cfg.MaxScanBytes != 2048 || cfg.ProfileCacheTTL != 5*time.Second || !cfg.StoreRedacted {
+		t.Fatalf("scan limits lost: %+v", cfg)
+	}
+}
+
+func TestExtensionDefaultsScanLimits(t *testing.T) {
+	app := forge.New(forge.WithEnableConfigAutoDiscovery(false))
+	e := New(WithConfig(Config{ScanConcurrency: 3}))
+	if err := e.Register(app); err != nil {
+		t.Fatal(err)
+	}
+	cfg := e.Engine().Config()
+	if cfg.MaxScanBytes != 1<<20 || cfg.ProfileCacheTTL != 30*time.Second || cfg.StoreRedacted {
+		t.Fatalf("default scan limits = %+v", cfg)
+	}
+}
+
+func TestExtensionPassesJudgeConfig(t *testing.T) {
+	dir := t.TempDir()
+	yaml := "extensions:\n  shield:\n    model_judge: true\n    judge_timeout: 2s\n    judge_concurrency: 3\n"
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(yaml), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	app := forge.New(forge.WithAppName("shield-judge"), forge.WithConfigSearchPaths(dir))
+	e := New()
+	if err := e.Register(app); err != nil {
+		t.Fatal(err)
+	}
+	cfg := e.Engine().Config()
+	if !cfg.ModelJudge || cfg.JudgeTimeout != 2*time.Second || cfg.JudgeConcurrency != 3 {
+		t.Fatalf("judge config lost: %+v", cfg)
+	}
+}
+
+func TestExtensionJudgeDefaults(t *testing.T) {
+	app := forge.New(forge.WithEnableConfigAutoDiscovery(false))
+	e := New()
+	if err := e.Register(app); err != nil {
+		t.Fatal(err)
+	}
+	cfg := e.Engine().Config()
+	if cfg.ModelJudge || cfg.JudgeTimeout != 5*time.Second || cfg.JudgeConcurrency != 8 {
+		t.Fatalf("judge defaults = %+v", cfg)
 	}
 }

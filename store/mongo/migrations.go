@@ -2,6 +2,7 @@ package mongo
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
@@ -327,5 +328,60 @@ func init() {
 				return mexec.DropCollection(ctx, (*complianceReportModel)(nil))
 			},
 		},
+		&migrate.Migration{
+			Name:    "unique_names_per_tenant",
+			Version: "20261024000001",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				return swapNameIndex(ctx, exec, appNameIndex, appTenantNameIndex)
+			},
+			// Down fails if two tenants now share a name under one app.
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				return swapNameIndex(ctx, exec, appTenantNameIndex, appNameIndex)
+			},
+		},
 	)
+}
+
+var (
+	appNameIndex       = bson.D{{Key: "app_id", Value: 1}, {Key: "name", Value: 1}}
+	appTenantNameIndex = bson.D{{Key: "app_id", Value: 1}, {Key: "tenant_id", Value: 1}, {Key: "name", Value: 1}}
+)
+
+// tenantUniqueCollections lists the primitive collections whose name uniqueness
+// moves from (app_id, name) to (app_id, tenant_id, name).
+var tenantUniqueCollections = []string{
+	colInstincts, colAwareness, colBoundaries, colValues, colJudgments, colReflexes, colProfiles,
+}
+
+// swapNameIndex drops the unique index on from (a missing index is fine) and creates a unique one on to.
+func swapNameIndex(ctx context.Context, exec migrate.Executor, from, to bson.D) error {
+	mexec, ok := exec.(*mongomigrate.Executor)
+	if !ok {
+		return fmt.Errorf("expected mongomigrate executor, got %T", exec)
+	}
+	for _, col := range tenantUniqueCollections {
+		if err := mexec.DB().Collection(col).Indexes().DropOne(ctx, indexName(from)); err != nil && !isIndexNotFound(err) {
+			return err
+		}
+		if err := mexec.CreateIndexes(ctx, col, []mongo.IndexModel{{Keys: to, Options: options.Index().SetUnique(true)}}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func indexName(keys bson.D) string {
+	name := ""
+	for i, k := range keys {
+		if i > 0 {
+			name += "_"
+		}
+		name += fmt.Sprintf("%s_%v", k.Key, k.Value)
+	}
+	return name
+}
+
+func isIndexNotFound(err error) bool {
+	var ce mongo.CommandError
+	return errors.As(err, &ce) && (ce.Name == "IndexNotFound" || ce.Code == 27 || ce.Code == 26)
 }

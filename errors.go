@@ -22,6 +22,10 @@ var (
 	ErrPIITokenNotFound   = errors.New("shield: pii token not found")
 	ErrComplianceNotFound = errors.New("shield: compliance report not found")
 
+	// Tenancy errors.
+	ErrTenantRequired = errors.New("shield: tenant is required")
+	ErrTenantMismatch = errors.New("shield: tenant does not match the context tenant")
+
 	// Duplicate errors.
 	ErrAlreadyExists = errors.New("shield: entity already exists")
 
@@ -32,6 +36,11 @@ var (
 	// Engine errors.
 	ErrNoProfile     = errors.New("shield: no safety profile configured")
 	ErrInvalidConfig = errors.New("shield: invalid configuration")
+
+	// Evaluation errors.
+	ErrProfileInvalid = errors.New("shield: safety profile is invalid")
+	ErrInputTooLarge  = errors.New("shield: input exceeds the scan size limit")
+	ErrInvalidInput   = errors.New("shield: invalid scan input")
 
 	// PII errors.
 	ErrEncryptionKeyMissing = errors.New("shield: pii encryption key not configured")

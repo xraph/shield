@@ -54,6 +54,48 @@ jobs:
             exit 1
           fi
 
+  # ─── nexusguard module ─────────────────────────────────────────────
+  # integrations/nexusguard is its own module. It builds against this
+  # checkout of shield through a workspace generated here; go.work is
+  # never committed.
+  nexusguard:
+    name: nexusguard
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: integrations/nexusguard/go.mod
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            integrations/nexusguard/go.sum
+
+      - name: Create workspace
+        run: go work init . ./integrations/nexusguard
+
+      - name: Vet
+        working-directory: integrations/nexusguard
+        run: go vet ./...
+
+      - name: Test
+        working-directory: integrations/nexusguard
+        run: go test -race -count=1 ./...
+
+      - name: Install golangci-lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.12.2
+          install-only: true
+
+      - name: Lint
+        working-directory: integrations/nexusguard
+        run: golangci-lint run --allow-serial-runners ./...
+
   # ─── Docs ───────────────────────────────────────────────────────────
   docs:
     name: Docs

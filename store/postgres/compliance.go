@@ -7,9 +7,13 @@ import (
 	"github.com/xraph/shield"
 	"github.com/xraph/shield/compliance"
 	"github.com/xraph/shield/id"
+	"github.com/xraph/shield/store"
 )
 
 func (s *Store) CreateReport(ctx context.Context, report *compliance.Report) error {
+	if err := store.ScopeWritable(ctx, report.ScopeKey, report.ScopeLevel); err != nil {
+		return err
+	}
 	n := now()
 	report.CreatedAt = n
 	report.UpdatedAt = n
@@ -22,8 +26,13 @@ func (s *Store) CreateReport(ctx context.Context, report *compliance.Report) err
 }
 
 func (s *Store) GetReport(ctx context.Context, reportID id.ComplianceReportID) (*compliance.Report, error) {
+	key, level, ok := store.ReportScope(ctx)
+	if !ok {
+		return nil, shield.ErrComplianceNotFound
+	}
 	m := new(complianceReportModel)
-	err := s.pgdb.NewSelect(m).Where("id = ?", reportID.String()).Scan(ctx)
+	err := s.pgdb.NewSelect(m).Where("id = ?", reportID.String()).
+		Where("scope_key = ?", key).Where("scope_level = ?", level).Scan(ctx)
 	if err != nil {
 		return nil, notFoundOrWrap(err, shield.ErrComplianceNotFound, "get compliance report")
 	}
@@ -31,21 +40,27 @@ func (s *Store) GetReport(ctx context.Context, reportID id.ComplianceReportID) (
 }
 
 func (s *Store) ListReports(ctx context.Context, filter *compliance.ListFilter) ([]*compliance.Report, error) {
+	if filter == nil {
+		return nil, shield.ErrTenantRequired
+	}
+	levels, levelErr := store.ReportLevels(ctx, filter.ScopeKey)
+	if levelErr != nil {
+		return nil, levelErr
+	}
 	var models []complianceReportModel
-	q := s.pgdb.NewSelect(&models).OrderExpr("generated_at DESC")
-	if filter != nil {
-		if filter.ScopeKey != "" {
-			q = q.Where("scope_key = ?", filter.ScopeKey)
-		}
-		if filter.Framework != "" {
-			q = q.Where("framework = ?", string(filter.Framework))
-		}
-		if filter.Limit > 0 {
-			q = q.Limit(filter.Limit)
-		}
-		if filter.Offset > 0 {
-			q = q.Offset(filter.Offset)
-		}
+	q := s.pgdb.NewSelect(&models).Where("scope_key = ?", filter.ScopeKey).OrderExpr("generated_at DESC")
+	if levels != nil {
+		clause, args := whereIn("scope_level", levels)
+		q = q.Where(clause, args...)
+	}
+	if filter.Framework != "" {
+		q = q.Where("framework = ?", string(filter.Framework))
+	}
+	if filter.Limit > 0 {
+		q = q.Limit(filter.Limit)
+	}
+	if filter.Offset > 0 {
+		q = q.Offset(filter.Offset)
 	}
 	if err := q.Scan(ctx); err != nil {
 		return nil, fmt.Errorf("shield/postgres: list compliance reports: %w", err)

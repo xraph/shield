@@ -1,6 +1,6 @@
 // Package instinct models hardwired, automatic safety responses.
 //
-// Instincts are the fastest safety layer — pre-conscious, immediate
+// Instincts are the fastest safety layer: pre-conscious, immediate
 // threat detection. Like a human flinching from danger, instincts fire
 // before any deliberation. Prompt injection detection, jailbreak detection,
 // and exfiltration detection are instincts.
@@ -63,6 +63,20 @@ const (
 	CategoryJailbreak Category = "jailbreak"
 )
 
+// Actions an instinct takes when it fires. Instinct.Action holds one of them.
+const (
+	// ActionBlock rejects the text.
+	ActionBlock = "block"
+	// ActionFlag allows the text and records a finding.
+	ActionFlag = "flag"
+	// ActionAlert allows the text and records a finding for alerting.
+	ActionAlert = "alert"
+	// ActionRedact removes the matched lines from the text.
+	ActionRedact = "redact"
+	// ActionQuote wraps the text as untrusted content.
+	ActionQuote = "quote"
+)
+
 // Strategy defines how an instinct detects threats.
 type Strategy struct {
 	Name   string         `json:"name"`             // e.g., "classifier", "canary", "perplexity", "hierarchy"
@@ -71,7 +85,7 @@ type Strategy struct {
 }
 
 // Instinct represents a hardwired, automatic safety response.
-// Instincts are the first layer of the safety engine — fast, pre-conscious,
+// Instincts are the first layer of the safety engine: fast, pre-conscious,
 // and non-negotiable. They run before any other safety evaluation.
 type Instinct struct {
 	shield.Entity
@@ -83,7 +97,7 @@ type Instinct struct {
 	Category    Category       `json:"category" bun:",notnull"`
 	Strategies  []Strategy     `json:"strategies,omitempty" bun:"type:jsonb"`
 	Sensitivity Sensitivity    `json:"sensitivity,omitempty" bun:",notnull,default:'balanced'"`
-	Action      string         `json:"action" bun:",notnull"` // "block", "flag", "alert"
+	Action      string         `json:"action" bun:",notnull"` // one of the Action constants
 	Enabled     bool           `json:"enabled" bun:",notnull,default:true"`
 	Metadata    map[string]any `json:"metadata,omitempty" bun:"type:jsonb"`
 }

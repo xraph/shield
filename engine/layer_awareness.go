@@ -1,0 +1,184 @@
+package engine
+
+import (
+	"context"
+	"slices"
+
+	"github.com/xraph/shield/awareness"
+	"github.com/xraph/shield/awareness/perception"
+	"github.com/xraph/shield/scan"
+)
+
+// awarenessMessages are the fixed finding messages, by focus.
+var awarenessMessages = map[awareness.Focus]string{
+	awareness.FocusPII:     "personal data detected",
+	awareness.FocusSecrets: "secret detected",
+}
+
+// detected is what one awareness detector found, and in which units.
+type detected struct {
+	detector string
+	focus    awareness.Focus
+	matches  []perception.Match
+	units    []int
+}
+
+// runAwareness is layer 2. Personal data and secret detectors run the
+// built-ins they name plus their own patterns, custom detectors run their
+// patterns, and topic detectors record a label when a pattern matches. Each
+// detector that finds something gives one finding; a detector the engine
+// cannot run gives an info finding.
+func (e *Engine) runAwareness(ctx context.Context, ev *evaluation) {
+	for _, a := range ev.profile.awareness {
+		var found []detected
+		for _, d := range a.detectors {
+			found = append(found, ev.runDetector(a, d)...)
+		}
+		total := 0
+		for _, f := range found {
+			if len(f.matches) == 0 {
+				continue
+			}
+			ev.recordAwareness(ctx, e, a, f)
+			total += countSpans(f.matches)
+		}
+		if total > 0 {
+			e.registry.EmitAwarenessDetected(ctx, ev.scanID, a.name, total)
+		}
+	}
+}
+
+// runDetector runs one detector over every unit and returns its matches,
+// offsets in the whole text, grouped by detector name.
+func (ev *evaluation) runDetector(a *compiledAwareness, d compiledDetector) []detected {
+	switch d.focus {
+	case awareness.FocusPII, awareness.FocusSecrets:
+		if !d.builtin && len(d.patterns) == 0 {
+			ev.info(layerAwareness, a.name, "unsupported detector "+d.name)
+			return nil
+		}
+	case awareness.FocusTopic:
+		if len(d.patterns) == 0 {
+			ev.info(layerAwareness, a.name, "unsupported detector "+d.name)
+			return nil
+		}
+		for _, group := range ev.distinct {
+			if perception.Topic(ev.unitText(group[0]), d.patterns) {
+				ev.labels = append(ev.labels, d.name)
+				for _, u := range group {
+					ev.unitHits[u] = true
+				}
+				break
+			}
+		}
+		return nil
+	default:
+		if len(d.patterns) == 0 {
+			ev.info(layerAwareness, a.name, "unsupported detector "+d.name)
+			return nil
+		}
+	}
+	var out []detected
+	index := map[string]int{}
+	for _, group := range ev.distinct {
+		found := unitMatches(ev.unitText(group[0]), d)
+		for _, u := range group {
+			for _, m := range found {
+				m.Start += ev.units[u].start
+				m.End += ev.units[u].start
+				name := d.name
+				if d.all {
+					name = m.Detector
+				}
+				k, ok := index[name]
+				if !ok {
+					k = len(out)
+					index[name] = k
+					out = append(out, detected{detector: name, focus: d.focus})
+				}
+				out[k].matches = append(out[k].matches, m)
+				if n := len(out[k].units); n == 0 || out[k].units[n-1] != u {
+					out[k].units = append(out[k].units, u)
+				}
+			}
+		}
+	}
+	if !d.all && len(out) == 0 {
+		out = append(out, detected{detector: d.name, focus: d.focus})
+	}
+	for i := range out {
+		slices.Sort(out[i].units)
+	}
+	return out
+}
+
+// unitMatches runs detector d over one unit of text.
+func unitMatches(text string, d compiledDetector) []perception.Match {
+	var matches []perception.Match
+	if d.builtin {
+		var names []string
+		if !d.all {
+			names = []string{d.name}
+		}
+		switch d.focus {
+		case awareness.FocusPII:
+			matches = perception.PII(text, names)
+		case awareness.FocusSecrets:
+			matches = perception.Secrets(text, names)
+		}
+	}
+	if len(d.patterns) > 0 {
+		matches = append(matches, perception.Custom(text, d.name, d.patterns)...)
+	}
+	return matches
+}
+
+// recordAwareness adds the finding for one detector's matches and queues
+// their redaction when the awareness action redacts. vault redacts the
+// same way and stores no token.
+func (ev *evaluation) recordAwareness(ctx context.Context, e *Engine, a *compiledAwareness, f detected) {
+	spans := mergeSpans(f.matches)
+	score := 0.0
+	for _, m := range f.matches {
+		score = max(score, m.Score)
+	}
+	message, ok := awarenessMessages[f.focus]
+	if !ok {
+		message = "pattern matched"
+	}
+	finding := &scan.Finding{
+		Layer: layerAwareness, Source: a.name, Message: message, Score: score, Action: a.action,
+		Details: map[string]any{"detector": f.detector, "count": len(spans), "spans": spans},
+	}
+	ev.add(finding)
+	ev.noteUnits(finding, f.units)
+	hit := &awarenessHit{focus: f.focus, detector: f.detector, matches: f.matches}
+	ev.hits[finding] = hit
+	switch f.focus {
+	case awareness.FocusSecrets:
+		ev.secretsFound = append(ev.secretsFound, f.matches...)
+	case awareness.FocusPII:
+		ev.piiFound = append(ev.piiFound, f.matches...)
+		e.registry.EmitPIIDetected(ctx, ev.scanID, f.detector, len(spans))
+	}
+	if scan.ActionDecision(a.action) == scan.DecisionRedact {
+		ev.redactHit(hit)
+	}
+}
+
+// redactHit queues the matches of an awareness finding for redaction, once.
+func (ev *evaluation) redactHit(hit *awarenessHit) {
+	if hit.redacted {
+		return
+	}
+	hit.redacted = true
+	switch hit.focus {
+	case awareness.FocusSecrets:
+		ev.secrets = append(ev.secrets, hit.matches...)
+	case awareness.FocusPII:
+		ev.pii = append(ev.pii, hit.matches...)
+		ev.piiRedacted = append(ev.piiRedacted, piiTally{hit.detector, countSpans(hit.matches)})
+	default:
+		ev.custom = append(ev.custom, hit.matches...)
+	}
+}

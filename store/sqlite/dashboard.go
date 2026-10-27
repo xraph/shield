@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"strings"
 	"time"
 
 	"github.com/xraph/shield/awareness"
@@ -152,12 +153,35 @@ func dashboardWire(model any) (json.RawMessage, error) {
 	}
 	return json.Marshal(fields)
 }
+
+// dashboardPredicate limits dashboard reads. A tenant reads its own org
+// policies and the app-level policies assigned to it; an app-scope actor
+// reads the app's policies (see store.Scope.PolicyScope).
 func dashboardPredicate(scope store.Scope, kind string) (predicate string, args []any) {
-	if kind == "policies" || kind == "compliance" {
+	switch kind {
+	case "policies":
+		if scope.AppScope() {
+			return "scope_key = ? AND scope_level = 'app'", []any{scope.AppID}
+		}
+		return "((scope_key = ? AND scope_level = 'org') OR (scope_key = ? AND scope_level = 'app' AND id IN " +
+			"(SELECT policy_id FROM shield_policy_tenants WHERE tenant_id = ?)))", []any{scope.TenantID, scope.AppID, scope.TenantID}
+	case "compliance":
+		// A tenant reads only its own reports; app-level reports need the
+		// host-granted app scope.
 		key, level := scope.PolicyScope()
 		return "scope_key = ? AND scope_level = ?", []any{key, level}
 	}
 	return "app_id = ? AND tenant_id = ?", []any{scope.AppID, scope.TenantID}
+}
+
+// writePredicate limits dashboard updates and deletes. A policy is written
+// only in the scope's own policy scope, never an assigned app-level one.
+func writePredicate(scope store.Scope, kind string) (predicate string, args []any) {
+	if kind == "policies" {
+		key, level := scope.PolicyScope()
+		return "scope_key = ? AND scope_level = ?", []any{key, level}
+	}
+	return dashboardPredicate(scope, kind)
 }
 func (s *Store) DashboardList(ctx context.Context, scope store.Scope, kind string, f store.Filter) (store.Page, error) {
 	if err := scope.Validate(); err != nil {
@@ -294,6 +318,9 @@ func (s *Store) DashboardCreate(ctx context.Context, scope store.Scope, kind str
 		return nil, err
 	}
 	_, err = s.sdb.NewInsert(model).Exec(ctx)
+	if uniqueViolation(err) {
+		return nil, store.ErrConflict
+	}
 	if err != nil {
 		return nil, fmt.Errorf("create %s: %w", kind, err)
 	}
@@ -307,6 +334,9 @@ func (s *Store) DashboardUpdate(ctx context.Context, scope store.Scope, kind, ke
 	var before, after map[string]any
 	if operationErr := json.Unmarshal(old, &before); operationErr != nil {
 		return nil, operationErr
+	}
+	if !store.DashboardWritable(scope, kind, before) {
+		return nil, store.ErrReadOnly
 	}
 	if operationErr := json.Unmarshal(raw, &after); operationErr != nil {
 		return nil, operationErr
@@ -329,7 +359,7 @@ func (s *Store) DashboardUpdate(ctx context.Context, scope store.Scope, kind, ke
 	if err != nil {
 		return nil, err
 	}
-	pred, args := dashboardPredicate(scope, kind)
+	pred, args := writePredicate(scope, kind)
 	res, err := s.sdb.NewUpdate(model).Where(pred, args...).Where("id = ?", key).Where("updated_at = ?", revision).Exec(ctx)
 	if err != nil {
 		return nil, err
@@ -347,14 +377,22 @@ func (s *Store) DashboardDelete(ctx context.Context, scope store.Scope, kind, ke
 	if !store.Editable(kind) {
 		return store.ErrCollection
 	}
-	if _, err := s.DashboardGet(ctx, scope, kind, key); err != nil {
+	current, err := s.DashboardGet(ctx, scope, kind, key)
+	if err != nil {
 		return err
+	}
+	var row map[string]any
+	if decodeErr := json.Unmarshal(current, &row); decodeErr != nil {
+		return decodeErr
+	}
+	if !store.DashboardWritable(scope, kind, row) {
+		return store.ErrReadOnly
 	}
 	model, err := dashboardModel(kind, nil)
 	if err != nil {
 		return err
 	}
-	pred, args := dashboardPredicate(scope, kind)
+	pred, args := writePredicate(scope, kind)
 	res, err := s.sdb.NewDelete(model).Where(pred, args...).Where("id = ?", key).Exec(ctx)
 	if err != nil {
 		return err
@@ -376,7 +414,13 @@ func (s *Store) DashboardAssigned(ctx context.Context, scope store.Scope, key st
 	n, err := s.sdb.NewSelect((*policyTenantModel)(nil)).Where("tenant_id = ?", scope.TenantID).Where("policy_id = ?", key).Count(ctx)
 	return n > 0, err
 }
+
+// DashboardAssign assigns an app-level policy to scope.TenantID. Only an
+// app-scope actor assigns; to a tenant actor policies are read-only.
 func (s *Store) DashboardAssign(ctx context.Context, scope store.Scope, key string, assigned bool) error {
+	if !scope.AppScope() {
+		return store.ErrReadOnly
+	}
 	if _, err := s.DashboardGet(ctx, scope, "policies", key); err != nil {
 		return err
 	}
@@ -387,4 +431,9 @@ func (s *Store) DashboardAssign(ctx context.Context, scope store.Scope, key stri
 	m := &policyTenantModel{TenantID: scope.TenantID, PolicyID: key, CreatedAt: time.Now().UTC()}
 	_, err := s.sdb.NewInsert(m).OnConflict("(tenant_id, policy_id) DO NOTHING").Exec(ctx)
 	return err
+}
+
+// uniqueViolation reports whether err is a UNIQUE constraint failure.
+func uniqueViolation(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "UNIQUE constraint failed")
 }

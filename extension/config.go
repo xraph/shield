@@ -1,6 +1,10 @@
 package extension
 
-import "time"
+import (
+	"time"
+
+	"github.com/xraph/shield"
+)
 
 // Config holds the Shield extension configuration.
 // Fields can be set programmatically via Option functions or loaded from
@@ -28,6 +32,26 @@ type Config struct {
 	// is reached, skipping deeper layers.
 	EnableShortCircuit bool `json:"enable_short_circuit" mapstructure:"enable_short_circuit" yaml:"enable_short_circuit"`
 
+	// MaxScanBytes is the largest text a scan accepts (default 1 MiB).
+	MaxScanBytes int `json:"max_scan_bytes" mapstructure:"max_scan_bytes" yaml:"max_scan_bytes"`
+
+	// ProfileCacheTTL is how long a compiled safety profile is reused
+	// (default 30s). A negative value disables the cache.
+	ProfileCacheTTL time.Duration `json:"profile_cache_ttl" mapstructure:"profile_cache_ttl" yaml:"profile_cache_ttl"`
+
+	// StoreRedacted keeps the redacted text on persisted scans.
+	StoreRedacted bool `json:"store_redacted" mapstructure:"store_redacted" yaml:"store_redacted"`
+
+	// ModelJudge lets the model assessor call a judge registered through
+	// WithEngineOption(engine.WithJudge(...)). Off by default.
+	ModelJudge bool `json:"model_judge" mapstructure:"model_judge" yaml:"model_judge"`
+
+	// JudgeTimeout bounds one judge call (default 5s).
+	JudgeTimeout time.Duration `json:"judge_timeout" mapstructure:"judge_timeout" yaml:"judge_timeout"`
+
+	// JudgeConcurrency caps the judge calls in flight (default 8).
+	JudgeConcurrency int `json:"judge_concurrency" mapstructure:"judge_concurrency" yaml:"judge_concurrency"`
+
 	// GroveDatabase is the name of a grove.DB registered in the DI container.
 	// When set, the extension resolves this named database and auto-constructs
 	// the appropriate store based on the driver type (pg/sqlite/mongo).
@@ -45,5 +69,9 @@ func DefaultConfig() Config {
 		ShutdownTimeout:    30 * time.Second,
 		ScanConcurrency:    10,
 		EnableShortCircuit: true,
+		MaxScanBytes:       shield.DefaultMaxScanBytes,
+		ProfileCacheTTL:    shield.DefaultProfileCacheTTL,
+		JudgeTimeout:       shield.DefaultJudgeTimeout,
+		JudgeConcurrency:   shield.DefaultJudgeConcurrency,
 	}
 }

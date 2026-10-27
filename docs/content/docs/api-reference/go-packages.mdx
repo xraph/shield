@@ -3,7 +3,7 @@ title: Go Packages
 description: Quick reference for all Shield Go packages and their public APIs.
 ---
 
-All Shield packages are importable from `github.com/xraph/shield`. The six evaluation layers aren't implemented yet: the safety layer packages below hold configuration models and store interfaces, and the engine's scans always return `allow`.
+All Shield packages are importable from `github.com/xraph/shield`, except `nexusguard`, which is its own module. The safety layer packages hold configuration models and store interfaces; the detectors that run them live in `instinct/detection`, `awareness/perception` and `values/principles`, and the engine runs them all.
 
 ## Core packages
 
@@ -17,33 +17,40 @@ Root package. Exports context helpers, error constants, configuration, and share
 | `WithApp(ctx, id)` | Inject app ID into context |
 | `TenantFromContext(ctx)` | Read tenant ID from context |
 | `AppFromContext(ctx)` | Read app ID from context |
-| `Config` | Engine configuration struct (stored, not read yet) |
+| `Config` | Engine configuration struct, see [Configuration](/docs/concepts/configuration) |
 | `DefaultConfig()` | Returns default Config values |
-| `Option`, `Options`, `WithProfile(...)` and friends | Top-level options that nothing consumes yet |
+| `DefaultMaxScanBytes`, `DefaultProfileCacheTTL`, `DefaultJudgeTimeout`, `DefaultJudgeConcurrency` | The defaults behind zero config values |
+| `Option`, `Options`, `WithProfile(...)` and friends | Top-level options that nothing in Shield consumes |
 | `Entity` | Base type with timestamps |
 | `Version` | Current library version |
-| `ErrScanNotFound`, `ErrInstinctNotFound`, ... | Sentinel errors (several are defined but not returned yet, see [Errors](/docs/concepts/errors)) |
+| `ErrTenantRequired`, `ErrTenantMismatch`, `ErrNoProfile`, `ErrProfileInvalid`, `ErrInputTooLarge`, `ErrInvalidInput`, `ErrScanNotFound`, ... | Sentinel errors, see [Errors](/docs/concepts/errors) |
 
 ### `github.com/xraph/shield/engine`
 
-The scan entry points. No evaluation layer runs yet.
+The scan entry points and the layers. See [Evaluation](/docs/concepts/evaluation).
 
 | Export | Description |
 |--------|-------------|
 | `New(...Option) (*Engine, error)` | Create an engine |
-| `Engine.ScanInput(ctx, *scan.Input) (*scan.Result, error)` | Record an input scan; always `allow` today |
-| `Engine.ScanOutput(ctx, *scan.Input) (*scan.Result, error)` | Record an output scan; always `allow` today |
-| `Engine.Capabilities() Capabilities` | What's implemented: `Persistence`, `Evaluation` (false), `ReportGeneration` (false), `ConfigWrite` (false), and the unavailable `Layers` |
-| `Engine.Config() shield.Config` | The stored configuration |
+| `Engine.ScanInput(ctx, *scan.Input) (*scan.Result, error)` | Evaluate text going into a model |
+| `Engine.ScanOutput(ctx, *scan.Input) (*scan.Result, error)` | Evaluate text going out |
+| `Engine.ScanToolCall(ctx, *scan.ToolCallInput) (*scan.Result, error)` | Evaluate a proposed tool call: `allow`, `block` or `require_approval` |
+| `Engine.Capabilities() Capabilities` | What this engine runs: `Persistence`, `Evaluation` and `ToolCalls` (true), `ModelJudge`, `ReportGeneration` and `ConfigWrite` (false), `Layers` (empty) and `Supported` |
+| `Engine.InvalidateProfiles(tenantID)`, `Engine.InvalidateAllProfiles()` | Drop cached profiles after writing rows outside the admin service |
+| `Engine.ProfileGeneration(tenantID) uint64` | Changes on every invalidation; key your own verdict cache on it |
+| `Engine.Config() shield.Config` | The effective configuration, defaults filled in |
 | `Engine.Store() store.Store` | The store, or `nil` |
 | `Engine.Health(ctx) error` | Pings the store; errors when there's none |
 | `Engine.Stop(ctx) error` | Emits `OnShutdown` to plugins |
 | `WithStore(s)` | Set composite store |
 | `WithPlugin(p)` | Register lifecycle plugin |
 | `WithConfig(cfg)` | Set engine configuration |
+| `WithJudge(j)` | Register the model judge, called only with `Config.ModelJudge` |
 | `WithLogger(l)` | Set a go-utils `log.Logger`; plugin hook errors go to it too |
 | `WithMetrics(m)` | Record `shield_scans_completed_total`, `shield_scan_duration_seconds` and `shield_plugin_hooks_failed_total` on a go-utils `metrics.Metrics` |
 | `ScansCompletedMetric`, `ScanDurationMetric`, `ScanDurationBuckets` | The metric names and histogram bounds |
+| `MaxArgumentDepth` (32), `MaxProfilePatterns` (256), `MaxRateThreshold` (100000) | Limits on tool-call nesting, operator patterns per profile and `on_rate` thresholds |
+| `ActionGlob(entry)` | Split an action boundary entry into its glob and whether it matches the risk class |
 
 ### `github.com/xraph/shield/scan`
 
@@ -51,11 +58,16 @@ Scan input/output types, findings, and results.
 
 | Export | Description |
 |--------|-------------|
-| `Input` | Content to scan |
-| `Result` | Complete scan output |
+| `Input` | Content to scan, with `Profile`, `Source` and `Untrusted` |
+| `ToolCallInput` | A proposed tool call: `Tool`, `Arguments`, `RiskClass`, `Metadata`, `Profile` |
+| `Result` | Complete scan output, with `Reason()`, `HasPII()` and `HasFindings()` |
 | `Finding` | Individual detection from a safety layer |
-| `Direction` | Input or output direction |
-| `Decision` | Allow, block, flag, or redact |
+| `Direction` | `input`, `output` or `tool_call` |
+| `Decision` | `allow`, `flag`, `redact`, `require_approval` or `block` |
+| `Stricter(a, b)` | The more restrictive of two decisions; unknown counts as `block` |
+| `ActionDecision(action)`, `ToolCallActionDecision(action)` | The decision a finding's action asks for on a text scan or a tool call |
+| `Quote(source, text)`, `QuoteTag` | Wrap untrusted text in an `untrusted_content` tag |
+| `RiskUnknown` | The risk class of a tool call that names none |
 | `Stats`, `StatsFilter`, `ListFilter` | Statistics and list filters |
 | `Store` | Scan persistence interface |
 
@@ -68,6 +80,7 @@ Threat detector configuration. Categories: injection, exfiltration, manipulation
 | Export | Description |
 |--------|-------------|
 | `Instinct` | Entity with strategies, sensitivity, and action |
+| `ActionBlock`, `ActionFlag`, `ActionAlert`, `ActionRedact`, `ActionQuote` | Instinct actions |
 | `Category` | Injection, Exfiltration, Manipulation, Jailbreak |
 | `Sensitivity` | Paranoid, Cautious, Balanced, Relaxed, Permissive |
 | `Strategy` | Detection strategy with name, weight, config |
@@ -75,14 +88,14 @@ Threat detector configuration. Categories: injection, exfiltration, manipulation
 
 ### `github.com/xraph/shield/awareness`
 
-Perception layer configuration: PII, topic, sentiment, intent and language detectors.
+Perception layer configuration: PII, secret, topic, sentiment, intent and language detectors.
 
 | Export | Description |
 |--------|-------------|
 | `Awareness` | Entity with focus, detectors, and action |
-| `Focus` | PII, Topic, Sentiment, Intent, Language, Custom |
+| `Focus` | PII, Secrets, Topic, Sentiment, Intent, Language, Custom |
 | `Detector` | Named detector with patterns and config |
-| `PIIAction` | Redact, Flag, Block, Vault |
+| `PIIAction` | Redact, Flag, Block, Vault (`vault` redacts and stores no token) |
 | `Store` | CRUD persistence interface |
 
 ### `github.com/xraph/shield/boundary`
@@ -117,6 +130,7 @@ Contextual assessment configuration: grounding, relevance, consistency, complian
 | `RiskLevel` | None, Low, Medium, High, Critical |
 | `Domain` | Grounding, Relevance, Consistency, Compliance, Custom |
 | `Assessor` | Named assessor with weight and config |
+| `Judge`, `JudgeRequest`, `JudgeVerdict` | The model judge interface. The request text is always redacted |
 | `Store` | CRUD persistence interface |
 
 ### `github.com/xraph/shield/reflex`
@@ -155,6 +169,7 @@ Administrative governance: ordered rules scoped to an app or org.
 | `Policy` | Entity with scope, rules |
 | `ScopeLevel` | App or Org |
 | `Rule` | CheckType + Condition + Action |
+| `ParseCondition(s)`, `Condition` | Parse `finding`, `pii_detected`, `secret_detected` or `score <op> <n>` |
 | `Store` | CRUD + AssignToTenant/UnassignFromTenant |
 
 ### `github.com/xraph/shield/pii`
@@ -177,11 +192,44 @@ Compliance report records for the EU AI Act, NIST AI RMF and SOC 2. Shield store
 | `Framework` | `FrameworkEUAIAct`, `FrameworkNIST`, `FrameworkSOC2` |
 | `Store` | Create/Get/List reports |
 
+## Detection packages
+
+| Package | Exports |
+|---------|---------|
+| `instinct/detection` | `Fold`, `Text`, `Patterns`, `Heuristics`, `Canary`, `Families`, the `Family*` constants, `DestructiveCommands` |
+| `awareness/perception` | `PII`, `Secrets`, `Custom`, `Topic`, `BuiltinPII`, `BuiltinSecrets`, `Placeholders`, `Apply`, `Entropy` |
+| `values/principles` | `Lexicon`, `Score`, `NewScorer` |
+
+## Presets and fixtures
+
+### `github.com/xraph/shield/presets`
+
+```go
+const InfraAgentInput, InfraAgentOutput, InfraAgentTools = "infra-agent-input", "infra-agent-output", "infra-agent-tools"
+const RiskRead, RiskChange, RiskDeployNonProduction, RiskPromoteProduction, RiskDestroyProduction, RiskSecretOrExternal
+type Bundle struct { Name string; Instincts, Awareness, Boundaries, Values, Judgments, Reflexes, Profiles, Policies ... }
+type SeedReport struct { Created, Kept []string }
+func InfraAgent() Bundle
+func (b Bundle) Seed(ctx context.Context, s store.Store, tenantID, appID string) (SeedReport, error)
+```
+
+### `github.com/xraph/shield/redteam`
+
+```go
+const SourceCommitMessage, SourceLogLine, SourceReadme, SourceIssueBody
+const KindAttack, KindBenign
+type Fixture struct { ID, Source, Kind, Text, Marker, Technique string }
+func All() []Fixture
+func BySource(source string) []Fixture
+```
+
+See [Agent safety](/docs/guides/agent-safety).
+
 ## Plugin packages
 
 ### `github.com/xraph/shield/plugin`
 
-The `Plugin` base interface, `Registry` (with `NewRegistry`, `SetLogger` and `SetMetrics`), `HooksFailedMetric` and all lifecycle hook interfaces: `ScanStarted`, `ScanCompleted`, `ScanBlocked`, `ScanFailed`, `InstinctTriggered`, `AwarenessDetected`, `JudgmentAssessed`, `ValueViolated`, `ReflexFired`, `BoundaryEnforced`, `PIIDetected`, `PIIRedacted`, `PolicyEvaluated`, `SafetyProfileResolved`, `Shutdown`. Only `ScanStarted`, `ScanCompleted` and `Shutdown` are emitted today.
+The `Plugin` base interface, `Registry` (with `NewRegistry`, `SetLogger` and `SetMetrics`), `HooksFailedMetric` and all lifecycle hook interfaces: `ScanStarted`, `ScanCompleted`, `ScanBlocked`, `ScanFailed`, `InstinctTriggered`, `AwarenessDetected`, `JudgmentAssessed`, `ValueViolated`, `ReflexFired`, `BoundaryEnforced`, `PIIDetected`, `PIIRedacted`, `PolicyEvaluated`, `SafetyProfileResolved`, `Shutdown`. The engine emits all of them.
 
 ### `github.com/xraph/shield/observability`
 
@@ -237,9 +285,31 @@ func ParseAny(s string) (ID, error)
 
 | Package | Purpose |
 |---------|---------|
-| `store` | Composite `Store` interface, plus the scoped `DashboardStore`, `AssignmentStore`, `PrivacyStore` and `PrivacyStatsStore` contracts and their errors (`ErrScope`, `ErrNotFound`, `ErrCollection`, `ErrConflict`) |
+| `store` | Composite `Store` interface, the tenant helpers (`Tenant`, `ScopeVisible`, `ScopeLevels`, `ScopeWritable`, `ReportScope`, `ReportLevels`), plus the scoped `DashboardStore`, `AssignmentStore`, `PrivacyStore` and `PrivacyStatsStore` contracts and their errors (`ErrScope`, `ErrNotFound`, `ErrCollection`, `ErrConflict`, `ErrReadOnly`) |
 | `store/postgres`, `store/sqlite`, `store/mongo` | Store backends: `New(db *grove.DB) *Store` and a `Migrations` group |
 | `store/storetest` | Shared conformance suite: `Run(t, factory)` |
 | `admin` | Validation and permission checks for dashboard operations (`Service`, `Actor`, `Audit`) |
 | `extension` | Forge extension: `New(...Option) *Extension`, `Config`, `DefaultConfig()` and the `With*` options |
 | `extension/contract` | The `shield` dashboard contributor: `Register`, `ResolveActor`, `ActorResolver` |
+
+## The nexusguard module
+
+### `github.com/xraph/shield/integrations/nexusguard`
+
+```go
+func Input(eng *engine.Engine, opts ...Option) guard.Guard  // PhaseInput, Name "shield"
+func Output(eng *engine.Engine, opts ...Option) guard.Guard // PhaseOutput, Name "shield"
+func WithProfile(name string) Option
+func WithApp(appID string) Option
+func WithRoles(roles ...string) Option
+func WithUntrustedRoles(roles ...string) Option
+func WithTenant(resolve func(ctx context.Context, nexusTenant string) string) Option
+func WithVerdictCache(n int) Option
+
+type CompleteFunc func(ctx context.Context, req *provider.CompletionRequest) (*provider.CompletionResponse, error)
+func NewJudge(complete CompleteFunc, model string, opts ...JudgeOption) judgment.Judge
+func GatewayJudge(gw func() *nexus.Gateway, model string, opts ...JudgeOption) judgment.Judge
+func WithJudgeProvider(name string) JudgeOption
+```
+
+See [Nexus guard](/docs/guides/nexus-guard).

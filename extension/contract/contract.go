@@ -88,6 +88,8 @@ func mapError(err error) error {
 		return &dash.Error{Code: dash.CodeNotFound, Message: "Resource not found in this scope"}
 	case errors.Is(err, store.ErrConflict):
 		return &dash.Error{Code: dash.CodeConflict, Message: "Resource conflicts with existing configuration"}
+	case errors.Is(err, store.ErrReadOnly):
+		return &dash.Error{Code: dash.CodePermissionDenied, Message: "This configuration is read-only in your scope"}
 	case errors.Is(err, store.ErrScope):
 		return &dash.Error{Code: dash.CodePermissionDenied, Message: "Authorized scope is required"}
 	case errors.Is(err, store.ErrCollection):
@@ -143,10 +145,11 @@ func handler(deps Deps, intent string) dispatcher.Handler {
 			data = s.Engine().Config()
 			err = a.Check(false)
 		case "overview", "layers.summary":
+			evaluation := s.Engine().Capabilities().Evaluation
 			sections := []map[string]any{}
 			for _, kind := range []string{"instincts", "awareness", "boundaries", "values", "judgments", "reflexes", "profiles", "policies", "scans", "compliance"} {
 				page, e := s.List(ctx, a, kind, store.Filter{Limit: 1})
-				section := map[string]any{"collection": kind, "available": e == nil, "evaluation_available": false, "refreshed_at": time.Now().UTC()}
+				section := map[string]any{"collection": kind, "available": e == nil, "evaluation_available": evaluation, "refreshed_at": time.Now().UTC()}
 				if e == nil {
 					section["total"] = page.Total
 				} else {
@@ -154,11 +157,11 @@ func handler(deps Deps, intent string) dispatcher.Handler {
 				}
 				sections = append(sections, section)
 			}
-			data = map[string]any{"sections": sections, "evaluation_available": false, "refreshed_at": time.Now().UTC()}
+			data = map[string]any{"sections": sections, "evaluation_available": evaluation, "refreshed_at": time.Now().UTC()}
 			err = a.Check(false)
 		case "scans.stats":
 			counts := map[string]int64{}
-			for _, decision := range []string{"allow", "block", "flag", "redact"} {
+			for _, decision := range []string{"allow", "block", "flag", "redact", "require_approval"} {
 				page, e := s.List(ctx, a, "scans", store.Filter{Limit: 1, Field: "decision", Value: decision})
 				if e != nil {
 					err = e

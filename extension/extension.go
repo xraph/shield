@@ -111,6 +111,9 @@ func (e *Extension) Register(fapp forge.App) error {
 		engine.WithConfig(shield.Config{
 			DefaultProfile: e.config.DefaultProfile, ShutdownTimeout: e.config.ShutdownTimeout,
 			ScanConcurrency: e.config.ScanConcurrency, EnableShortCircuit: e.config.EnableShortCircuit,
+			MaxScanBytes: e.config.MaxScanBytes, ProfileCacheTTL: e.config.ProfileCacheTTL,
+			StoreRedacted: e.config.StoreRedacted, ModelJudge: e.config.ModelJudge, JudgeTimeout: e.config.JudgeTimeout,
+			JudgeConcurrency: e.config.JudgeConcurrency,
 		}),
 		engine.WithLogger(e.Logger()),
 		engine.WithMetrics(e.Metrics()),
@@ -181,7 +184,7 @@ func (e *Extension) loadConfiguration() error {
 		// Use programmatic config merged with defaults.
 		e.config = e.mergeWithDefaults(programmaticConfig)
 	} else {
-		// Config loaded from YAML — merge with programmatic options.
+		// Config loaded from YAML: merge with programmatic options.
 		e.config = e.mergeConfigurations(fileConfig, programmaticConfig)
 	}
 
@@ -243,6 +246,18 @@ func (e *Extension) mergeWithDefaults(cfg Config) Config {
 	if cfg.ScanConcurrency == 0 {
 		cfg.ScanConcurrency = defaults.ScanConcurrency
 	}
+	if cfg.MaxScanBytes == 0 {
+		cfg.MaxScanBytes = defaults.MaxScanBytes
+	}
+	if cfg.ProfileCacheTTL == 0 {
+		cfg.ProfileCacheTTL = defaults.ProfileCacheTTL
+	}
+	if cfg.JudgeTimeout == 0 {
+		cfg.JudgeTimeout = defaults.JudgeTimeout
+	}
+	if cfg.JudgeConcurrency == 0 {
+		cfg.JudgeConcurrency = defaults.JudgeConcurrency
+	}
 	return cfg
 }
 
@@ -258,6 +273,12 @@ func (e *Extension) mergeConfigurations(yamlConfig, programmaticConfig Config) C
 	}
 	if programmaticConfig.EnableShortCircuit {
 		yamlConfig.EnableShortCircuit = true
+	}
+	if programmaticConfig.StoreRedacted {
+		yamlConfig.StoreRedacted = true
+	}
+	if programmaticConfig.ModelJudge {
+		yamlConfig.ModelJudge = true
 	}
 
 	// String fields: YAML takes precedence.
@@ -277,6 +298,19 @@ func (e *Extension) mergeConfigurations(yamlConfig, programmaticConfig Config) C
 	}
 	if yamlConfig.ScanConcurrency == 0 && programmaticConfig.ScanConcurrency != 0 {
 		yamlConfig.ScanConcurrency = programmaticConfig.ScanConcurrency
+	}
+	if yamlConfig.MaxScanBytes == 0 && programmaticConfig.MaxScanBytes != 0 {
+		yamlConfig.MaxScanBytes = programmaticConfig.MaxScanBytes
+	}
+	if yamlConfig.ProfileCacheTTL == 0 && programmaticConfig.ProfileCacheTTL != 0 {
+		yamlConfig.ProfileCacheTTL = programmaticConfig.ProfileCacheTTL
+	}
+	if yamlConfig.JudgeTimeout == 0 && programmaticConfig.JudgeTimeout != 0 {
+		yamlConfig.JudgeTimeout = programmaticConfig.JudgeTimeout
+	}
+
+	if yamlConfig.JudgeConcurrency == 0 && programmaticConfig.JudgeConcurrency != 0 {
+		yamlConfig.JudgeConcurrency = programmaticConfig.JudgeConcurrency
 	}
 
 	// Fill remaining zeros with defaults.

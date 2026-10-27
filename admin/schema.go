@@ -3,9 +3,15 @@ package admin
 import (
 	"encoding/json"
 	"fmt"
+	"math"
+	globpath "path"
 	"reflect"
 	"regexp"
 	"strings"
+	"time"
+
+	"github.com/xraph/shield/engine"
+	"github.com/xraph/shield/policy"
 )
 
 type Field struct {
@@ -53,18 +59,30 @@ func list(key string, children ...Field) Field {
 	return f
 }
 
+// rateThreshold is a reflex trigger threshold: a score from 0 to 1 for
+// on_score, a scan count for on_rate. validateReflex checks which.
+func rateThreshold() Field {
+	f := field("threshold", "number")
+	hi := float64(rateThresholdMax)
+	f.Maximum = &hi
+	return f
+}
+
+// rateThresholdMax is the largest on_rate threshold.
+const rateThresholdMax = engine.MaxRateThreshold
+
 var sensitivity = []string{"paranoid", "cautious", "balanced", "relaxed", "permissive"}
 var domains = []string{"grounding", "relevance", "consistency", "compliance", "custom"}
-var focus = []string{"pii", "topic", "sentiment", "intent", "language", "custom"}
+var focus = []string{"pii", "secrets", "topic", "sentiment", "intent", "language", "custom"}
 var Schemas = map[string][]Field{
-	"instincts":  {required("category", "injection", "exfiltration", "manipulation", "jailbreak"), required("sensitivity", sensitivity...), required("action", "block", "flag", "alert"), list("strategies", field("name", "text"), field("weight", "number"), field("config", "json"))},
+	"instincts":  {required("category", "injection", "exfiltration", "manipulation", "jailbreak"), required("sensitivity", sensitivity...), required("action", "block", "flag", "alert", "redact", "quote"), list("strategies", field("name", "text"), field("weight", "number"), field("config", "json"))},
 	"awareness":  {required("focus", focus...), required("action", "redact", "flag", "block", "vault"), list("detectors", field("name", "text"), required("focus", focus...), field("patterns", "tags"), field("config", "json"))},
 	"boundaries": {field("response", "textarea"), list("limits", required("scope", "topic", "action", "data", "output", "custom"), field("deny", "tags"), field("allow", "tags"), field("use_allow", "boolean"))},
 	"values":     {required("severity", "info", "warning", "error", "critical"), required("action", "block", "flag", "warn"), list("rules", required("principle", "toxicity", "brand_safety", "honesty", "respect", "safety", "privacy", "custom"), field("threshold", "number"), field("categories", "tags"), field("guidelines", "tags"), field("config", "json"))},
 	"judgments":  {required("domain", domains...), field("threshold", "number"), required("action", "flag", "block", "warn"), list("assessors", field("name", "text"), required("domain", domains...), field("weight", "number"), field("requires_context", "boolean"), field("config", "json"))},
-	"reflexes":   {field("priority", "integer"), list("triggers", required("type", "on_score", "on_finding", "on_pattern", "on_context", "on_rate", "always"), field("pattern", "text"), field("threshold", "number"), field("window", "text")), list("actions", required("type", "block", "redact", "flag", "rewrite", "escalate", "log", "throttle"), field("target", "text"), field("value", "json_value"), field("fallback", "textarea"))},
+	"reflexes":   {field("priority", "integer"), list("triggers", required("type", "on_score", "on_finding", "on_pattern", "on_context", "on_rate", "always"), field("pattern", "text"), rateThreshold(), field("window", "text")), list("actions", required("type", "block", "redact", "flag", "rewrite", "escalate", "log", "throttle"), field("target", "text"), field("value", "json_value"), field("fallback", "textarea"))},
 	"profiles":   {list("instincts", field("instinct_name", "reference"), field("sensitivity", "select", sensitivity...)), list("awareness", field("awareness_name", "reference")), list("judgments", field("judgment_name", "reference"), field("threshold", "number")), field("boundaries", "references"), field("values", "references"), field("reflexes", "references")},
-	"policies":   {list("rules", required("check_type", "instinct", "awareness", "boundary", "values", "judgment", "reflex"), field("condition", "text"), required("action", "block", "flag", "redact"), field("error_message", "textarea"), field("priority", "integer"))},
+	"policies":   {list("rules", required("check_type", "instinct", "awareness", "boundary", "values", "judgment", "reflex"), field("condition", "text"), required("action", "block", "flag", "redact", "escalate"), field("error_message", "textarea"), field("priority", "integer"))},
 }
 
 func validate(kind string, row, before map[string]any) error {
@@ -94,7 +112,274 @@ func validate(kind string, row, before map[string]any) error {
 	}
 	common := make([]Field, 0, 3+len(fields))
 	common = append(common, field("description", "textarea"), field("enabled", "boolean"), field("metadata", "json"))
-	return validateFields(append(common, fields...), row, before, "")
+	if err := validateFields(append(common, fields...), row, before, ""); err != nil {
+		return err
+	}
+	return validateSemantics(kind, row)
+}
+
+// validateSemantics checks what the engine compiles, so a row it would
+// reject as an invalid profile fails at write time instead: regexes, policy
+// conditions, rate windows and context patterns.
+func validateSemantics(kind string, row map[string]any) error {
+	switch kind {
+	case "instincts":
+		for i, s := range entries(row["strategies"]) {
+			if config, ok := s["config"].(map[string]any); ok {
+				if err := regexList(config["patterns"], fmt.Sprintf("strategies.%d.config.patterns", i)); err != nil {
+					return err
+				}
+			}
+		}
+	case "values":
+		for i, r := range entries(row["rules"]) {
+			config, ok := r["config"].(map[string]any)
+			if !ok {
+				continue
+			}
+			if err := regexList(config["patterns"], fmt.Sprintf("rules.%d.config.patterns", i)); err != nil {
+				return err
+			}
+			if !textList(config["terms"]) {
+				return fieldError(fmt.Sprintf("rules.%d.config.terms", i), "Expected a list of text")
+			}
+		}
+	case "boundaries":
+		if err := validateActionGlobs(row); err != nil {
+			return err
+		}
+	case "reflexes":
+		if err := validateReflex(row); err != nil {
+			return err
+		}
+	case "judgments":
+		if err := validateAssessors(row); err != nil {
+			return err
+		}
+	case "policies":
+		for i, r := range entries(row["rules"]) {
+			if _, err := policy.ParseCondition(text(r, "condition")); err != nil {
+				return fieldError(fmt.Sprintf("rules.%d.condition", i), "Use pii_detected, secret_detected, finding, or score with >, >=, < or <= and a number")
+			}
+		}
+	}
+	return patternBudget(rowPatterns(kind, row))
+}
+
+// validateActionGlobs checks the allow and deny entries of action limits,
+// which the engine matches with path.Match (see engine.ActionGlob). The
+// engine treats a deny glob that does not parse as a match and an allow glob
+// that does not parse as no match, so one bad entry would block every tool
+// call under the profile.
+func validateActionGlobs(row map[string]any) error {
+	for i, l := range entries(row["limits"]) {
+		if text(l, "scope") != "action" {
+			continue
+		}
+		for _, key := range []string{"deny", "allow"} {
+			items, _ := l[key].([]any) //nolint:errcheck // validateFields has already checked the shape
+			for _, item := range items {
+				entry, _ := item.(string) //nolint:errcheck // validateFields has already checked the shape
+				glob, _ := engine.ActionGlob(entry)
+				if _, err := globpath.Match(glob, ""); err != nil {
+					return fieldError(fmt.Sprintf("limits.%d.%s", i, key), "Invalid glob: use *, ? and [ ] with a closing bracket")
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// validateAssessors checks the config the engine reads from judgment
+// assessors: layer_score layers (a list of text), finding_count layer (text)
+// and saturate (a whole number).
+func validateAssessors(row map[string]any) error {
+	for i, a := range entries(row["assessors"]) {
+		config, ok := a["config"].(map[string]any)
+		if !ok {
+			continue
+		}
+		key := fmt.Sprintf("assessors.%d.config.", i)
+		switch text(a, "name") {
+		case "layer_score":
+			if !textList(config["layers"]) {
+				return fieldError(key+"layers", "Expected a list of layer names")
+			}
+		case "finding_count":
+			if v, present := config["layer"]; present {
+				if _, isText := v.(string); !isText {
+					return fieldError(key+"layer", "Expected a layer name")
+				}
+			}
+			if v, present := config["saturate"]; present {
+				n, isNumber := v.(float64)
+				if !isNumber || n < 0 || n != math.Trunc(n) {
+					return fieldError(key+"saturate", "Use a whole number")
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// rowPatterns counts the operator regexes and globs a row adds to a
+// compiled profile, as engine.MaxProfilePatterns counts them.
+func rowPatterns(kind string, row map[string]any) int {
+	count := func(v any) int {
+		items, _ := v.([]any) //nolint:errcheck // absent or invalid counts as none
+		return len(items)
+	}
+	n := 0
+	switch kind {
+	case "instincts":
+		for _, s := range entries(row["strategies"]) {
+			if config, ok := s["config"].(map[string]any); ok {
+				n += count(config["patterns"])
+			}
+		}
+	case "awareness":
+		for _, d := range entries(row["detectors"]) {
+			n += count(d["patterns"])
+		}
+	case "values":
+		for _, r := range entries(row["rules"]) {
+			if config, ok := r["config"].(map[string]any); ok {
+				n += count(config["patterns"])
+			}
+		}
+	case "reflexes":
+		for _, t := range entries(row["triggers"]) {
+			pattern := text(t, "pattern")
+			switch text(t, "type") {
+			case "on_pattern":
+				n++
+			case "on_finding", "on_score":
+				if pattern != "" {
+					n++
+				}
+			case "on_context":
+				n += len(strings.Split(pattern, ","))
+			}
+		}
+		for _, a := range entries(row["actions"]) {
+			if text(a, "target") != "" {
+				n++
+			}
+		}
+	}
+	return n
+}
+
+// patternBudget refuses more operator patterns than one profile may hold.
+func patternBudget(n int) error {
+	if n > engine.MaxProfilePatterns {
+		return fieldError("patterns", fmt.Sprintf("A profile may hold at most %d regular expressions and globs; this adds up to %d", engine.MaxProfilePatterns, n))
+	}
+	return nil
+}
+
+// validateReflex checks trigger patterns, windows and thresholds by trigger
+// type, and redaction targets.
+func validateReflex(row map[string]any) error {
+	for i, t := range entries(row["triggers"]) {
+		pattern := text(t, "pattern")
+		key := fmt.Sprintf("triggers.%d.", i)
+		switch t["type"] {
+		case "on_pattern":
+			if _, err := regexp.Compile(pattern); err != nil {
+				return fieldError(key+"pattern", "Invalid regular expression")
+			}
+		case "on_context":
+			for _, part := range strings.Split(pattern, ",") {
+				name, _, ok := strings.Cut(strings.TrimSpace(part), "=")
+				if !ok || strings.TrimSpace(name) == "" {
+					return fieldError(key+"pattern", "Use comma-separated key=glob pairs")
+				}
+			}
+		case "on_rate":
+			if d, err := time.ParseDuration(text(t, "window")); err != nil || d <= 0 {
+				return fieldError(key+"window", "Use a duration such as 30s or 5m")
+			}
+			if threshold, ok := t["threshold"].(float64); ok && threshold != math.Trunc(threshold) {
+				return fieldError(key+"threshold", "Use a whole number of scans")
+			}
+		case "on_score":
+			if threshold, ok := t["threshold"].(float64); ok && threshold > 1 {
+				return fieldError(key+"threshold", "Use a value from 0 to 1")
+			}
+		}
+	}
+	for i, a := range entries(row["actions"]) {
+		if target := text(a, "target"); target != "" {
+			if _, err := regexp.Compile(target); err != nil {
+				return fieldError(fmt.Sprintf("actions.%d.target", i), "Invalid regular expression")
+			}
+		}
+	}
+	return nil
+}
+
+// entries returns the structured entries of a list field. validateFields
+// has already checked their shape.
+func entries(v any) []map[string]any {
+	items, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		if m, isMap := item.(map[string]any); isMap {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// text returns the text field key of m, or "" when it is absent.
+func text(m map[string]any, key string) string {
+	s, ok := m[key].(string)
+	if !ok {
+		return ""
+	}
+	return s
+}
+
+// regexList checks an optional list of regular expressions.
+func regexList(v any, key string) error {
+	if v == nil {
+		return nil
+	}
+	items, ok := v.([]any)
+	if !ok {
+		return fieldError(key, "Expected a list of regular expressions")
+	}
+	for _, item := range items {
+		src, isText := item.(string)
+		if !isText {
+			return fieldError(key, "Expected a list of regular expressions")
+		}
+		if _, err := regexp.Compile(src); err != nil {
+			return fieldError(key, "Invalid regular expression")
+		}
+	}
+	return nil
+}
+
+// textList reports whether v is absent or a list of text.
+func textList(v any) bool {
+	if v == nil {
+		return true
+	}
+	items, ok := v.([]any)
+	if !ok {
+		return false
+	}
+	for _, item := range items {
+		if _, ok := item.(string); !ok {
+			return false
+		}
+	}
+	return true
 }
 func fieldError(key, msg string) error {
 	return &Error{Code: "BAD_REQUEST", Message: "Check the highlighted configuration fields", Fields: map[string]string{key: msg}}
@@ -138,11 +423,6 @@ func validateFields(fields []Field, row, before map[string]any, path string) err
 					return fieldError(key, "Unsupported value")
 				}
 			}
-			if f.Key == "pattern" && str != "" {
-				if _, err := regexp.Compile(str); err != nil {
-					return fieldError(key, "Invalid regular expression")
-				}
-			}
 		case "boolean":
 			if _, ok := v.(bool); !ok {
 				return fieldError(key, "Expected true or false")
@@ -152,8 +432,8 @@ func validateFields(fields []Field, row, before map[string]any, path string) err
 			if !ok {
 				return fieldError(key, "Expected a number")
 			}
-			if f.Type == "number" && (n < 0 || n > 1) {
-				return fieldError(key, "Use a value from 0 to 1")
+			if f.Type == "number" && (n < *f.Minimum || n > *f.Maximum) {
+				return fieldError(key, fmt.Sprintf("Use a value from %g to %g", *f.Minimum, *f.Maximum))
 			}
 			if f.Type == "integer" && (n != float64(int(n)) || n < 0 || n > 1000000) {
 				return fieldError(key, "Use a whole number from 0 to 1000000")
@@ -236,9 +516,9 @@ func validateFilter(kind, field, value string) error {
 		return nil
 	}
 	if kind == "scans" {
-		opts := []string{"allow", "block", "flag", "redact"}
+		opts := []string{"allow", "block", "flag", "redact", "require_approval"}
 		if field == "direction" {
-			opts = []string{"input", "output"}
+			opts = []string{"input", "output", "tool_call"}
 		}
 		for _, v := range opts {
 			if v == value {

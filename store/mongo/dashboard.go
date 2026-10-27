@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
+	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
 
 	"github.com/xraph/shield/awareness"
@@ -157,12 +158,37 @@ func dashboardWire(model any) (json.RawMessage, error) {
 	}
 	return json.Marshal(fields)
 }
+
+// dashboardPredicate limits dashboard reads. A tenant reads its own org
+// policies and the app-level policies assigned to it; an app-scope actor
+// reads the app's policies (see store.Scope.PolicyScope).
 func dashboardPredicate(scope store.Scope, kind string) bson.M {
-	if kind == "policies" || kind == "compliance" {
+	switch kind {
+	case "policies":
+		if scope.AppScope() {
+			return bson.M{"scope_key": scope.AppID, "scope_level": "app"}
+		}
+		return bson.M{"$or": []bson.M{
+			{"scope_key": scope.TenantID, "scope_level": "org"},
+			{"scope_key": scope.AppID, "scope_level": "app", "tenant_ids": scope.TenantID},
+		}}
+	case "compliance":
+		// A tenant reads only its own reports; app-level reports need the
+		// host-granted app scope.
 		key, level := scope.PolicyScope()
 		return bson.M{"scope_key": key, "scope_level": level}
 	}
 	return bson.M{"app_id": scope.AppID, "tenant_id": scope.TenantID}
+}
+
+// writePredicate limits dashboard updates and deletes. A policy is written
+// only in the scope's own policy scope, never an assigned app-level one.
+func writePredicate(scope store.Scope, kind string) bson.M {
+	if kind == "policies" {
+		key, level := scope.PolicyScope()
+		return bson.M{"scope_key": key, "scope_level": level}
+	}
+	return dashboardPredicate(scope, kind)
 }
 func dashboardCollection(kind string) string {
 	if kind == "compliance" {
@@ -312,6 +338,9 @@ func (s *Store) DashboardCreate(ctx context.Context, scope store.Scope, kind str
 		return nil, err
 	}
 	_, err = s.mdb.Collection(dashboardCollection(kind)).InsertOne(ctx, model)
+	if mongo.IsDuplicateKeyError(err) {
+		return nil, store.ErrConflict
+	}
 	if err != nil {
 		return nil, fmt.Errorf("create %s: %w", kind, err)
 	}
@@ -325,6 +354,9 @@ func (s *Store) DashboardUpdate(ctx context.Context, scope store.Scope, kind, ke
 	var before, after map[string]any
 	if operationErr := json.Unmarshal(old, &before); operationErr != nil {
 		return nil, operationErr
+	}
+	if !store.DashboardWritable(scope, kind, before) {
+		return nil, store.ErrReadOnly
 	}
 	if operationErr := json.Unmarshal(raw, &after); operationErr != nil {
 		return nil, operationErr
@@ -347,7 +379,7 @@ func (s *Store) DashboardUpdate(ctx context.Context, scope store.Scope, kind, ke
 	if err != nil {
 		return nil, err
 	}
-	pred := dashboardPredicate(scope, kind)
+	pred := writePredicate(scope, kind)
 	pred["_id"] = key
 	pred["updated_at"] = revision
 	set := bson.M{}
@@ -375,15 +407,18 @@ func (s *Store) DashboardDelete(ctx context.Context, scope store.Scope, kind, ke
 	if !store.Editable(kind) {
 		return store.ErrCollection
 	}
-	if _, err := s.DashboardGet(ctx, scope, kind, key); err != nil {
-		return err
-	}
-	model, err := dashboardModel(kind, nil)
+	current, err := s.DashboardGet(ctx, scope, kind, key)
 	if err != nil {
 		return err
 	}
-	_ = model
-	pred := dashboardPredicate(scope, kind)
+	var row map[string]any
+	if decodeErr := json.Unmarshal(current, &row); decodeErr != nil {
+		return decodeErr
+	}
+	if !store.DashboardWritable(scope, kind, row) {
+		return store.ErrReadOnly
+	}
+	pred := writePredicate(scope, kind)
 	pred["_id"] = key
 	res, err := s.mdb.Collection(dashboardCollection(kind)).DeleteOne(ctx, pred)
 	if err != nil {
@@ -406,7 +441,13 @@ func (s *Store) DashboardAssigned(ctx context.Context, scope store.Scope, key st
 	n, err := s.mdb.Collection(colPolicies).CountDocuments(ctx, pred)
 	return n > 0, err
 }
+
+// DashboardAssign assigns an app-level policy to scope.TenantID. Only an
+// app-scope actor assigns; to a tenant actor policies are read-only.
 func (s *Store) DashboardAssign(ctx context.Context, scope store.Scope, key string, assigned bool) error {
+	if !scope.AppScope() {
+		return store.ErrReadOnly
+	}
 	if _, err := s.DashboardGet(ctx, scope, "policies", key); err != nil {
 		return err
 	}

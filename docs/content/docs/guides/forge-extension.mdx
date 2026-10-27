@@ -5,7 +5,7 @@ description: Mount Shield into a Forge application as an extension with lifecycl
 
 Shield ships a Forge extension in the `extension` package. It reads `extensions.shield` (or `shield`) from your config, takes its store from a `*grove.DB` in the container, provides `*engine.Engine`, runs migrations on start and registers the `shield` dashboard contributor.
 
-Scans through the extension's engine behave like any other: no evaluation layer runs yet, and every scan returns `allow`. See [Getting started](/docs/getting-started).
+Scans through the extension's engine behave like any other: they need a tenant on the context and a profile in the store. See [Getting started](/docs/getting-started) and [Evaluation](/docs/concepts/evaluation).
 
 ## Installation
 
@@ -66,7 +66,7 @@ Shield mounts no REST routes of its own. Its only HTTP surface is the dashboard 
 | `WithStore(s)` | `store.Store` | none | Composite store. A grove store resolved in `Register` replaces it (see below) |
 | `WithGroveDatabase(name)` | `string` | not set | Resolve a `*grove.DB` from DI; `""` means the default one |
 | `WithPlugin(p)` | `plugin.Plugin` | none | Lifecycle plugin (repeatable) |
-| `WithEngineOption(opt)` | `engine.Option` | none | Pass any engine option through |
+| `WithEngineOption(opt)` | `engine.Option` | none | Pass any engine option through, such as `engine.WithJudge(j)` for the model judge |
 | `WithConfig(cfg)` | `Config` | `DefaultConfig()` | Replace the whole config struct |
 | `WithDisableRoutes()` | none | `false` | Don't register the dashboard contributor |
 | `WithDisableMigrate()` | none | `false` | Skip migrations on `Start` |
@@ -89,28 +89,40 @@ extensions:
     disable_migrate: false
     grove_database: ""
     default_profile: ""
-    scan_concurrency: 10
     enable_short_circuit: true
+    max_scan_bytes: 1048576
+    profile_cache_ttl: 30s
+    store_redacted: false
+    model_judge: false
+    judge_timeout: 5s
+    judge_concurrency: 8
+    scan_concurrency: 10
     shutdown_timeout: 30s
     base_path: ""
 ```
 
-| YAML key | Type | Default | What it does today |
+| YAML key | Type | Default | What it does |
 |----------|------|---------|-------------|
 | `disable_routes` | `bool` | `false` | `true` stops the dashboard contributor from registering |
 | `disable_migrate` | `bool` | `false` | `true` skips `Migrate` on `Start` |
 | `grove_database` | `string` | `""` | Name of a `*grove.DB` in the container. A non-empty value turns on grove resolution |
-| `default_profile` | `string` | `""` | Copied into the engine config. Nothing reads it |
-| `scan_concurrency` | `int` | `10` | Copied into the engine config. Nothing reads it |
-| `enable_short_circuit` | `bool` | `true` | Copied into the engine config. Nothing reads it |
-| `shutdown_timeout` | `duration` | `30s` | Copied into the engine config. Nothing reads it |
+| `default_profile` | `string` | `""` | The profile a scan runs when it names none |
+| `enable_short_circuit` | `bool` | `true` | A block ends the scan after the layer that found it |
+| `max_scan_bytes` | `int` | `1048576` | The largest scan, in bytes. Larger ones fail with `shield.ErrInputTooLarge` |
+| `profile_cache_ttl` | `duration` | `30s` | How long a compiled profile is reused. Negative turns the cache off |
+| `store_redacted` | `bool` | `false` | Keep the redacted text on stored scans |
+| `model_judge` | `bool` | `false` | Let the `model` assessor call the judge you pass with `WithEngineOption(engine.WithJudge(j))` |
+| `judge_timeout` | `duration` | `5s` | The bound on one judge call |
+| `judge_concurrency` | `int` | `8` | Judge calls in flight across the engine |
+| `scan_concurrency` | `int` | `10` | Copied into the engine config. Nothing reads it yet |
+| `shutdown_timeout` | `duration` | `30s` | Copied into the engine config. Nothing reads it yet |
 | `base_path` | `string` | `""` | Read and logged. Nothing uses it |
 
-`default_profile`, `scan_concurrency`, `enable_short_circuit` and `shutdown_timeout` describe how the evaluation layers will behave once they exist. You can set them now, and the dashboard's `config.detail` query shows the values, but they change nothing.
+The dashboard's `config.detail` query shows the effective values. [Configuration](/docs/concepts/configuration) has the details of each engine setting.
 
 ### Merge behaviour
 
-When a config file is found, it's merged with your programmatic options. `DisableRoutes`, `DisableMigrate` and `EnableShortCircuit` set to `true` in code always win. For the string, duration and int fields, the file wins and code fills the gaps, then defaults fill what's left. Since the programmatic default for `EnableShortCircuit` is `true`, setting `enable_short_circuit: false` in YAML has no effect.
+When a config file is found, it's merged with your programmatic options. `DisableRoutes`, `DisableMigrate`, `EnableShortCircuit`, `StoreRedacted` and `ModelJudge` set to `true` in code always win. For the string, duration and int fields, the file wins and code fills the gaps, then defaults fill what's left. Since the programmatic default for `EnableShortCircuit` is `true`, setting `enable_short_circuit: false` in YAML has no effect.
 
 When no config file is found, the programmatic config is used with defaults filled in. `WithRequireConfig(true)` turns that case into an error:
 
@@ -127,7 +139,7 @@ ext := shieldext.New(
 1. If you called `WithGroveDatabase(name)` or set `grove_database`, it resolves that `*grove.DB` (the default one for `""`) and fails if it isn't in the container.
 2. Otherwise, if the container has a default `*grove.DB`, it uses that.
 3. Otherwise it uses the store from `WithStore`, if you passed one.
-4. Otherwise the engine runs with no store: scans aren't persisted, migrations are skipped and `Health` reports an error.
+4. Otherwise the engine runs with no store: every scan returns `shield.ErrNoStore`, migrations are skipped and `Health` reports an error.
 
 For a grove database, the store is picked from the driver name: `pg` gives `store/postgres`, `sqlite` gives `store/sqlite` and `mongo` gives `store/mongo`. Any other driver is an error. You don't import the store packages yourself.
 
@@ -154,6 +166,33 @@ The default resolver takes scope only from the signed-in user's claims, never fr
 | `shield_privacy_manage` | `true` | Required, with `shield_manage`, for PII retention commands |
 
 PII retention also needs an audit sink from `WithDashboardAudit`. Without one, those commands return `UNAVAILABLE`. If your claims look different, pass your own resolver with `WithDashboardActorResolver`. It must authenticate the principal and authorize every scope and permission it returns.
+
+### Tenant actors and the app scope
+
+The default resolver builds a tenant actor, and a tenant actor manages only its own tenant's policies:
+
+- A policy it creates is org-level, keyed by its tenant (`scope_level: org`, `scope_key` = the tenant).
+- It sees its own org-level policies plus the app-level policies assigned to it, and those are read-only. Editing or deleting one returns `PERMISSION_DENIED`.
+- It can't assign or unassign policies.
+- It reads only its own tenant's compliance reports.
+
+App-level policies belong to the operator of the app, because every tenant of the app shares them. To act as that operator, your resolver grants the app scope, which nothing in a request can set:
+
+```go
+shieldext.WithDashboardActorResolver(func(ctx context.Context, p dash.Principal) (admin.Actor, error) {
+    a, err := shieldcontract.ResolveActor(ctx, p)
+    if err != nil {
+        return admin.Actor{}, err
+    }
+    if isAppOperator(p) { // your own check
+        a.Scope.PolicyLevel = "app"
+        a.Scope.PolicyKey = a.Scope.AppID // must equal AppID
+    }
+    return a, nil
+})
+```
+
+An actor with that scope creates, edits and deletes app-level policies, assigns them to the tenant in its scope, and reads app-level compliance reports. Its writes drop every tenant's cached profiles, since any of them may have the policy assigned. Outside the dashboard, a `store.Store` call with no tenant on the context is an operator call too.
 
 ## Metrics and tracing
 
@@ -185,4 +224,4 @@ ext := shieldext.New(
 )
 ```
 
-Of those three actions, none fire yet: no scan is blocked and no instinct or PII detector runs. Today only scan started and scan completed reach the audit hook.
+All three fire: a blocked scan, an instinct that fired, and PII an awareness detector found.

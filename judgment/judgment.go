@@ -2,7 +2,7 @@
 //
 // Judgment is slower and more deliberate than instincts. A hallucination
 // detector needs to compare claims against source material. A grounding
-// scorer needs context. These require "thinking" — contextual assessment
+// scorer needs context. These require "thinking": contextual assessment
 // that goes beyond pattern matching.
 package judgment
 
@@ -55,7 +55,7 @@ type Assessor struct {
 }
 
 // Judgment represents a learned ability to assess risk in context.
-// Judgments are the fifth layer of the safety engine — the slowest
+// Judgments are the fifth layer of the safety engine, the slowest
 // but most sophisticated, capable of contextual risk assessment.
 type Judgment struct {
 	shield.Entity

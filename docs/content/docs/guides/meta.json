@@ -2,6 +2,8 @@
   "title": "Guides",
   "pages": [
     "full-example",
+    "agent-safety",
+    "nexus-guard",
     "forge-extension",
     "custom-store",
     "custom-plugin",

@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/xraph/grove/migrate"
 )
@@ -370,5 +371,188 @@ CREATE INDEX IF NOT EXISTS idx_shield_compliance_scope ON shield_compliance_repo
 				return err
 			},
 		},
+		&migrate.Migration{
+			Name:    "unique_names_per_tenant",
+			Version: "20261024000001",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				for _, t := range tenantUniqueTables {
+					if err := rebuildTable(ctx, exec, t.name, t.columns, "app_id, tenant_id, name"); err != nil {
+						return err
+					}
+				}
+				return nil
+			},
+			// Down fails if two tenants now share a name under one app.
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				names := make([]string, 0, len(tenantUniqueTables))
+				for _, t := range tenantUniqueTables {
+					names = append(names, t.name)
+				}
+				if err := ensureNoSharedNames(ctx, exec, names); err != nil {
+					return err
+				}
+				for _, t := range tenantUniqueTables {
+					if err := rebuildTable(ctx, exec, t.name, t.columns, "app_id, name"); err != nil {
+						return err
+					}
+				}
+				return nil
+			},
+		},
 	)
+}
+
+// tenantUniqueTables lists the primitive tables whose name uniqueness moves from
+// (app_id, name) to (app_id, tenant_id, name). SQLite cannot drop an inline UNIQUE
+// constraint, so each table is rebuilt with the same columns.
+var tenantUniqueTables = []struct{ name, columns string }{
+	{"shield_instincts", `
+    id              TEXT PRIMARY KEY,
+    name            TEXT NOT NULL,
+    description     TEXT NOT NULL DEFAULT '',
+    app_id          TEXT NOT NULL,
+    tenant_id       TEXT NOT NULL DEFAULT '',
+    category        TEXT NOT NULL,
+    strategies      TEXT NOT NULL DEFAULT '[]',
+    sensitivity     TEXT NOT NULL DEFAULT 'balanced',
+    action          TEXT NOT NULL,
+    enabled         INTEGER NOT NULL DEFAULT 1,
+    metadata        TEXT NOT NULL DEFAULT '{}',
+    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+`},
+	{"shield_awareness", `
+    id              TEXT PRIMARY KEY,
+    name            TEXT NOT NULL,
+    description     TEXT NOT NULL DEFAULT '',
+    app_id          TEXT NOT NULL,
+    tenant_id       TEXT NOT NULL DEFAULT '',
+    focus           TEXT NOT NULL,
+    detectors       TEXT NOT NULL DEFAULT '[]',
+    action          TEXT NOT NULL,
+    enabled         INTEGER NOT NULL DEFAULT 1,
+    metadata        TEXT NOT NULL DEFAULT '{}',
+    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+`},
+	{"shield_boundaries", `
+    id              TEXT PRIMARY KEY,
+    name            TEXT NOT NULL,
+    description     TEXT NOT NULL DEFAULT '',
+    app_id          TEXT NOT NULL,
+    tenant_id       TEXT NOT NULL DEFAULT '',
+    limits          TEXT NOT NULL DEFAULT '[]',
+    response        TEXT NOT NULL DEFAULT '',
+    enabled         INTEGER NOT NULL DEFAULT 1,
+    metadata        TEXT NOT NULL DEFAULT '{}',
+    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+`},
+	{"shield_values", `
+    id              TEXT PRIMARY KEY,
+    name            TEXT NOT NULL,
+    description     TEXT NOT NULL DEFAULT '',
+    app_id          TEXT NOT NULL,
+    tenant_id       TEXT NOT NULL DEFAULT '',
+    rules           TEXT NOT NULL DEFAULT '[]',
+    severity        TEXT NOT NULL DEFAULT 'warning',
+    action          TEXT NOT NULL,
+    enabled         INTEGER NOT NULL DEFAULT 1,
+    metadata        TEXT NOT NULL DEFAULT '{}',
+    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+`},
+	{"shield_judgments", `
+    id              TEXT PRIMARY KEY,
+    name            TEXT NOT NULL,
+    description     TEXT NOT NULL DEFAULT '',
+    app_id          TEXT NOT NULL,
+    tenant_id       TEXT NOT NULL DEFAULT '',
+    domain          TEXT NOT NULL,
+    assessors       TEXT NOT NULL DEFAULT '[]',
+    threshold       REAL NOT NULL DEFAULT 0,
+    action          TEXT NOT NULL,
+    enabled         INTEGER NOT NULL DEFAULT 1,
+    metadata        TEXT NOT NULL DEFAULT '{}',
+    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+`},
+	{"shield_reflexes", `
+    id              TEXT PRIMARY KEY,
+    name            TEXT NOT NULL,
+    description     TEXT NOT NULL DEFAULT '',
+    app_id          TEXT NOT NULL,
+    tenant_id       TEXT NOT NULL DEFAULT '',
+    triggers        TEXT NOT NULL DEFAULT '[]',
+    actions         TEXT NOT NULL DEFAULT '[]',
+    priority        INTEGER NOT NULL DEFAULT 0,
+    enabled         INTEGER NOT NULL DEFAULT 1,
+    metadata        TEXT NOT NULL DEFAULT '{}',
+    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+`},
+	{"shield_profiles", `
+    id              TEXT PRIMARY KEY,
+    name            TEXT NOT NULL,
+    description     TEXT NOT NULL DEFAULT '',
+    app_id          TEXT NOT NULL,
+    tenant_id       TEXT NOT NULL DEFAULT '',
+    instincts       TEXT NOT NULL DEFAULT '[]',
+    judgments       TEXT NOT NULL DEFAULT '[]',
+    awareness       TEXT NOT NULL DEFAULT '[]',
+    "values"        TEXT NOT NULL DEFAULT '[]',
+    reflexes        TEXT NOT NULL DEFAULT '[]',
+    boundaries      TEXT NOT NULL DEFAULT '[]',
+    enabled         INTEGER NOT NULL DEFAULT 1,
+    metadata        TEXT NOT NULL DEFAULT '{}',
+    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+`},
+}
+
+// rebuildTable rebuilds table with columns and UNIQUE(unique) in one
+// transaction, so a crash or a failed statement between dropping the table
+// and renaming its copy leaves the table as it was. The migration is
+// registered without grove's Transactional flag, so no outer transaction
+// is open here.
+//
+// A failed script stops at the failing statement and leaves its
+// transaction open on the connection that ran it. Nothing else runs while
+// a migration holds the lock, and database/sql hands out the most recently
+// used idle connection first, so the ROLLBACK reaches that connection.
+func rebuildTable(ctx context.Context, exec migrate.Executor, table, columns, unique string) error {
+	if _, err := exec.Exec(ctx, "BEGIN IMMEDIATE;\n"+rebuildWithTenantUnique(table, columns, unique)+"COMMIT;\n"); err != nil {
+		_, _ = exec.Exec(context.WithoutCancel(ctx), "ROLLBACK") //nolint:errcheck // the script may have failed before BEGIN, and its own error is the one to report
+		return err
+	}
+	return nil
+}
+
+func rebuildWithTenantUnique(table, columns, unique string) string {
+	return "DROP TABLE IF EXISTS " + table + "_new;\n" +
+		"CREATE TABLE " + table + "_new (" + columns + ",\n    UNIQUE(" + unique + ")\n);\n" +
+		"INSERT INTO " + table + "_new SELECT * FROM " + table + ";\n" +
+		"DROP TABLE " + table + ";\n" +
+		"ALTER TABLE " + table + "_new RENAME TO " + table + ";\n" +
+		"CREATE INDEX IF NOT EXISTS idx_" + table + "_app ON " + table + " (app_id);\n" +
+		"CREATE INDEX IF NOT EXISTS idx_" + table + "_tenant ON " + table + " (app_id, tenant_id);\n"
+}
+
+// ensureNoSharedNames fails, before anything is changed, when two tenants share a
+// name under one app, because the (app_id, name) key cannot be restored then.
+func ensureNoSharedNames(ctx context.Context, exec migrate.Executor, tables []string) error {
+	for _, table := range tables {
+		rows, err := exec.Query(ctx, "SELECT 1 FROM "+table+" GROUP BY app_id, name HAVING COUNT(*) > 1 LIMIT 1")
+		if err != nil {
+			return err
+		}
+		found := rows.Next()
+		if closeErr := rows.Close(); closeErr != nil {
+			return closeErr
+		}
+		if found {
+			return fmt.Errorf("cannot restore unique (app_id, name) on %s: two tenants share a name", table)
+		}
+	}
+	return nil
 }

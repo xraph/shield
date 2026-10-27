@@ -7,9 +7,13 @@ import (
 	"github.com/xraph/shield"
 	"github.com/xraph/shield/id"
 	"github.com/xraph/shield/judgment"
+	"github.com/xraph/shield/store"
 )
 
 func (s *Store) CreateJudgment(ctx context.Context, j *judgment.Judgment) error {
+	if err := claimTenant(ctx, &j.TenantID); err != nil {
+		return err
+	}
 	n := now()
 	j.CreatedAt = n
 	j.UpdatedAt = n
@@ -22,8 +26,12 @@ func (s *Store) CreateJudgment(ctx context.Context, j *judgment.Judgment) error 
 }
 
 func (s *Store) GetJudgment(ctx context.Context, jID id.JudgmentID) (*judgment.Judgment, error) {
+	tenant, tenantErr := store.Tenant(ctx, "")
+	if tenantErr != nil {
+		return nil, tenantErr
+	}
 	m := new(judgmentModel)
-	err := s.pgdb.NewSelect(m).Where("id = ?", jID.String()).Scan(ctx)
+	err := s.pgdb.NewSelect(m).Where("id = ?", jID.String()).Where("tenant_id = ?", tenant).Scan(ctx)
 	if err != nil {
 		return nil, notFoundOrWrap(err, shield.ErrJudgmentNotFound, "get judgment")
 	}
@@ -31,9 +39,14 @@ func (s *Store) GetJudgment(ctx context.Context, jID id.JudgmentID) (*judgment.J
 }
 
 func (s *Store) GetJudgmentByName(ctx context.Context, appID, name string) (*judgment.Judgment, error) {
+	tenant, tenantErr := store.Tenant(ctx, "")
+	if tenantErr != nil {
+		return nil, tenantErr
+	}
 	m := new(judgmentModel)
 	err := s.pgdb.NewSelect(m).
 		Where("app_id = ?", appID).
+		Where("tenant_id = ?", tenant).
 		Where("name = ?", name).
 		Scan(ctx)
 	if err != nil {
@@ -43,17 +56,24 @@ func (s *Store) GetJudgmentByName(ctx context.Context, appID, name string) (*jud
 }
 
 func (s *Store) UpdateJudgment(ctx context.Context, j *judgment.Judgment) error {
+	if err := claimTenant(ctx, &j.TenantID); err != nil {
+		return err
+	}
 	j.UpdatedAt = now()
 	m := judgmentToModel(j)
-	_, err := s.pgdb.NewUpdate(m).WherePK().Exec(ctx)
+	res, err := s.pgdb.NewUpdate(m).WherePK().Where("tenant_id = ?", j.TenantID).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("shield/postgres: update judgment: %w", err)
 	}
-	return nil
+	return updatedOrNotFound(res, shield.ErrJudgmentNotFound, "update judgment")
 }
 
 func (s *Store) DeleteJudgment(ctx context.Context, jID id.JudgmentID) error {
-	_, err := s.pgdb.NewDelete((*judgmentModel)(nil)).Where("id = ?", jID.String()).Exec(ctx)
+	tenant, tenantErr := store.Tenant(ctx, "")
+	if tenantErr != nil {
+		return tenantErr
+	}
+	_, err := s.pgdb.NewDelete((*judgmentModel)(nil)).Where("id = ?", jID.String()).Where("tenant_id = ?", tenant).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("shield/postgres: delete judgment: %w", err)
 	}
@@ -61,14 +81,19 @@ func (s *Store) DeleteJudgment(ctx context.Context, jID id.JudgmentID) error {
 }
 
 func (s *Store) ListJudgments(ctx context.Context, filter *judgment.ListFilter) ([]*judgment.Judgment, error) {
+	var want string
+	if filter != nil {
+		want = filter.TenantID
+	}
+	tenant, tenantErr := store.Tenant(ctx, want)
+	if tenantErr != nil {
+		return nil, tenantErr
+	}
 	var models []judgmentModel
-	q := s.pgdb.NewSelect(&models).OrderExpr("created_at ASC")
+	q := s.pgdb.NewSelect(&models).Where("tenant_id = ?", tenant).OrderExpr("created_at ASC")
 	if filter != nil {
 		if filter.AppID != "" {
 			q = q.Where("app_id = ?", filter.AppID)
-		}
-		if filter.TenantID != "" {
-			q = q.Where("tenant_id = ?", filter.TenantID)
 		}
 		if filter.Domain != "" {
 			q = q.Where("domain = ?", string(filter.Domain))

@@ -16,7 +16,42 @@ type Config struct {
 	// EnableShortCircuit allows layers to stop execution when a block decision
 	// is reached, skipping deeper layers. Enabled by default.
 	EnableShortCircuit bool `json:"enable_short_circuit,omitempty"`
+
+	// MaxScanBytes is the largest text a scan accepts. A longer text fails
+	// with ErrInputTooLarge before any layer runs. Zero means 1 MiB.
+	MaxScanBytes int `json:"max_scan_bytes,omitempty"`
+
+	// ProfileCacheTTL is how long a compiled safety profile is reused before
+	// it is loaded again. Zero means 30 seconds; a negative value disables
+	// the cache, so every scan loads its profile.
+	ProfileCacheTTL time.Duration `json:"profile_cache_ttl,omitempty"`
+
+	// StoreRedacted keeps Result.Redacted on persisted scans. By default the
+	// stored row drops it.
+	StoreRedacted bool `json:"store_redacted,omitempty"`
+
+	// ModelJudge lets a judgment's model assessor call the judge registered
+	// with engine.WithJudge. It is off by default, and a decision never
+	// needs it: the judge can only raise a judgment's risk.
+	ModelJudge bool `json:"model_judge,omitempty"`
+
+	// JudgeTimeout bounds one judge call. Zero means 5 seconds.
+	JudgeTimeout time.Duration `json:"judge_timeout,omitempty"`
+
+	// JudgeConcurrency caps the judge calls in flight across the engine.
+	// A scan that cannot get a slot before its context or JudgeTimeout ends
+	// goes without the judge. A judge that ignores its context keeps its
+	// slot until it returns. Zero means 8.
+	JudgeConcurrency int `json:"judge_concurrency,omitempty"`
 }
+
+// Defaults for the scan limits.
+const (
+	DefaultMaxScanBytes     = 1 << 20
+	DefaultProfileCacheTTL  = 30 * time.Second
+	DefaultJudgeTimeout     = 5 * time.Second
+	DefaultJudgeConcurrency = 8
+)
 
 // DefaultConfig returns a Config with sensible defaults.
 func DefaultConfig() Config {
@@ -24,5 +59,9 @@ func DefaultConfig() Config {
 		ShutdownTimeout:    30 * time.Second,
 		ScanConcurrency:    10,
 		EnableShortCircuit: true,
+		MaxScanBytes:       DefaultMaxScanBytes,
+		ProfileCacheTTL:    DefaultProfileCacheTTL,
+		JudgeTimeout:       DefaultJudgeTimeout,
+		JudgeConcurrency:   DefaultJudgeConcurrency,
 	}
 }

@@ -1,8 +1,80 @@
-# Shield dashboard migration status
+# Migrating Shield
 
-You can manage stored configuration through the new contract path once its checks pass. Safety evaluation remains unavailable. No scan runner or report generator is implied by this migration.
+## Upgrading to v1.9.0
 
-## Verification
+v1.9.0 is the release where scans start doing something. Before it, every scan came back `allow` with no findings. Now each scan runs the tenant's safety profile and can block, redact, flag, or (for tool calls) ask for approval. Most of the work of upgrading is making sure every call carries a tenant and every scan has a profile to run.
+
+```bash
+go get github.com/xraph/shield@v1.9.0
+```
+
+### Scans now evaluate
+
+`ScanInput` and `ScanOutput` keep their signatures, and they now return real decisions: `allow`, `flag`, `redact` or `block`. `ScanToolCall` is new and returns `allow`, `block` or `require_approval`. Check `Result.Decision` (or `Blocked`) on every scan, and when it's `redact`, use `Result.Redacted` in place of your text. For input you mark `Untrusted`, `Redacted` is always set to the quoted text, even on `allow`, so hand that to the model.
+
+A scan now needs a profile. Pass `scan.Input.Profile`, or set `default_profile` (`Config.DefaultProfile`). With neither, or with a profile that doesn't exist or is disabled, the scan returns `shield.ErrNoProfile`. A profile that references a missing primitive, or holds a regex or condition that doesn't parse, returns `shield.ErrProfileInvalid`. Treat any scan error as a block: it means there's no verdict.
+
+`engine.Capabilities()` now reports `Evaluation: true` and `ToolCalls: true`, and `unavailable_layers` is an empty list. If you gated anything on `Evaluation` being false, take that out.
+
+Six config keys are new, all with defaults you can leave alone: `max_scan_bytes` (1 MiB), `profile_cache_ttl` (30s), `store_redacted` (false), `model_judge` (false), `judge_timeout` (5s) and `judge_concurrency` (8). A scan larger than `max_scan_bytes` fails with `shield.ErrInputTooLarge`, so raise it if you scan long logs.
+
+If you turn on the model judge, a judgment finding it pushed over the threshold carries the judge's score as `judge_score` in its details. You won't find the judge's reason there or in the stored scan. A model wrote it, and findings only hold names, counts and offsets.
+
+The scan metrics gain label values: `direction` can be `tool_call`, and `decision` can be `require_approval`. The plugin hooks that never fired before (`OnScanBlocked`, `OnScanFailed`, the six layer hooks, the PII, policy and profile hooks) all fire now.
+
+### Every call needs a tenant
+
+Every scan needs `shield.WithTenant` on the context, or it returns `shield.ErrTenantRequired`. So does every `store.Store` read and write, unless a list filter carries `TenantID` itself. A list with an empty filter used to return every tenant's rows. It now returns `ErrTenantRequired`, or only the context tenant's rows when the context has one.
+
+If you run Shield for one tenant, pick a constant and use it everywhere:
+
+```go
+ctx = shield.WithTenant(ctx, "default")
+```
+
+Under a tenant, another tenant's rows are invisible: a get by ID returns the not-found error, an update returns not-found, a delete does nothing, and a filter naming a different tenant returns `shield.ErrTenantMismatch`.
+
+### Rows with an empty tenant are no longer read
+
+The engine reads only the scan's own tenant's rows. A profile or primitive stored with an empty `tenant_id`, which the old defaults produced, is never part of a scan. Give those rows a tenant before you upgrade traffic. On SQL backends that's one statement per table, for example:
+
+```sql
+UPDATE shield_profiles SET tenant_id = 'default' WHERE tenant_id = '';
+```
+
+Repeat it for `shield_instincts`, `shield_awareness`, `shield_boundaries`, `shield_values`, `shield_judgments` and `shield_reflexes`, and for `shield_scans` and `shield_pii_tokens` if you want old scans and tokens to stay readable. On MongoDB, do the same with `updateMany`. Run it before you create rows under that tenant, or a name already taken there collides.
+
+### Names are unique per app and tenant
+
+Migration `20261024000001` (`unique_names_per_tenant`) changes the unique key of the seven primitive and profile tables from `(app_id, name)` to `(app_id, tenant_id, name)`, so two tenants can use the same name. `Migrate` runs it for you, or the Forge extension does on `Start`. If you run Shield's grove migrations from your own migration pass, it's in the same `shield` group. On MongoDB, `Migrate` swaps the index itself.
+
+The down-migration puts `(app_id, name)` back, and it fails, before changing anything, as soon as two tenants share a name in one app. Rename one of them first if you need to roll back.
+
+### Policies and reports belong to a tenant
+
+An app-level policy now applies to a tenant only when it's assigned to it. Org-level policies with `ScopeKey` equal to the tenant always apply. Under a tenant context, the store writes only that tenant's org-level policies and reports: an app-level write returns `ErrTenantMismatch`. App-level policies are written by an operator, with no tenant on the context or, in the dashboard, by an actor your resolver grants the app scope (`PolicyLevel "app"`, `PolicyKey` equal to the app ID). Dashboard users keep working as tenant actors, who can't assign policies any more.
+
+### An engine without a store now errors
+
+Scans read their profile from the store, so an engine built without `WithStore` returns `shield.ErrNoStore` from every scan. Before, it allowed everything and kept nothing.
+
+### `vault` redacts without storing
+
+An awareness detector with the `vault` action redacts the same way `redact` does and stores no PII token. Shield doesn't encrypt PII. If you relied on tokens appearing during a scan, nothing ever wrote them, and nothing does now.
+
+### New packages
+
+`presets` holds `InfraAgent`, a ready-made bundle you seed per tenant, and `redteam` holds the injection fixtures Shield is tested against. `github.com/xraph/shield/integrations/nexusguard` is a separate module that puts Shield behind nexus guards; it's tagged `integrations/nexusguard/v1.9.0` and needs nexus v1.9.0 or later.
+
+This release builds on forge v1.13.1 and grove v1.10.0 (with its `mongodriver`, `pgdriver` and `sqlitedriver`). Go's module resolution moves you up to them when you upgrade Shield.
+
+## Dashboard migration status (v1.8)
+
+The rest of this file is the record of the move from the templ dashboard to the React plugin. It was written before evaluation shipped, so its notes that evaluation is unavailable describe v1.8.
+
+You can manage stored configuration through the new contract path once its checks pass. No scan runner or report generator is implied by this migration.
+
+### Verification
 
 - Lifecycle and engine characterization: in progress.
 - Scoped SQLite contracts and React plugin: pending.
@@ -10,7 +82,7 @@ You can manage stored configuration through the new contract path once its check
 - Real demo and browser review: pending.
 - Legacy retirement: gated on parity and review.
 
-## Legacy surface inventory
+### Legacy surface inventory
 
 Source baseline: `9dbcac4`. The legacy contributor was already disconnected from the extension. The following inventory keeps the source fields and labels available during replacement.
 
@@ -70,7 +142,7 @@ Source baseline: `9dbcac4`. The legacy contributor was already disconnected from
 | `dashboard/widgets/recent_scans.templ` |  | Preserve domain fields; replace chrome with shared React kit |
 | `dashboard/widgets/scan_stats.templ` | lg | Preserve domain fields; replace chrome with shared React kit |
 
-## Route and contribution map
+### Route and contribution map
 
 - `/`
 - `/instincts`
@@ -117,11 +189,11 @@ Source baseline: `9dbcac4`. The legacy contributor was already disconnected from
 
 The legacy Plugin, PageContributor, ScanDetailContributor and ProfileDetailContributor interfaces were audited across sibling Go repositories before retirement. Settings Save and scan execution are unavailable. Duplicate API Docs links move to host chrome. Stored scan decisions describe history, not evaluated protection.
 
-## Git and dependencies
+### Git and dependencies
 
 Work stays on main. The existing Forge/Grove upgrade in go.mod is required for current contracts; checksum reconciliation is included deliberately. No other local Shield branch or worktree existed at the audit.
 
-## React administration and retirement (2026-10-08)
+### React administration and retirement (2026-10-08)
 
 The React plugin is `@forge-go/dashboard-plugin-shield` in forge-dashboard.
 It covers 39 routes: eight configuration collections with list/create/detail/edit,

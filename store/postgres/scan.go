@@ -4,12 +4,18 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/xraph/grove"
+
 	"github.com/xraph/shield"
 	"github.com/xraph/shield/id"
 	"github.com/xraph/shield/scan"
+	"github.com/xraph/shield/store"
 )
 
 func (s *Store) CreateScan(ctx context.Context, result *scan.Result) error {
+	if err := claimTenant(ctx, &result.TenantID); err != nil {
+		return err
+	}
 	n := now()
 	result.CreatedAt = n
 	result.UpdatedAt = n
@@ -22,8 +28,12 @@ func (s *Store) CreateScan(ctx context.Context, result *scan.Result) error {
 }
 
 func (s *Store) GetScan(ctx context.Context, scanID id.ScanID) (*scan.Result, error) {
+	tenant, tenantErr := store.Tenant(ctx, "")
+	if tenantErr != nil {
+		return nil, tenantErr
+	}
 	m := new(scanModel)
-	err := s.pgdb.NewSelect(m).Where("id = ?", scanID.String()).Scan(ctx)
+	err := s.pgdb.NewSelect(m).Where("id = ?", scanID.String()).Where("tenant_id = ?", tenant).Scan(ctx)
 	if err != nil {
 		return nil, notFoundOrWrap(err, shield.ErrScanNotFound, "get scan")
 	}
@@ -31,14 +41,19 @@ func (s *Store) GetScan(ctx context.Context, scanID id.ScanID) (*scan.Result, er
 }
 
 func (s *Store) ListScans(ctx context.Context, filter *scan.ListFilter) ([]*scan.Result, error) {
+	var want string
+	if filter != nil {
+		want = filter.TenantID
+	}
+	tenant, tenantErr := store.Tenant(ctx, want)
+	if tenantErr != nil {
+		return nil, tenantErr
+	}
 	var models []scanModel
-	q := s.pgdb.NewSelect(&models).OrderExpr("created_at DESC")
+	q := s.pgdb.NewSelect(&models).Where("tenant_id = ?", tenant).OrderExpr("created_at DESC")
 	if filter != nil {
 		if filter.AppID != "" {
 			q = q.Where("app_id = ?", filter.AppID)
-		}
-		if filter.TenantID != "" {
-			q = q.Where("tenant_id = ?", filter.TenantID)
 		}
 		if filter.Direction != "" {
 			q = q.Where("direction = ?", string(filter.Direction))
@@ -64,25 +79,32 @@ func (s *Store) ListScans(ctx context.Context, filter *scan.ListFilter) ([]*scan
 }
 
 func (s *Store) ScanStats(ctx context.Context, filter *scan.StatsFilter) (*scan.Stats, error) {
-	// Use list-style query approach: fetch direction+decision counts via GROUP BY.
-	type statsRow struct {
-		Direction string `grove:"direction"`
-		Decision  string `grove:"decision"`
-		Count     int64  `grove:"count"`
+	var want string
+	if filter != nil {
+		want = filter.TenantID
 	}
-
-	q := s.pgdb.NewSelect((*scanModel)(nil)).
+	tenant, tenantErr := store.Tenant(ctx, want)
+	if tenantErr != nil {
+		return nil, tenantErr
+	}
+	// Fetch direction+decision counts via GROUP BY. The row type names its own
+	// table: scanning these rows through scanModel's fields panics in grove.
+	var rows []struct {
+		grove.BaseModel `grove:"table:shield_scans"`
+		Direction       string `grove:"direction"`
+		Decision        string `grove:"decision"`
+		Count           int64  `grove:"count"`
+	}
+	q := s.pgdb.NewSelect(&rows).
 		ColumnExpr("direction").
 		ColumnExpr("decision").
 		ColumnExpr("COUNT(*) AS count").
+		Where("tenant_id = ?", tenant).
 		GroupExpr("direction, decision")
 
 	if filter != nil {
 		if filter.AppID != "" {
 			q = q.Where("app_id = ?", filter.AppID)
-		}
-		if filter.TenantID != "" {
-			q = q.Where("tenant_id = ?", filter.TenantID)
 		}
 		if filter.From != "" {
 			q = q.Where("created_at >= ?", filter.From)
@@ -92,8 +114,7 @@ func (s *Store) ScanStats(ctx context.Context, filter *scan.StatsFilter) (*scan.
 		}
 	}
 
-	var rows []statsRow
-	if err := q.Scan(ctx, &rows); err != nil {
+	if err := q.Scan(ctx); err != nil {
 		if isNoRows(err) {
 			return emptyScanStats(), nil
 		}

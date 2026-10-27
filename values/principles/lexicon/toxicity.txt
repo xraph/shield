@@ -1,0 +1,51 @@
+# Abuse and threats aimed at a person, for the toxicity principle.
+#
+# Each line is "<category> <pattern>". Patterns are matched ASCII
+# case-insensitively on folded text (write them in lower case), start with \b
+# and a literal, and use bounded repetition only.
+#
+# Only direct abuse and threats: no slurs, and nothing an ordinary workplace
+# or infrastructure idiom says. A phrase that also has a harmless reading
+# ("I'll shoot you an email", "you'll pay for this bucket's egress", "watch
+# your back-pressure", "the workers go die", "you are a failure domain away",
+# "useless to the scheduler", "go to hell and back") needs a clause end after
+# it or a word only the threat uses.
+
+threat \bi(?:['’]ll|\s{1,4}will|['’]m\s{1,4}going\s{1,4}to|\s{1,4}am\s{1,4}going\s{1,4}to|['’]m\s{1,4}gonna|\s{1,4}am\s{1,4}gonna|\s{1,4}want\s{1,4}to)\s{1,4}(?:kill|murder|hurt|stab|strangle)\s{1,4}you\b
+threat \bi(?:['’]ll|\s{1,4}will|['’]m\s{1,4}going\s{1,4}to|\s{1,4}am\s{1,4}going\s{1,4}to|['’]m\s{1,4}gonna)\s{1,4}shoot\s{1,4}you\s{0,4}(?:dead\b|in\s{1,4}the\s{1,4}(?:head|face)\b|[.!]|$)
+threat \bi(?:['’]ll|\s{1,4}will|['’]m\s{1,4}going\s{1,4}to|['’]m\s{1,4}gonna)\s{1,4}beat\s{1,4}you\s{1,4}up\b
+threat \bi\s{1,4}know\s{1,4}where\s{1,4}you\s{1,4}live\b
+threat \bi(?:['’]ll|\s{1,4}will)\s{1,4}make\s{1,4}you\s{1,4}(?:pay|suffer|regret\s{1,4}it)\s{0,4}(?:[.!]|$)
+threat \bi\s{1,4}hope\s{1,4}you\s{1,4}(?:die|suffer|get\s{1,4}hurt)\b
+threat \byou(?:['’]re|\s{1,4}are)\s{1,4}(?:going\s{1,4}to|gonna)\s{1,4}(?:die|get\s{1,4}hurt)\s{0,4}(?:[.!]|$)
+threat \byou(?:['’]ll|\s{1,4}will)\s{1,4}(?:pay\s{1,4}for\s{1,4}this|regret\s{1,4}this)\s{0,4}(?:[.!]|$)
+threat \bwatch\s{1,4}your\s{1,4}back\s{0,4}(?:[.!,]|$)
+threat \bsleep\s{1,4}with\s{1,4}one\s{1,4}eye\s{1,4}open\b
+threat \bsomeone\s{1,4}should\s{1,4}(?:kill|shoot|hurt)\s{1,4}you\b
+threat \bsomebody\s{1,4}should\s{1,4}(?:kill|shoot|hurt)\s{1,4}you\b
+threat \bdie\s{1,4}in\s{1,4}a\s{1,4}fire\b
+harassment \bkill\s{1,4}yourself\s{0,4}(?:[.!]|$)
+harassment \bkys\b
+harassment \bjust\s{1,4}go\s{1,4}die\b
+harassment \bplease\s{1,4}go\s{1,4}die\b
+harassment \bgo\s{1,4}hang\s{1,4}yourself\b
+harassment \bdrink\s{1,4}bleach\b
+harassment \bend\s{1,4}your\s{1,4}(?:own\s{1,4})?life\b
+harassment \byou\s{1,4}should\s{1,4}(?:just\s{1,4})?(?:go\s{1,4})?die\b
+harassment \byou\s{1,4}deserve\s{1,4}to\s{1,4}die\b
+harassment \byou\s{1,4}(?:don['’]t|do\s{1,4}not)\s{1,4}deserve\s{1,4}to\s{1,4}live\b
+harassment \bnobody\s{1,4}(?:loves|likes|wants|cares\s{1,4}about)\s{1,4}you\s{0,4}(?:[.!,]|$)
+harassment \bno\s{1,4}one\s{1,4}(?:loves|likes|wants|cares\s{1,4}about)\s{1,4}you\s{0,4}(?:[.!,]|$)
+harassment \bthe\s{1,4}world\s{1,4}(?:would\s{1,4}be|is)\s{1,4}better\s{1,4}without\s{1,4}you\b
+harassment \bdo\s{1,4}(?:us|everyone)\s{1,4}a\s{1,4}favou?r\s{1,4}and\s{1,4}(?:die|disappear)\b
+insult \byou(?:['’]re|\s{1,4}are|\s{1,4}r)\s{1,4}(?:a\s{1,4}|an\s{1,4}|such\s{1,4}an?\s{1,4})?(?:complete\s{1,4}|total\s{1,4}|absolute\s{1,4}|fucking\s{1,4})?(?:idiot|moron|imbecile|cretin|halfwit|nitwit|dimwit|dumbass|dipshit|scumbag|asshole|bastard)\b
+insult \byou(?:['’]re|\s{1,4}are|\s{1,4}r)\s{1,4}(?:a\s{1,4}|an\s{1,4}|such\s{1,4}an?\s{1,4}|so\s{1,4})?(?:complete\s{1,4}|total\s{1,4}|absolute\s{1,4}|fucking\s{1,4})?(?:loser|jerk|clown|disgrace|failure|stupid|worthless|pathetic|useless)\s{0,4}(?:[.!?,]|$)
+insult \byou\s{1,4}(?:stupid|worthless|pathetic|useless|fucking)\s{1,4}(?:idiot|moron|loser|piece\s{1,4}of\s{1,4}(?:shit|garbage|trash)|bitch|bastard|asshole)\b
+insult \byou(?:['’]re|\s{1,4}are)\s{1,4}(?:a\s{1,4})?(?:piece\s{1,4}of\s{1,4}(?:shit|garbage|trash)|waste\s{1,4}of\s{1,4}(?:space|oxygen|air))\b
+insult \bshut\s{1,4}up,?\s{1,4}you\s{1,4}(?:idiot|moron|loser|bitch|bastard|asshole)\b
+insult \bgo\s{1,4}to\s{1,4}hell\s{0,4}(?:[.!,]|$)
+insult \bscrew\s{1,4}you\s{0,4}(?:[.!,]|$)
+insult \bfuck\s{1,4}you\b
+insult \bfuck\s{1,4}off\b
+insult \bpiss\s{1,4}off\b
+insult \bget\s{1,4}lost,?\s{1,4}you\s{1,4}(?:idiot|moron|loser)\b

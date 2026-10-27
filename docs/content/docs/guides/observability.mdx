@@ -47,7 +47,10 @@ Every span comes from the `github.com/xraph/shield` tracer and has kind Internal
 
 | Span | Where | Attributes |
 | --- | --- | --- |
-| `scan content` | Every `ScanInput` and `ScanOutput` call | `shield.scan.id`, `shield.scan.direction` (`input`, `output`), `shield.scan.decision` (`allow`, `block`, `flag`, `redact`), `shield.scan.blocked`, `shield.scan.findings` (count), `shield.scan.persisted` (only when a store is set) |
+| `scan content` | Every `ScanInput`, `ScanOutput` and `ScanToolCall` call | `shield.scan.id`, `shield.scan.direction` (`input`, `output`, `tool_call`), `shield.scan.decision` (`allow`, `block`, `flag`, `redact`, `require_approval`), `shield.scan.blocked`, `shield.scan.findings` (count), `shield.scan.persisted` |
+| `resolve profile` | Child of the scan, once per scan | `shield.profile.cached` (whether the compiled profile came from the cache) |
+| `evaluate layer` | Child of the scan, once per layer that ran | `shield.scan.layer` (`instinct`, `awareness`, `boundary`, `values`, `judgment`, `reflex`, `policy`), `shield.scan.findings` (the findings this layer added) |
+| `assess with model judge` | Child of the judgment layer, at most once per scan, only with the model judge on | `shield.judge.outcome` (`answered`, `error`, `timeout`, `cancelled`, `invalid_verdict`, `busy`) |
 | `run plugin hooks` | Child of the scan, once per hook that at least one plugin implements | `shield.plugin.hook` (the hook in snake case, such as `scan_started`), `shield.plugin.count`, `shield.plugin.failures` (only when a hook failed) |
 | `purge pii tokens` | `pii.purge` and the other retention commands, after the permission and preview checks pass | `shield.retention.tokens_selected`, `shield.retention.tokens_deleted` |
 
@@ -55,7 +58,10 @@ A span that failed has an error status with a short class and one `exception` ev
 
 | Span | Status | When |
 | --- | --- | --- |
+| `scan content` | `scan_failed` | The scan returned an error: no tenant, too large, no store, no profile, an invalid profile or input |
 | `scan content` | `persist_failed` | The store write failed. The scan still returns its verdict, but the dashboard won't have it |
+| `resolve profile` | `resolve_failed` | The profile couldn't be loaded or compiled |
+| `assess with model judge` | `judge_unavailable` | The judge gave no usable verdict. The scan carries on with the deterministic result |
 | `run plugin hooks` | `plugin_hook_failed` | At least one plugin returned an error. The scan carries on |
 | `purge pii tokens` | `audit_failed` | The request audit failed, so nothing was deleted |
 | `purge pii tokens` | `delete_failed` | The token delete failed |
@@ -63,7 +69,7 @@ A span that failed has an error status with a short class and one `exception` ev
 
 The store queries under these spans come from grove, which traces every call as a `db.client` span. The dashboard intents themselves (`dispatch:shield/pii.purge@1` and so on) are traced and counted by Forge's dispatcher, so Shield adds nothing there.
 
-The six layers don't run yet. When one lands, it gets its own child span of `scan content` with a `shield.scan.layer` attribute (`instincts`, `awareness`, `boundaries`, `values`, `judgments`, `reflexes`).
+With `EnableShortCircuit` on, a block ends the scan after its layer, so the later layers have no `evaluate layer` span on that trace. The judge's span records the outcome only, never the text it was asked about or the reason it gave.
 
 ## Metrics
 
@@ -71,11 +77,11 @@ Shield records three. The names below are what a Forge app scrapes; the engine r
 
 | Metric | Type | Labels |
 | --- | --- | --- |
-| `forge_shield_scans_completed_total` | counter | `direction` (`input`, `output`), `decision` (`allow`, `block`, `flag`, `redact`) |
+| `forge_shield_scans_completed_total` | counter | `direction` (`input`, `output`, `tool_call`), `decision` (`allow`, `block`, `flag`, `redact`, `require_approval`) |
 | `forge_shield_scan_duration_seconds` | histogram | `direction`, `decision` |
 | `forge_shield_plugin_hooks_failed_total` | counter | `hook` |
 
-The duration is the wall time of one `ScanInput` or `ScanOutput` call, plugin hooks and the store write included. Its buckets run from 1ms to 5s (`engine.ScanDurationBuckets`), which covers the layer budgets from a 5ms boundary check to a 500ms judgment.
+A scan that returns an error isn't counted on either scan metric; look for `scan_failed` spans instead. The duration is the wall time of one scan call, profile resolution, the layers, the judge, plugin hooks and the store write included. Its buckets run from 1ms to 5s (`engine.ScanDurationBuckets`), which covers the layer budgets from a 5ms boundary check to a 500ms judgment.
 
 `hook` is one of `scan_started`, `scan_completed`, `scan_blocked`, `scan_failed`, `instinct_triggered`, `awareness_detected`, `judgment_assessed`, `value_violated`, `reflex_fired`, `boundary_enforced`, `pii_detected`, `pii_redacted`, `policy_evaluated`, `safety_profile_resolved` or `shutdown`.
 
@@ -85,6 +91,9 @@ A few queries to start from:
 # Share of scans that blocked, over five minutes
 sum(rate(forge_shield_scans_completed_total{decision="block"}[5m]))
   / sum(rate(forge_shield_scans_completed_total[5m]))
+
+# Tool calls Shield sent to a person
+sum(rate(forge_shield_scans_completed_total{direction="tool_call",decision="require_approval"}[5m]))
 
 # p95 scan latency by direction
 histogram_quantile(0.95,
@@ -108,6 +117,6 @@ Those series are gone. If you scraped them, switch to the table above:
 | --- | --- |
 | `forge_shield_scan_started`, `forge_shield_scan_completed` | `forge_shield_scans_completed_total` (scans are counted once, when they finish) |
 | `forge_shield_scan_blocked` | `forge_shield_scans_completed_total{decision="block"}` |
-| `forge_shield_scan_failed` and the ten per-layer counters | Nothing yet. Those events never fired, and they'll get metrics when the layers land |
+| `forge_shield_scan_failed` and the ten per-layer counters | No metric. Failed scans show as `scan_failed` spans, and the per-layer events reach plugins through their hooks |
 
 The `observability` package still compiles so your build doesn't break, but `MetricsExtension` is deprecated, implements no hooks and has no counter fields. Take it out of your plugin list.

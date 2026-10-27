@@ -49,11 +49,11 @@ func instinctToModel(inst *instinct.Instinct) *instinctModel {
 		AppID:       inst.AppID,
 		TenantID:    inst.TenantID,
 		Category:    string(inst.Category),
-		Strategies:  inst.Strategies,
+		Strategies:  orEmpty(inst.Strategies),
 		Sensitivity: string(inst.Sensitivity),
 		Action:      inst.Action,
 		Enabled:     inst.Enabled,
-		Metadata:    inst.Metadata,
+		Metadata:    orEmptyMap(inst.Metadata),
 		CreatedAt:   inst.CreatedAt,
 		UpdatedAt:   inst.UpdatedAt,
 	}
@@ -105,10 +105,10 @@ func awarenessToModel(a *awareness.Awareness) *awarenessModel {
 		AppID:       a.AppID,
 		TenantID:    a.TenantID,
 		Focus:       string(a.Focus),
-		Detectors:   a.Detectors,
+		Detectors:   orEmpty(a.Detectors),
 		Action:      a.Action,
 		Enabled:     a.Enabled,
-		Metadata:    a.Metadata,
+		Metadata:    orEmptyMap(a.Metadata),
 		CreatedAt:   a.CreatedAt,
 		UpdatedAt:   a.UpdatedAt,
 	}
@@ -157,10 +157,10 @@ func boundaryToModel(b *boundary.Boundary) *boundaryModel {
 		Description: b.Description,
 		AppID:       b.AppID,
 		TenantID:    b.TenantID,
-		Limits:      b.Limits,
+		Limits:      orEmpty(b.Limits),
 		Response:    b.Response,
 		Enabled:     b.Enabled,
-		Metadata:    b.Metadata,
+		Metadata:    orEmptyMap(b.Metadata),
 		CreatedAt:   b.CreatedAt,
 		UpdatedAt:   b.UpdatedAt,
 	}
@@ -209,11 +209,11 @@ func valuesToModel(v *values.Values) *valuesModel {
 		Description: v.Description,
 		AppID:       v.AppID,
 		TenantID:    v.TenantID,
-		Rules:       v.Rules,
+		Rules:       orEmpty(v.Rules),
 		Severity:    v.Severity,
 		Action:      v.Action,
 		Enabled:     v.Enabled,
-		Metadata:    v.Metadata,
+		Metadata:    orEmptyMap(v.Metadata),
 		CreatedAt:   v.CreatedAt,
 		UpdatedAt:   v.UpdatedAt,
 	}
@@ -265,11 +265,11 @@ func judgmentToModel(j *judgment.Judgment) *judgmentModel {
 		AppID:       j.AppID,
 		TenantID:    j.TenantID,
 		Domain:      string(j.Domain),
-		Assessors:   j.Assessors,
+		Assessors:   orEmpty(j.Assessors),
 		Threshold:   j.Threshold,
 		Action:      j.Action,
 		Enabled:     j.Enabled,
-		Metadata:    j.Metadata,
+		Metadata:    orEmptyMap(j.Metadata),
 		CreatedAt:   j.CreatedAt,
 		UpdatedAt:   j.UpdatedAt,
 	}
@@ -320,11 +320,11 @@ func reflexToModel(r *reflex.Reflex) *reflexModel {
 		Description: r.Description,
 		AppID:       r.AppID,
 		TenantID:    r.TenantID,
-		Triggers:    r.Triggers,
-		Actions:     r.Actions,
+		Triggers:    orEmpty(r.Triggers),
+		Actions:     orEmpty(r.Actions),
 		Priority:    r.Priority,
 		Enabled:     r.Enabled,
-		Metadata:    r.Metadata,
+		Metadata:    orEmptyMap(r.Metadata),
 		CreatedAt:   r.CreatedAt,
 		UpdatedAt:   r.UpdatedAt,
 	}
@@ -377,14 +377,14 @@ func profileToModel(p *profile.SafetyProfile) *profileModel {
 		Description: p.Description,
 		AppID:       p.AppID,
 		TenantID:    p.TenantID,
-		Instincts:   p.Instincts,
-		Judgments:   p.Judgments,
-		Awareness:   p.Awareness,
-		Values:      p.Values,
-		Reflexes:    p.Reflexes,
-		Boundaries:  p.Boundaries,
+		Instincts:   orEmpty(p.Instincts),
+		Judgments:   orEmpty(p.Judgments),
+		Awareness:   orEmpty(p.Awareness),
+		Values:      orEmpty(p.Values),
+		Reflexes:    orEmpty(p.Reflexes),
+		Boundaries:  orEmpty(p.Boundaries),
 		Enabled:     p.Enabled,
-		Metadata:    p.Metadata,
+		Metadata:    orEmptyMap(p.Metadata),
 		CreatedAt:   p.CreatedAt,
 		UpdatedAt:   p.UpdatedAt,
 	}
@@ -439,15 +439,15 @@ func scanToModel(r *scan.Result) *scanModel {
 		Direction:    string(r.Direction),
 		Decision:     string(r.Decision),
 		Blocked:      r.Blocked,
-		Findings:     r.Findings,
+		Findings:     orEmpty(r.Findings),
 		Redacted:     r.Redacted,
 		PIICount:     r.PIICount,
 		ProfileUsed:  r.ProfileUsed,
-		PoliciesUsed: r.PoliciesUsed,
+		PoliciesUsed: orEmpty(r.PoliciesUsed),
 		TenantID:     r.TenantID,
 		AppID:        r.AppID,
 		Duration:     int64(r.Duration),
-		Metadata:     r.Metadata,
+		Metadata:     orEmptyMap(r.Metadata),
 		CreatedAt:    r.CreatedAt,
 		UpdatedAt:    r.UpdatedAt,
 	}
@@ -498,9 +498,9 @@ func policyToModel(pol *policy.Policy) *policyModel {
 		Description: pol.Description,
 		ScopeKey:    pol.ScopeKey,
 		ScopeLevel:  string(pol.ScopeLevel),
-		Rules:       pol.Rules,
+		Rules:       orEmpty(pol.Rules),
 		Enabled:     pol.Enabled,
-		Metadata:    pol.Metadata,
+		Metadata:    orEmptyMap(pol.Metadata),
 		CreatedAt:   pol.CreatedAt,
 		UpdatedAt:   pol.UpdatedAt,
 	}
@@ -605,8 +605,8 @@ func complianceToModel(r *compliance.Report) *complianceReportModel {
 		ScopeLevel:  r.ScopeLevel,
 		PeriodStart: r.PeriodStart,
 		PeriodEnd:   r.PeriodEnd,
-		Summary:     r.Summary,
-		Details:     r.Details,
+		Summary:     orEmptyMap(r.Summary),
+		Details:     orEmptyMap(r.Details),
 		GeneratedAt: r.GeneratedAt,
 		CreatedAt:   r.CreatedAt,
 		UpdatedAt:   r.UpdatedAt,
@@ -632,6 +632,24 @@ func complianceFromModel(m *complianceReportModel) *compliance.Report {
 // ──────────────────────────────────────────────────
 // Helper
 // ──────────────────────────────────────────────────
+
+// orEmpty returns s, or an empty slice when s is nil. Collections live in
+// NOT NULL jsonb columns, so a nil one is written as empty rather than NULL.
+func orEmpty[T any](s []T) []T {
+	if s == nil {
+		return []T{}
+	}
+	return s
+}
+
+// orEmptyMap returns m, or an empty map when m is nil, for the same reason
+// as orEmpty.
+func orEmptyMap(m map[string]any) map[string]any {
+	if m == nil {
+		return map[string]any{}
+	}
+	return m
+}
 
 func entityFromTimestamps(createdAt, updatedAt time.Time) shield.Entity {
 	return shield.Entity{CreatedAt: createdAt, UpdatedAt: updatedAt}

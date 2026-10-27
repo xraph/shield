@@ -1,6 +1,6 @@
 // Package awareness models what an agent pays attention to in content.
 //
-// Awareness is about perception — what you notice. PII detection is
+// Awareness is about perception: what you notice. PII detection is
 // awareness: you notice an email address in text. Topic classification
 // is awareness: you recognize what a conversation is about. Intent
 // detection is awareness: you understand what someone is trying to do.
@@ -19,6 +19,9 @@ type Focus string
 const (
 	// FocusPII detects personal identifiable information.
 	FocusPII Focus = "pii"
+	// FocusSecrets detects credentials: API keys, tokens, private keys and
+	// passwords in connection strings or assignments.
+	FocusSecrets Focus = "secrets"
 	// FocusTopic classifies conversation topics.
 	FocusTopic Focus = "topic"
 	// FocusSentiment analyzes emotional tone.
@@ -49,7 +52,8 @@ const (
 	PIIActionFlag PIIAction = "flag"
 	// PIIActionBlock prevents content from passing.
 	PIIActionBlock PIIAction = "block"
-	// PIIActionVault redacts PII and stores the original encrypted.
+	// PIIActionVault redacts PII exactly as PIIActionRedact does. Shield
+	// stores no token and does not encrypt or keep the original value.
 	PIIActionVault PIIAction = "vault"
 )
 

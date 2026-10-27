@@ -1,0 +1,156 @@
+---
+title: Nexus Guard
+description: Scan the prompts, tool results and replies that pass through a nexus gateway with Shield, and use a model through nexus as Shield's judge.
+---
+
+`github.com/xraph/shield/integrations/nexusguard` puts a Shield engine behind [nexus](https://github.com/xraph/nexus) guards. Every prompt, tool result and model reply that passes through the gateway is scanned, and stored, like any other Shield scan. It's its own Go module, so Shield itself doesn't depend on nexus.
+
+## Install
+
+```bash
+go get github.com/xraph/shield/integrations/nexusguard@latest
+```
+
+It requires nexus v1.9.0 or later, and pulls it in for you.
+
+## Register the guards
+
+Build the engine first, then hand it to an input guard and an output guard:
+
+```go
+import (
+    "github.com/xraph/nexus"
+
+    "github.com/xraph/shield/engine"
+    "github.com/xraph/shield/integrations/nexusguard"
+    "github.com/xraph/shield/presets"
+)
+
+eng, err := engine.New(engine.WithStore(st))
+if err != nil {
+    return err
+}
+
+gw := nexus.New(
+    nexus.WithProvider(openai),
+    nexus.WithGuard(nexusguard.Input(eng,
+        nexusguard.WithProfile(presets.InfraAgentInput),
+        nexusguard.WithApp("loomplane"),
+    )),
+    nexus.WithGuard(nexusguard.Output(eng,
+        nexusguard.WithProfile(presets.InfraAgentOutput),
+        nexusguard.WithApp("loomplane"),
+    )),
+)
+```
+
+On a gateway that already has a guard service, `gw.Guard().Register(nexusguard.Input(eng, ...))` does the same. Both guards are named `shield`.
+
+What each guard does with a scan:
+
+| Scan result | Guard |
+|---|---|
+| `block` | Blocks the request with Shield's fixed reason, which never quotes the content |
+| `redact` | Writes the redacted text back into the part it came from |
+| `flag` | Passes with action `warn` |
+| `allow` | Passes |
+| An error | Fails the request |
+
+`Details["scan_ids"]` on the guard result lists the stored scans that didn't allow their text, so you can look them up.
+
+## Which messages are scanned
+
+The input guard scans the messages of the roles `WithRoles` lists, `user` and `tool` by default, plus every role `WithUntrustedRoles` lists, `tool` by default. It never scans `system`. Roles match without regard to case, and a message with an empty role is scanned as `user`.
+
+A message whose role neither option names passes unscanned. That's how a role you didn't list behaves, including nexus's legacy `function` role for tool results, so if your provider sends one, add it: `WithUntrustedRoles("tool", "function")`.
+
+A message of an untrusted role is scanned with `scan.Input.Untrusted` set and `Source` `<role>_message` (so `tool_message`), and always comes back as Shield's quoted text, so the model sees a tool's output as data. Other roles change only when the scan redacts. `WithUntrustedRoles()` with no roles leaves every role trusted.
+
+The output guard scans every reply message, whatever role the provider gives it, with `Engine.ScanOutput`.
+
+Assistant tool calls aren't scanned here. Check them with `Engine.ScanToolCall` in your host, combined with your own risk table (see [Agent safety](/docs/guides/agent-safety#3-tool-calls-the-agent-proposes)).
+
+## Content parts
+
+The guards read string content, `[]provider.ContentPart`, and the `[]any` of JSON parts a decoded HTTP body holds. Parts are read by allowlist:
+
+| Part type | Guard |
+|---|---|
+| `text`, `refusal`, `thinking` | Scanned. The text sits under the key of the same name or under `content`. Both are scanned, and each must be a string |
+| `tool_result` | Scanned. Its `content` is a string or parts, nested at most four deep. A `text` key, if it has one, is scanned too |
+| `image_url`, `image`, `image_base64`, `input_audio`, `audio`, `file`, `redacted_thinking`, `tool_use` | Passed unchanged. They may hold no `text` or `content` key. Text inside media, such as the words in an image or a PDF, isn't scanned |
+| Anything else | Fails the request |
+
+A text part whose text isn't a string, and any other content shape, fails the request too. That way text the guard can't read never reaches the model unscanned. The cost is that a new part type from a provider fails until nexusguard learns it.
+
+Each text part is one scan, and its replacement is written back into that part, so the layout of text and media parts is kept. It also means text split across several parts of one message is scanned part by part and never joined.
+
+## Tenants
+
+Every scan needs a Shield tenant. By default the guards use the tenant already on the context (`shield.WithTenant`), and fall back to the nexus tenant of the request (`CheckInput.TenantID`). A Shield tenant on the context wins over a different nexus tenant, so don't leave a stale one on a long-lived context.
+
+To map nexus tenants yourself, pass `WithTenant`:
+
+```go
+nexusguard.Input(eng,
+    nexusguard.WithProfile(presets.InfraAgentInput),
+    nexusguard.WithTenant(func(ctx context.Context, nexusTenant string) string {
+        return orgForNexusTenant(nexusTenant) // "" fails the request
+    }),
+)
+```
+
+No tenant from either source is `shield.ErrTenantRequired`, and the request fails. `WithApp` sets the app the same way; empty keeps the app already on the context.
+
+## The verdict cache
+
+nexus runs the input guard over the whole conversation on every request. So each guard keeps the verdicts of texts it has already scanned, and only new or changed messages are scanned, stored and judged.
+
+```go
+nexusguard.Input(eng, nexusguard.WithVerdictCache(50_000)) // 0 turns it off
+```
+
+- It holds 10,000 verdicts by default, and at most 64 MiB of replacement text.
+- A verdict is keyed by tenant, app, profile, role, whether the role is untrusted, the engine's `ProfileGeneration` and the SHA-256 of the text.
+- It expires after the engine's `ProfileCacheTTL`. A negative TTL turns the cache off as well.
+- A block is never cached, so a profile change that lifts it takes effect on the next request.
+- A cached verdict stores no new scan, so it doesn't record the metadata of later requests.
+
+Keep your own unguarded history. The guardrail middleware writes the guarded messages back into the request. If you send the guarded copy back anyway, the guard strips its own quoting first and quotes each text once.
+
+## The model judge
+
+nexusguard can also give Shield its [model judge](/docs/concepts/evaluation#the-model-judge), a model asked through nexus how risky a text is. It's off until you turn it on.
+
+```go
+var gw *nexus.Gateway
+
+judge := nexusguard.GatewayJudge(func() *nexus.Gateway { return gw }, "gpt-4o-mini",
+    nexusguard.WithJudgeProvider("openai"), // optional: skip the gateway's routing
+)
+
+cfg := shield.DefaultConfig()
+cfg.ModelJudge = true // the flag; without it the judge is never called
+
+eng, err := engine.New(
+    engine.WithStore(st),
+    engine.WithConfig(cfg),
+    engine.WithJudge(judge),
+)
+
+gw = nexus.New(nexus.WithGuard(nexusguard.Input(eng, nexusguard.WithProfile("support"))))
+```
+
+`GatewayJudge` resolves the gateway on every call, which is why you can build it before the gateway exists. If you'd rather call the model yourself, `nexusguard.NewJudge(complete, model)` takes any `CompleteFunc`. In the Forge extension, set `model_judge: true` in YAML and pass the judge with `WithEngineOption(engine.WithJudge(judge))`.
+
+The judge only ever sees text with the built-in secret and PII placeholders applied, whatever the profile does. It sends a fixed system prompt, the text quoted as `judged_content`, asks for at most 200 tokens, and treats anything other than one `{"score": 0..1, "reason": "..."}` object as an error. Its own completion carries a private context marker that makes both guards pass it unscanned, so judging a scan never starts another one.
+
+Only a judgment with a `model` assessor uses it. The InfraAgent preset has none, so add one to a profile when you want the judge.
+
+## nexus versions
+
+The module needs nexus v1.9.0 or later. There, `CheckInput.Metadata` holds a copy of the request's metadata in both phases, and the guards copy it onto each stored scan, leaving out the keys Shield owns (`source`, `untrusted`, `secret_count`). Output guards run on streamed and non-streamed replies alike.
+
+Streaming has a catch. With nexus v1.9.0, output guards buffer every stream by default. Nexus holds all the chunks until the reply ends, runs the guard on the whole message, and only then plays it back, so your users wait longer for the first token. That wait is the price of redaction, because a secret can't be pulled out of text that's already on the wire.
+
+If first-token time matters more, set `nexus.WithStreamGuardStrategy(guard.StrategyPassthrough)`. The stream goes out at once and the guard checks the message when it ends. A block still stops tool calls from running, but a redaction comes too late and the change is lost. Pick passthrough only when you don't need to redact streamed replies.

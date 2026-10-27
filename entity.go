@@ -1,7 +1,7 @@
 // Package shield provides composable AI safety and governance for Go.
 //
 // Shield models safety through human-centric primitives: Instincts, Awareness,
-// Boundaries, Values, Judgment, and Reflexes — composed into SafetyProfiles.
+// Boundaries, Values, Judgment, and Reflexes, composed into SafetyProfiles.
 package shield
 
 import "time"

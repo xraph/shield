@@ -156,9 +156,9 @@ ctx = shield.WithApp(ctx, "myapp")
     filename: "profile.go",
   },
   {
-    title: "Compliance Reporting",
+    title: "Compliance Records",
     description:
-      "Generate compliance reports for EU AI Act, NIST AI RMF, and SOC2. Automated evidence collection from scan results, policy evaluations, and audit trails.",
+      "Keep your EU AI Act, NIST AI RMF and SOC 2 reports next to the scans and policies they cite, scoped to each tenant. You write the report; Shield stores it and serves it in the dashboard.",
     icon: (
       <svg
         className="size-5"
@@ -177,14 +177,15 @@ ctx = shield.WithApp(ctx, "myapp")
         <polyline points="10 9 9 9 8 9" />
       </svg>
     ),
-    code: `report, _ := engine.GenerateReport(ctx,
-  shield.ReportInput{
-    Framework:  shield.FrameworkEUAIAct,
-    Period:     "2025-Q1",
-    TenantID:   "tenant-1",
-    IncludeEvidence: true,
-  })
-// report.Score=94 controls=23 findings=2`,
+    code: `err := st.CreateReport(ctx, &compliance.Report{
+  ID:          id.NewComplianceReportID(),
+  Framework:   compliance.FrameworkEUAIAct,
+  ScopeKey:    "tenant-1",
+  ScopeLevel:  "org",
+  PeriodStart: q1Start,
+  PeriodEnd:   q1End,
+  Summary:     summary, // what your own review found
+})`,
     filename: "compliance.go",
     colSpan: 2,
   },
@@ -215,7 +216,7 @@ export function FeatureBento() {
         <SectionHeader
           badge="Features"
           title="Everything you need for AI safety"
-          description="Shield handles the hard parts — safety scanning, PII detection, policy governance, and compliance reporting — so you can focus on your application."
+          description="Shield handles the hard parts of AI safety for you: scanning, PII and secret redaction, and per-tenant policies. You get to spend your time on the application."
         />
 
         <motion.div

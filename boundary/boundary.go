@@ -38,7 +38,7 @@ type Limit struct {
 }
 
 // Boundary represents a hard safety limit that cannot be crossed.
-// Boundaries are the third layer of the safety engine — fast binary
+// Boundaries are the third layer of the safety engine: fast binary
 // checks that enforce absolute limits. There is no threshold, no
 // gradient: content either passes or is immediately blocked.
 type Boundary struct {

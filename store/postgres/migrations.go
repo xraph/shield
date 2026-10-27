@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/xraph/grove/migrate"
 )
@@ -372,5 +373,61 @@ CREATE INDEX IF NOT EXISTS idx_shield_compliance_period ON shield_compliance_rep
 				return err
 			},
 		},
+		&migrate.Migration{
+			Name:    "unique_names_per_tenant",
+			Version: "20261024000001",
+			Up: func(ctx context.Context, exec migrate.Executor) error {
+				for _, table := range tenantUniqueTables {
+					_, err := exec.Exec(ctx, "ALTER TABLE "+table+" DROP CONSTRAINT IF EXISTS "+table+"_app_id_name_key;\n"+
+						"ALTER TABLE "+table+" DROP CONSTRAINT IF EXISTS "+table+"_app_tenant_name_key;\n"+
+						"ALTER TABLE "+table+" ADD CONSTRAINT "+table+"_app_tenant_name_key UNIQUE (app_id, tenant_id, name)")
+					if err != nil {
+						return err
+					}
+				}
+				return nil
+			},
+			// Down fails if two tenants now share a name under one app.
+			Down: func(ctx context.Context, exec migrate.Executor) error {
+				if err := ensureNoSharedNames(ctx, exec, tenantUniqueTables); err != nil {
+					return err
+				}
+				for _, table := range tenantUniqueTables {
+					_, err := exec.Exec(ctx, "ALTER TABLE "+table+" DROP CONSTRAINT IF EXISTS "+table+"_app_tenant_name_key;\n"+
+						"ALTER TABLE "+table+" DROP CONSTRAINT IF EXISTS "+table+"_app_id_name_key;\n"+
+						"ALTER TABLE "+table+" ADD CONSTRAINT "+table+"_app_id_name_key UNIQUE (app_id, name)")
+					if err != nil {
+						return err
+					}
+				}
+				return nil
+			},
+		},
 	)
+}
+
+// tenantUniqueTables lists the primitive tables whose name uniqueness moves from
+// (app_id, name) to (app_id, tenant_id, name).
+var tenantUniqueTables = []string{
+	"shield_instincts", "shield_awareness", "shield_boundaries", "shield_values",
+	"shield_judgments", "shield_reflexes", "shield_profiles",
+}
+
+// ensureNoSharedNames fails, before anything is changed, when two tenants share a
+// name under one app, because the (app_id, name) key cannot be restored then.
+func ensureNoSharedNames(ctx context.Context, exec migrate.Executor, tables []string) error {
+	for _, table := range tables {
+		rows, err := exec.Query(ctx, "SELECT 1 FROM "+table+" GROUP BY app_id, name HAVING COUNT(*) > 1 LIMIT 1")
+		if err != nil {
+			return err
+		}
+		found := rows.Next()
+		if closeErr := rows.Close(); closeErr != nil {
+			return closeErr
+		}
+		if found {
+			return fmt.Errorf("cannot restore unique (app_id, name) on %s: two tenants share a name", table)
+		}
+	}
+	return nil
 }

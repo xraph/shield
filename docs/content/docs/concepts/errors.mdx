@@ -1,25 +1,56 @@
 ---
 title: Error Handling
-description: Sentinel errors in Shield, and which ones the code actually returns.
+description: The sentinel errors Shield returns, when you get each one, and how to treat a scan error.
 ---
 
-Shield defines sentinel errors in the root `shield` package and in `store`. All are created with `errors.New`, so check them with `errors.Is`. Many of the root sentinels are reserved for the evaluation layers and aren't returned by anything yet; the tables below say which.
+Shield defines sentinel errors in the root `shield` package and in `store`. All are created with `errors.New`, so check them with `errors.Is`.
+
+Treat any error from `ScanInput`, `ScanOutput` or `ScanToolCall` as a block. An error means Shield couldn't give a verdict, and a missing verdict isn't an `allow`. A blocked scan isn't an error: it comes back as a result with `Blocked` set.
+
+```go
+r, err := eng.ScanInput(ctx, in)
+if err != nil || r.Blocked {
+    return errWithheld
+}
+```
+
+## Scan errors
+
+| Error | Returned when |
+|-------|-------------|
+| `ErrTenantRequired` | The context carries no tenant (`shield.WithTenant`) |
+| `ErrInputTooLarge` | The text and its context strings, or a tool call's arguments, tool, risk class and metadata, are over `Config.MaxScanBytes` |
+| `ErrNoStore` | The engine has no store. Scans read their profile from it |
+| `ErrNoProfile` | Neither the input nor `Config.DefaultProfile` names a profile, or the named profile doesn't exist in this app and tenant, or it's disabled |
+| `ErrProfileInvalid` | The profile references a primitive that doesn't exist, holds a regex, condition or setting that doesn't parse, or has more than 256 operator-written patterns |
+| `ErrInvalidInput` | A nil input, or a tool call with a blank tool name, a tool name holding a control or invisible rune, or arguments that aren't one JSON value or nest deeper than 32 levels |
+
+`ErrNoProfile` and `ErrProfileInvalid` wrap the profile or primitive name, as in `shield: safety profile is invalid: instinct injection-detector: invalid pattern`. A store failure while loading the profile comes back wrapped as `shield: load profile: ...`.
+
+## Tenancy errors
+
+The engine-facing `store.Store` methods return these. See [Multi-tenancy](/docs/concepts/multi-tenancy#the-store-rules) for the full rules.
+
+| Error | Returned when |
+|-------|-------------|
+| `ErrTenantRequired` | Neither the context nor the call names a tenant: an empty list filter on a context without one, an empty policy or report scope key, or an empty tenant argument |
+| `ErrTenantMismatch` | The call names a tenant that isn't the context's, or a tenant context writes outside its own org-level policy scope |
 
 ## Not-found errors
 
-The PostgreSQL, SQLite and MongoDB stores return these from `Get<Thing>` and `Get<Thing>ByName` when no row matches.
+The PostgreSQL, SQLite and MongoDB stores return these from `Get<Thing>` and `Get<Thing>ByName` when no row matches in the context's tenant. A row that exists in another tenant reads as not found too, so you can't probe for it.
 
 | Error | Returned by |
 |-------|-------------|
 | `ErrScanNotFound` | `GetScan` |
-| `ErrPolicyNotFound` | `GetPolicy`, `GetPolicyByName` |
-| `ErrInstinctNotFound` | `GetInstinct`, `GetInstinctByName` |
-| `ErrJudgmentNotFound` | `GetJudgment`, `GetJudgmentByName` |
-| `ErrAwarenessNotFound` | `GetAwareness`, `GetAwarenessByName` |
-| `ErrValueNotFound` | `GetValues`, `GetValuesByName` |
-| `ErrReflexNotFound` | `GetReflex`, `GetReflexByName` |
-| `ErrBoundaryNotFound` | `GetBoundary`, `GetBoundaryByName` |
-| `ErrProfileNotFound` | `GetProfile`, `GetProfileByName` |
+| `ErrPolicyNotFound` | `GetPolicy`, `GetPolicyByName`, `UpdatePolicy`, `AssignToTenant` |
+| `ErrInstinctNotFound` | `GetInstinct`, `GetInstinctByName`, `UpdateInstinct` |
+| `ErrJudgmentNotFound` | `GetJudgment`, `GetJudgmentByName`, `UpdateJudgment` |
+| `ErrAwarenessNotFound` | `GetAwareness`, `GetAwarenessByName`, `UpdateAwareness` |
+| `ErrValueNotFound` | `GetValues`, `GetValuesByName`, `UpdateValues` |
+| `ErrReflexNotFound` | `GetReflex`, `GetReflexByName`, `UpdateReflex` |
+| `ErrBoundaryNotFound` | `GetBoundary`, `GetBoundaryByName`, `UpdateBoundary` |
+| `ErrProfileNotFound` | `GetProfile`, `GetProfileByName`, `UpdateProfile` |
 | `ErrComplianceNotFound` | `GetReport` |
 
 `ErrPIITokenNotFound` is defined but not returned: the PII load methods return whatever tokens exist.
@@ -33,26 +64,23 @@ The `store` package defines the errors for the scoped `store.DashboardStore` con
 | `store.ErrScope` | Tenant or app missing from the `store.Scope`, or an invalid policy scope |
 | `store.ErrNotFound` | No row with that ID inside the scope |
 | `store.ErrCollection` | Unknown collection name |
-| `store.ErrConflict` | An update's expected `updated_at` doesn't match (someone else saved first) |
+| `store.ErrConflict` | A create whose name is taken in this app and tenant, or an update whose expected `updated_at` doesn't match (someone else saved first) |
+| `store.ErrReadOnly` | A write to a row the scope may read but not change: an app-level policy seen from a tenant actor |
 
-## Defined but not returned yet
-
-These exist for the engine and evaluation layers and aren't returned by any code today:
+## Defined but not returned
 
 | Error | Intended meaning |
 |-------|-------------|
-| `ErrNoStore` | No store was configured on the engine |
 | `ErrStoreClosed` | The store has been closed |
 | `ErrMigrateFailed` | Database migration failed |
 | `ErrAlreadyExists` | A resource with the same name already exists |
 | `ErrInputBlocked` | Input content was blocked by a safety scan |
 | `ErrOutputBlocked` | Output content was blocked by a safety scan |
-| `ErrNoProfile` | No safety profile configured for the scan |
 | `ErrInvalidConfig` | Invalid engine configuration |
 | `ErrEncryptionKeyMissing` | PII encryption key not configured |
 | `ErrInvalidState` | Invalid state transition |
 
-A few consequences worth knowing. A duplicate name comes back as the database driver's own unique-constraint error, not `ErrAlreadyExists`. A blocked scan wouldn't be an error either: `ScanInput` and `ScanOutput` report blocking through `Result.Blocked`, and today they never block. With no store, `engine.Health` returns its own `shield: persistence is not configured` error rather than `ErrNoStore`.
+A duplicate name through the plain `store.Store` methods comes back as the database driver's own unique-constraint error, wrapped with the backend prefix, not `ErrAlreadyExists`. Names are unique per app and tenant, so the same name in another tenant is fine. The dashboard path maps a duplicate to `store.ErrConflict`. With no store, `engine.Health` returns its own `shield: persistence is not configured` error rather than `ErrNoStore`.
 
 ## Checking errors
 
@@ -60,8 +88,11 @@ The built-in stores return the not-found sentinel itself and wrap every other er
 
 ```go
 result, err := eng.Store().GetScan(ctx, scanID)
-if errors.Is(err, shield.ErrScanNotFound) {
-    // handle not found
+switch {
+case errors.Is(err, shield.ErrScanNotFound):
+    // no such scan in this tenant
+case errors.Is(err, shield.ErrTenantRequired):
+    // ctx has no tenant
 }
 ```
 

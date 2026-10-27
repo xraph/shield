@@ -1,41 +1,38 @@
 ---
 title: Architecture
-description: How Shield's six safety layers and packages fit together.
+description: How Shield's six safety layers, the engine and the packages fit together.
 ---
 
-Shield is organized as a set of focused Go packages. The `engine` package is the central coordinator. The other packages define the entities, store interfaces and plugins that compose around it.
-
-The six evaluation layers are the design, not the current behaviour. `executeScan` has a placeholder for each layer and runs none of them, so every scan returns `allow` with no findings. `engine.Capabilities()` reports `Evaluation: false` and lists all six layers as unavailable.
+Shield is organized as a set of focused Go packages. The `engine` package is the central coordinator: it loads a tenant's safety profile from the store, runs it, and records the scan. The other packages define the entities, the detectors, the store interfaces and the plugins that compose around it.
 
 ## Layered safety model
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│                        engine.Engine                              │
-│  ScanInput / ScanOutput / Capabilities / Health / Stop            │
+│                        engine.Engine                             │
+│  ScanInput / ScanOutput / ScanToolCall / Capabilities / Health   │
 ├──────────────────────────────────────────────────────────────────┤
-│              Six cognitive safety layers (not implemented)        │
-│                                                                    │
-│  Layer 1: INSTINCTS    (<10ms)   Injection, Jailbreak, Exfil     │
-│  Layer 2: AWARENESS    (<50ms)   PII, Topic, Intent, Sentiment   │
-│  Layer 3: BOUNDARIES   (<5ms)    Hard topic/action/data limits   │
-│  Layer 4: VALUES       (<100ms)  Toxicity, Brand, Honesty        │
-│  Layer 5: JUDGMENT     (<500ms)  Grounding, Relevance, Compliance│
-│  Layer 6: REFLEXES     (<10ms)   Custom condition→action rules   │
-│                                                                    │
-│  Planned: a high-confidence instinct hit skips deeper layers.     │
+│  resolve profile (tenant, app, name), cached for ProfileCacheTTL │
+├──────────────────────────────────────────────────────────────────┤
+│  Layer 1: INSTINCTS   injection, jailbreak, exfiltration,        │
+│                       manipulation (instinct/detection)          │
+│  Layer 2: AWARENESS   PII, secrets, topics (awareness/perception)│
+│  Layer 3: BOUNDARIES  topic, data, output and action limits      │
+│  Layer 4: VALUES      safety and toxicity lexicons               │
+│                       (values/principles)                        │
+│  Layer 5: JUDGMENT    scores over findings, optional model judge │
+│  Layer 6: REFLEXES    condition and action rules                 │
+│  then:    POLICIES    the tenant's org and assigned app policies │
+│                                                                  │
+│  A block ends the scan after its layer (EnableShortCircuit).     │
 ├──────────────────────┬───────────────────────────────────────────┤
-│  plugin.Registry      │  SafetyProfile composition                │
-│  OnScanStarted        │  Instincts + Awareness + Boundaries +    │
-│  OnScanCompleted      │  Values + Judgment + Reflexes             │
-│  OnShutdown           │  → compose into named profiles           │
-│  (15 hook interfaces) │  (stored, not yet evaluated)              │
+│  plugin.Registry     │  SafetyProfile composition                │
+│  15 hook interfaces, │  Instincts + Awareness + Boundaries +     │
+│  all emitted         │  Values + Judgment + Reflexes             │
 ├──────────────────────┴───────────────────────────────────────────┤
-│                        store.Store                                │
-│  (composite: scan.Store + instinct.Store + awareness.Store +      │
-│   boundary.Store + values.Store + judgment.Store + reflex.Store +  │
-│   profile.Store + policy.Store + pii.Store + compliance.Store +   │
-│   Migrate/Ping/Close)                                             │
+│                        store.Store                               │
+│  the eleven subsystem stores + Migrate / Ping / Close,           │
+│  every call scoped to a tenant                                   │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
@@ -45,53 +42,40 @@ The six evaluation layers are the design, not the current behaviour. `executeSca
 
 ```go
 eng, err := engine.New(
-    engine.WithStore(pgStore),           // optional: composite Store
-    engine.WithConfig(shield.Config{     // optional: stored, not read yet
-        EnableShortCircuit: true,
-        ScanConcurrency:    10,
-    }),
+    engine.WithStore(pgStore),           // required for scans: profiles live in the store
+    engine.WithConfig(cfg),              // optional: a shield.Config, see Configuration
     engine.WithPlugin(auditPlugin),      // optional: lifecycle hooks
+    engine.WithJudge(judge),             // optional: the model judge, used only with cfg.ModelJudge
     engine.WithLogger(logger),           // optional: a go-utils log.Logger
     engine.WithMetrics(metrics),         // optional: a go-utils metrics.Metrics
 )
 ```
 
-`WithLogger` takes a `log.Logger` from `github.com/xraph/go-utils/log`, not a `*slog.Logger`.
+`WithLogger` takes a `log.Logger` from `github.com/xraph/go-utils/log`, not a `*slog.Logger`. Without `WithStore` the engine still builds, but every scan returns `shield.ErrNoStore`.
 
 ## Scan execution flow
 
-What `ScanInput` and `ScanOutput` do today:
+What `ScanInput`, `ScanOutput` and `ScanToolCall` do:
 
-1. Set the direction (`input` or `output`) and create a `scan_` ID.
-2. Build a `scan.Result` with decision `allow`, stamped with the tenant and app from the context.
-3. Emit `OnScanStarted`.
-4. Skip the six layers (they're placeholders).
-5. Emit `OnScanCompleted`, and `OnScanBlocked` if the result is blocked (it never is yet).
-6. Persist the result with `CreateScan` when a store is set. A persistence error is logged as a warning and the scan still returns successfully.
+1. Set the direction (`input`, `output` or `tool_call`) and create a `scan_` ID. A tool call's arguments are checked and split into units first.
+2. Check the tenant on the context, the size limit and the store.
+3. Emit `OnScanStarted`, then resolve the profile named by the input or by `Config.DefaultProfile`. A failure in this step or the one before returns an error, emits `OnScanFailed` and stores nothing. A scan that fails a check in step 2 never reaches `OnScanStarted`, so no plugin sees its text.
+4. Emit `OnSafetyProfileResolved`, then run the six layers and the tenant's policies, each under its own `evaluate layer` span. Each layer emits its own hooks as it finds things. With `EnableShortCircuit` a block stops the run after its layer.
+5. Fold the findings into one decision, the strictest, and build `Redacted`.
+6. Emit `OnScanCompleted`, and `OnScanBlocked` if the result is blocked.
+7. Persist the result with `CreateScan`. A persistence error is logged as a warning, marks the span failed, and the scan still returns its verdict.
 
-All six steps run under one `scan content` span, so the plugin hooks and the store write show up as its children. When the scan returns, the engine counts it on `shield_scans_completed_total` and records its wall time on `shield_scan_duration_seconds`. See [Observability](/docs/guides/observability).
+Every step runs under one `scan content` span, so profile resolution, the layers, the judge, the plugin hooks and the store write show up as its children. When the scan returns, the engine counts it on `shield_scans_completed_total` and records its wall time on `shield_scan_duration_seconds`. See [Observability](/docs/guides/observability).
 
-The layers, once implemented, are meant to run in this order:
-
-1. **Instincts.** Pre-conscious, immediate threat detection: prompt injection, jailbreak attempts and data exfiltration. Fastest layer, and able to short-circuit the rest.
-
-2. **Awareness.** Perception: PII detection, topic classification, sentiment, intent and language. Produces findings that inform later layers.
-
-3. **Boundaries.** Hard binary limits. Topics, actions or data patterns that are forbidden outright, with no thresholds.
-
-4. **Values.** Ethical evaluation: toxicity, brand safety, honesty and respect, with thresholds and severity levels.
-
-5. **Judgment.** Contextual risk assessment: grounding (hallucination detection), relevance, consistency and compliance. The slowest layer, and it needs context.
-
-6. **Reflexes.** Condition-action rules: rate limiting, escalation, pattern triggers and custom rules. The final layer before a decision.
+[Evaluation](/docs/concepts/evaluation) covers what each layer matches, how actions map to decisions, and the tool-call rules.
 
 ## Tenant isolation
 
-`shield.WithTenant(ctx, id)` and `shield.WithApp(ctx, id)` put identifiers on the context. Today only the engine reads them, to stamp `TenantID` and `AppID` on each scan result.
+`shield.WithTenant(ctx, id)` and `shield.WithApp(ctx, id)` put identifiers on the context, and every engine-facing call needs the tenant. A scan without one returns `shield.ErrTenantRequired`, and so does every `store.Store` read and write, unless a list filter carries `TenantID` itself.
 
-The subsystem stores (`store.Store`) don't read the context. Lookups by ID, such as `GetScan` or `GetInstinct`, return the row whatever its tenant or app, and `List*` methods filter only by the `AppID` and `TenantID` you put in the filter. An empty filter returns every row. Scope those calls yourself.
+Inside a tenant, a row of another tenant is invisible: a get by its ID returns not-found, an update returns not-found, and a delete does nothing. A filter whose `TenantID` differs from the context's is `shield.ErrTenantMismatch`. Names are unique per app and tenant.
 
-The dashboard path is stricter. The `store.DashboardStore` methods take a `store.Scope`, refuse an empty tenant or app with `store.ErrScope`, and never widen a query to every row. The dashboard contributor builds that scope from the signed-in user's claims, never from request parameters. See [Multi-tenancy](/docs/concepts/multi-tenancy).
+The dashboard path takes its scope from `store.Scope` instead. The `store.DashboardStore` methods refuse an empty tenant or app with `store.ErrScope`, and the dashboard contributor builds that scope from the signed-in user's claims, never from request parameters. See [Multi-tenancy](/docs/concepts/multi-tenancy) for the full rules, policies included.
 
 ## Plugin system
 
@@ -114,7 +98,7 @@ type BoundaryEnforced interface { /* ... */ }
 
 `plugin.Registry` type-caches plugins at registration time, so emit calls iterate only over plugins that implement the relevant hook. Hook errors never reach the scan. The registry logs them on the engine's logger, counts them on `shield_plugin_hooks_failed_total` and marks the `run plugin hooks` span failed.
 
-Only `OnScanStarted`, `OnScanCompleted` and `OnShutdown` are emitted today. The other twelve hooks are defined and the built-in plugins implement them, but nothing calls them yet.
+The engine emits all 15 hooks. See [Custom plugins](/docs/guides/custom-plugin) for when each one fires.
 
 Built-in plugin:
 - `audithook.Extension` (import path `audit_hook`): bridges lifecycle events to an audit trail backend
@@ -127,18 +111,23 @@ Built-in plugin:
 |---------|-------------|---------|
 | `shield` | `github.com/xraph/shield` | Root: Entity, Config, scope helpers, sentinel errors |
 | `id` | `.../id` | TypeID-based entity identifiers (13 prefixes) |
-| `engine` | `.../engine` | Scan entry points, capabilities, health |
-| `scan` | `.../scan` | Input, Finding, Result, Decision types and the scan store |
+| `engine` | `.../engine` | Scan entry points, the layers, profile cache, capabilities, health |
+| `scan` | `.../scan` | Input, ToolCallInput, Finding, Result, Decision, `Quote`, `Stricter` and the scan store |
 | `instinct` | `.../instinct` | Threat detector configuration |
-| `awareness` | `.../awareness` | PII, topic and intent detector configuration |
+| `detection` | `.../instinct/detection` | The prompt-injection corpus, heuristics and canary detectors |
+| `awareness` | `.../awareness` | PII, secret, topic and intent detector configuration |
+| `perception` | `.../awareness/perception` | The built-in PII and secret detectors and placeholder redaction |
 | `boundary` | `.../boundary` | Hard limit configuration |
 | `values` | `.../values` | Ethical rule configuration |
-| `judgment` | `.../judgment` | Contextual assessment configuration |
+| `principles` | `.../values/principles` | The safety and toxicity lexicons |
+| `judgment` | `.../judgment` | Contextual assessment configuration and the `Judge` interface |
 | `reflex` | `.../reflex` | Condition-action rule configuration |
 | `profile` | `.../profile` | SafetyProfile composition |
 | `policy` | `.../policy` | Administrative governance |
 | `pii` | `.../pii` | PII token store (you supply the encrypted value) |
 | `compliance` | `.../compliance` | Compliance report records |
+| `presets` | `.../presets` | Ready-made bundles a host seeds per tenant, such as `InfraAgent` |
+| `redteam` | `.../redteam` | Prompt-injection fixtures for untrusted sources |
 | `plugin` | `.../plugin` | Plugin interfaces and Registry |
 | `observability` | `.../observability` | Deprecated metrics plugin; records nothing |
 | `audithook` | `.../audit_hook` | Audit trail plugin |
@@ -147,3 +136,4 @@ Built-in plugin:
 | `admin` | `.../admin` | Validation and permission checks for dashboard operations |
 | `extension` | `.../extension` | Forge extension adapter |
 | `contract` | `.../extension/contract` | The `shield` dashboard contributor and its claims resolver |
+| `nexusguard` | `github.com/xraph/shield/integrations/nexusguard` | nexus guards and a nexus-backed model judge, as its own module |

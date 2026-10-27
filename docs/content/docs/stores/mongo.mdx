@@ -53,7 +53,7 @@ if err := s.Migrate(ctx); err != nil {
 
 ## Migrations
 
-`Migrate` creates the indexes for every collection directly; collections are created on first write. The package also exports `mongo.Migrations`, a grove `migrate.Group` that creates each collection and its indexes, if you'd rather register it with grove's migration orchestrator yourself. `Migrate` doesn't use it.
+`Migrate` creates the indexes for every collection directly; collections are created on first write. Primitive and profile names are unique per `app_id`, `tenant_id` and `name`, and `Migrate` drops the older `(app_id, name)` index from stores created before that. The package also exports `mongo.Migrations`, a grove `migrate.Group` that creates each collection and its indexes, if you'd rather register it with grove's migration orchestrator yourself. `Migrate` doesn't use it.
 
 ## When to use
 

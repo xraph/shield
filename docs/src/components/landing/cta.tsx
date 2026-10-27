@@ -24,8 +24,8 @@ export function CTA() {
           </h2>
           <p className="mt-4 text-lg text-fd-muted-foreground leading-relaxed">
             Add production-grade AI safety and governance to your Go service in
-            minutes. Shield handles safety scanning, PII detection, policy
-            evaluation, and compliance reporting out of the box.
+            minutes. Shield handles safety scanning, PII and secret redaction,
+            policy evaluation and compliance records out of the box.
           </p>
 
           {/* Install command */}
