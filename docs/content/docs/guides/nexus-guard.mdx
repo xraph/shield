@@ -150,3 +150,7 @@ Only a judgment with a `model` assessor uses it. The InfraAgent preset has none,
 ## nexus versions
 
 The module needs nexus v1.9.0 or later. There, `CheckInput.Metadata` holds a copy of the request's metadata in both phases, and the guards copy it onto each stored scan, leaving out the keys Shield owns (`source`, `untrusted`, `secret_count`). Output guards run on streamed and non-streamed replies alike.
+
+Streaming has a catch. With nexus v1.9.0, output guards buffer every stream by default. Nexus holds all the chunks until the reply ends, runs the guard on the whole message, and only then plays it back, so your users wait longer for the first token. That wait is the price of redaction, because a secret can't be pulled out of text that's already on the wire.
+
+If first-token time matters more, set `nexus.WithStreamGuardStrategy(guard.StrategyPassthrough)`. The stream goes out at once and the guard checks the message when it ends. A block still stops tool calls from running, but a redaction comes too late and the change is lost. Pick passthrough only when you don't need to redact streamed replies.

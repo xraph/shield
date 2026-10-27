@@ -78,6 +78,14 @@
 // "untrusted", "secret_count"). The guards never write to it. Output guards
 // run on streamed replies as well as non-streamed ones.
 //
+// With nexus v1.9.0, output guards buffer every stream by default. Nexus
+// holds the chunks until the reply ends, checks the whole message, then
+// plays it back, so the first token arrives late. That is the price of
+// redaction: text already sent can't be redacted. Passing
+// nexus.WithStreamGuardStrategy(guard.StrategyPassthrough) streams at once
+// and checks at the end. A block still stops tool calls, but a redaction
+// comes too late and is lost.
+//
 // # Model judge
 //
 // NewJudge and GatewayJudge build a judgment.Judge that asks a model,
