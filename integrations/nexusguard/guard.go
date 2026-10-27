@@ -132,6 +132,9 @@ func (g *shieldGuard) Check(ctx context.Context, in *guard.CheckInput) (*guard.C
 				out = slices.Clone(in.Messages)
 			}
 			out[i].Content = cc.value
+			// Native holds the provider's original content, which may still
+			// carry the text the guard just replaced.
+			out[i].Native = nil
 		}
 	}
 

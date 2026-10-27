@@ -329,6 +329,35 @@ func TestOutputGuardRedactsAssistantText(t *testing.T) {
 	}
 }
 
+func TestOutputGuardClearsNativeOnRedactedMessages(t *testing.T) {
+	r := newRig(t)
+	svc := guard.NewService()
+	svc.Register(outputGuard(r))
+	reply := "Deployed with key " + awsAccessKey() + "."
+	native := &provider.NativeContent{Provider: "anthropic", Model: "m", Content: []byte(`[{"type":"text","text":"` + reply + `"}]`)}
+	cleanNative := &provider.NativeContent{Provider: "anthropic", Model: "m", Content: []byte(`[{"type":"text","text":"All good."}]`)}
+	in := []provider.Message{
+		{Role: "assistant", Content: reply, Native: native},
+		{Role: "assistant", Content: "All good.", Native: cleanNative},
+	}
+	res, err := svc.CheckPhase(context.Background(), guard.PhaseOutput, &guard.CheckInput{Messages: in, TenantID: testTenant})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Modified || len(res.Messages) != 2 {
+		t.Fatalf("result %+v", res)
+	}
+	if res.Messages[0].Native != nil {
+		t.Errorf("redacted message kept Native: %s", res.Messages[0].Native.Content)
+	}
+	if res.Messages[1].Native != cleanNative {
+		t.Errorf("untouched message lost Native")
+	}
+	if in[0].Native != native {
+		t.Errorf("the caller's message was edited in place")
+	}
+}
+
 func TestOutputGuardLeavesCleanTextAlone(t *testing.T) {
 	r := newRig(t)
 	res, err := outputGuard(r).Check(context.Background(), &guard.CheckInput{
