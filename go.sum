@@ -370,8 +370,8 @@ github.com/xdg-go/stringprep v1.0.4 h1:XLI/Ng3O1Atzq0oBs3TWm+5ZVgkq2aqdlvP9JtoZ6
 github.com/xdg-go/stringprep v1.0.4/go.mod h1:mPGuuIYwz7CmR2bT9j4GbQqutWS1zV24gijq1dTyGkM=
 github.com/xraph/confy v1.1.0 h1:xkWaujezyxi+8AcSgmkWarB6MacGlrhozJi+QcOD5P0=
 github.com/xraph/confy v1.1.0/go.mod h1:HZwQ/RixbBNtBMT7IcULVYbAkyFjeXcJDNJDYj6m5oI=
-github.com/xraph/forge v1.13.1 h1:50QEDWc0iUL61zZUQ3u2E9TvSPEFUMEioHbasHhxWAs=
-github.com/xraph/forge v1.13.1/go.mod h1:EK/cIPvIidlr/iVaRH/mcHKktWg45OrM0+zzuqyE/f0=
+github.com/xraph/forge v1.13.2 h1:C8YYmV8vrtemyo5jA0rc0gbiijqFxAYSxuZ54XV+YA8=
+github.com/xraph/forge v1.13.2/go.mod h1:EK/cIPvIidlr/iVaRH/mcHKktWg45OrM0+zzuqyE/f0=
 github.com/xraph/go-utils v1.5.0 h1:44pIJooK565ds/Ica0yyPoRNbr0qUTgj1aay8ewad1w=
 github.com/xraph/go-utils v1.5.0/go.mod h1:fMahP6kPUjJP5UmzVje2GSL7OGT9+xpYkukK2dLjSMM=
 github.com/xraph/grove v1.10.0 h1:hSMXc1/QE1moIZSHIhJ0etFJZUcBQBvgmkm9xzg4kB0=
