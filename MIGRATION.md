@@ -66,7 +66,7 @@ An awareness detector with the `vault` action redacts the same way `redact` does
 
 `presets` holds `InfraAgent`, a ready-made bundle you seed per tenant, and `redteam` holds the injection fixtures Shield is tested against. `github.com/xraph/shield/integrations/nexusguard` is a separate module that puts Shield behind nexus guards; it's tagged `integrations/nexusguard/v1.9.0` and needs nexus v1.9.0 or later.
 
-This release builds on forge v1.13.1 and grove v1.10.0 (with its `mongodriver`, `pgdriver` and `sqlitedriver`). Go's module resolution moves you up to them when you upgrade Shield.
+This release builds on forge v1.13.2 and grove v1.10.0 (with its `mongodriver`, `pgdriver` and `sqlitedriver`). Go's module resolution moves you up to them when you upgrade Shield.
 
 ## Dashboard migration status (v1.8)
 
