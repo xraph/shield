@@ -42,6 +42,10 @@ func githubToken() string { return "ghp_" + strings.Repeat("a1B2c3", 6) }
 
 func awsAccessKey() string { return "AKIA" + "Q3ZP7RXW" + "2M5NVK4T" }
 
+// replyEmail is personal data the output profile redacts. A credential
+// blocks a reply instead, so the redaction tests use this.
+const replyEmail = "ops@acme-corp.io"
+
 // rig is an engine on a fresh SQLite store seeded with the InfraAgent preset
 // for testTenant and testApp.
 type rig struct {
@@ -300,7 +304,7 @@ func TestOutputGuardRedactsAssistantText(t *testing.T) {
 	r := newRig(t)
 	svc := guard.NewService()
 	svc.Register(outputGuard(r))
-	reply := "Deployed with key " + awsAccessKey() + "."
+	reply := "Deployed. Contact " + replyEmail + " for access."
 	res, err := svc.CheckPhase(context.Background(), guard.PhaseOutput, &guard.CheckInput{
 		// Some providers leave the role of a reply empty.
 		Messages: []provider.Message{{Role: "assistant", Content: reply}, {Content: reply}},
@@ -314,7 +318,7 @@ func TestOutputGuardRedactsAssistantText(t *testing.T) {
 	}
 	for _, m := range res.Messages {
 		got, ok := m.Content.(string)
-		if !ok || strings.Contains(got, awsAccessKey()) || !strings.HasPrefix(got, "Deployed with key [") {
+		if !ok || strings.Contains(got, replyEmail) || !strings.HasPrefix(got, "Deployed. Contact [") {
 			t.Errorf("content %q", got)
 		}
 	}
@@ -333,7 +337,7 @@ func TestOutputGuardClearsNativeOnRedactedMessages(t *testing.T) {
 	r := newRig(t)
 	svc := guard.NewService()
 	svc.Register(outputGuard(r))
-	reply := "Deployed with key " + awsAccessKey() + "."
+	reply := "Deployed. Contact " + replyEmail + " for access."
 	native := &provider.NativeContent{Provider: "anthropic", Model: "m", Content: []byte(`[{"type":"text","text":"` + reply + `"}]`)}
 	cleanNative := &provider.NativeContent{Provider: "anthropic", Model: "m", Content: []byte(`[{"type":"text","text":"All good."}]`)}
 	in := []provider.Message{
@@ -358,6 +362,37 @@ func TestOutputGuardClearsNativeOnRedactedMessages(t *testing.T) {
 	}
 }
 
+// TestOutputGuardBlocksCredentials checks that a reply holding a credential
+// is blocked, not redacted: under a passthrough stream guard the reply is
+// already on its way, and a rewrite would be dropped.
+func TestOutputGuardBlocksCredentials(t *testing.T) {
+	r := newRig(t)
+	svc := guard.NewService()
+	svc.Register(outputGuard(r))
+	for _, reply := range []string{
+		"Deployed with key " + awsAccessKey() + ".",
+		"Contact " + replyEmail + ", the token is " + githubToken() + ".",
+	} {
+		res, err := svc.CheckPhase(context.Background(), guard.PhaseOutput, &guard.CheckInput{
+			Messages: []provider.Message{{Role: "assistant", Content: reply}}, TenantID: testTenant,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !res.Blocked || res.Action != guard.ActionBlock || res.Modified || len(res.Messages) != 0 {
+			t.Fatalf("result %+v", res)
+		}
+		if strings.Contains(res.Reason, awsAccessKey()) || strings.Contains(res.Reason, githubToken()) {
+			t.Errorf("reason quotes the credential: %q", res.Reason)
+		}
+	}
+	for _, s := range r.scans(t) {
+		if s.Decision != scan.DecisionBlock {
+			t.Errorf("stored decision %s", s.Decision)
+		}
+	}
+}
+
 func TestOutputGuardLeavesCleanTextAlone(t *testing.T) {
 	r := newRig(t)
 	res, err := outputGuard(r).Check(context.Background(), &guard.CheckInput{
@@ -375,7 +410,7 @@ func TestOutputGuardLeavesCleanTextAlone(t *testing.T) {
 func TestGuardHandlesContentParts(t *testing.T) {
 	r := newRig(t)
 	image := provider.ContentPart{Type: "image_url", ImageURL: "https://example.com/a.png"}
-	parts := []provider.ContentPart{{Type: "text", Text: "the token is " + githubToken()}, image}
+	parts := []provider.ContentPart{{Type: "text", Text: "the owner is " + replyEmail}, image}
 	res, err := outputGuard(r).Check(context.Background(), &guard.CheckInput{
 		Messages: []provider.Message{{Role: "assistant", Content: parts}},
 		TenantID: testTenant,
@@ -390,13 +425,13 @@ func TestGuardHandlesContentParts(t *testing.T) {
 	if !ok || len(got) != 2 {
 		t.Fatalf("content %#v", res.Messages[0].Content)
 	}
-	if got[0].Type != "text" || strings.Contains(got[0].Text, githubToken()) || !strings.HasPrefix(got[0].Text, "the token is [") {
+	if got[0].Type != "text" || strings.Contains(got[0].Text, replyEmail) || !strings.HasPrefix(got[0].Text, "the owner is [") {
 		t.Errorf("text part %+v", got[0])
 	}
 	if got[1] != image {
 		t.Errorf("image part %+v", got[1])
 	}
-	if parts[0].Text != "the token is "+githubToken() {
+	if parts[0].Text != "the owner is "+replyEmail {
 		t.Error("the guard edited the caller's parts in place")
 	}
 }
@@ -407,7 +442,7 @@ func TestGuardHandlesDecodedJSONParts(t *testing.T) {
 	parts := []any{
 		map[string]any{"type": "text", "text": "first image:"},
 		image,
-		map[string]any{"type": "text", "text": "second, token " + githubToken()},
+		map[string]any{"type": "text", "text": "second, mail " + replyEmail},
 		image,
 	}
 	res, err := outputGuard(r).Check(context.Background(), &guard.CheckInput{
@@ -421,15 +456,15 @@ func TestGuardHandlesDecodedJSONParts(t *testing.T) {
 	if !res.Modified || !ok || len(got) != 4 {
 		t.Fatalf("result %+v", res)
 	}
-	// Each part keeps its place; only the part with the token changes.
+	// Each part keeps its place; only the part with the address changes.
 	if !reflect.DeepEqual(got[0], parts[0]) || !reflect.DeepEqual(got[1], image) || !reflect.DeepEqual(got[3], image) {
 		t.Errorf("layout changed: %+v", got)
 	}
 	text, _ := got[2].(map[string]any)["text"].(string)
-	if text != "second, token [GITHUB_TOKEN_1]" {
+	if text != "second, mail [EMAIL_1]" {
 		t.Errorf("text part %q", text)
 	}
-	if parts[2].(map[string]any)["text"] != "second, token "+githubToken() {
+	if parts[2].(map[string]any)["text"] != "second, mail "+replyEmail {
 		t.Error("the guard edited the caller's parts in place")
 	}
 }
@@ -685,7 +720,7 @@ func TestGuardInsideNexusGuardrailMiddleware(t *testing.T) {
 		return &pipeline.Response{Completion: &provider.CompletionResponse{
 			Model: "test-model",
 			Choices: []provider.Choice{{Message: provider.Message{
-				Role: "assistant", Content: "Rotate " + githubToken() + " after the deploy.",
+				Role: "assistant", Content: "Ask " + replyEmail + " to rotate the key after the deploy.",
 			}}},
 		}}, nil
 	}
@@ -701,7 +736,7 @@ func TestGuardInsideNexusGuardrailMiddleware(t *testing.T) {
 		t.Errorf("next saw tool content %q", tool)
 	}
 	reply, _ := resp.Completion.Choices[0].Message.Content.(string)
-	if strings.Contains(reply, githubToken()) || !strings.HasPrefix(reply, "Rotate [") {
+	if strings.Contains(reply, replyEmail) || !strings.HasPrefix(reply, "Ask [") {
 		t.Errorf("reply %q", reply)
 	}
 }

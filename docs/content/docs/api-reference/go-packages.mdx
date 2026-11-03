@@ -216,9 +216,10 @@ func (b Bundle) Seed(ctx context.Context, s store.Store, tenantID, appID string)
 ### `github.com/xraph/shield/redteam`
 
 ```go
-const SourceCommitMessage, SourceLogLine, SourceReadme, SourceIssueBody
+const SourceCommitMessage, SourceLogLine, SourceReadme, SourceIssueBody, SourceAgentOutput
 const KindAttack, KindBenign
-type Fixture struct { ID, Source, Kind, Text, Marker, Technique string }
+const ExpectBlock, ExpectRedact
+type Fixture struct { ID, Source, Kind, Text, Marker, Technique, Expect string }
 func All() []Fixture
 func BySource(source string) []Fixture
 ```

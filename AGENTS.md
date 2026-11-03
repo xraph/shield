@@ -91,7 +91,7 @@ For govulncheck, use CI's Go. CI always resolves the newest 1.26 patch, and an o
 | `awareness/perception/` | The built-in PII and secret detectors, entropy checks, placeholders and redaction |
 | `values/principles/` | The built-in lexicons of the values layer (`safety`, `toxicity`) in `lexicon/*.txt`, and their scorer |
 | `presets/` | Ready-made bundles a host seeds per tenant: `InfraAgent` and `Bundle.Seed` |
-| `redteam/` | Prompt-injection fixtures per untrusted source, as JSONL (`All`, `BySource`) |
+| `redteam/` | Prompt-injection fixtures per untrusted source and leak fixtures for outbound text (`agent_output`), as JSONL (`All`, `BySource`) |
 | `integrations/nexusguard/` | Its own module: nexus input and output guards, the verdict cache and a nexus-backed `judgment.Judge` |
 | `store/store.go` | `store.Store`, the composite of the eleven subsystem stores plus `Migrate`, `Ping`, `Close` |
 | `store/dashboard.go` | The strict scoped interfaces the dashboard uses (`DashboardStore`, `AssignmentStore`, `PrivacyStore`, `PrivacyStatsStore`), `Scope`, `Filter`, `Page`, revision helpers |
