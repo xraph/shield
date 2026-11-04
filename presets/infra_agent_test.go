@@ -375,7 +375,7 @@ func TestSeedOnPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.Decision != scan.DecisionRedact {
+	if r.Decision != scan.DecisionBlock {
 		t.Fatalf("decision %s, findings %+v", r.Decision, r.Findings)
 	}
 	if _, err = s.GetScan(scanCtx, r.ID); err != nil {
