@@ -187,12 +187,12 @@ func TestGuardDoesNotNestItsOwnQuotes(t *testing.T) {
 func TestOutputGuardScansEveryReplyRole(t *testing.T) {
 	r := newRig(t)
 	res, err := outputGuard(r).Check(context.Background(), &guard.CheckInput{
-		Messages: []provider.Message{{Role: "model", Content: "key " + awsAccessKey()}}, TenantID: testTenant,
+		Messages: []provider.Message{{Role: "model", Content: "write to " + replyEmail}}, TenantID: testTenant,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := res.Messages[0].Content.(string); !res.Modified || strings.Contains(got, awsAccessKey()) {
+	if got, _ := res.Messages[0].Content.(string); !res.Modified || strings.Contains(got, replyEmail) {
 		t.Errorf("result %+v", res)
 	}
 }

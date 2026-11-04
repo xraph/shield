@@ -84,7 +84,9 @@
 // redaction: text already sent can't be redacted. Passing
 // nexus.WithStreamGuardStrategy(guard.StrategyPassthrough) streams at once
 // and checks at the end. A block still stops tool calls, but a redaction
-// comes too late and is lost.
+// comes too late and is lost. presets.InfraAgentOutput blocks a reply that
+// holds a credential, so passthrough loses only its personal data
+// redaction.
 //
 // # Model judge
 //

@@ -115,11 +115,7 @@ func TestUntrustedContentEndToEnd(t *testing.T) {
 
 func TestOutboundContentEndToEnd(t *testing.T) {
 	eng, s, ctx := seededEngine(t)
-	raws := []string{githubToken(), awsAccessKey(), dbPassword(), contactEmail}
-	body := "## Deploy failed\n\n" +
-		"The job used token " + githubToken() + " and key " + awsAccessKey() + ".\n" +
-		"It connected with postgres://deploy:" + dbPassword() + "@db.internal:5432/app.\n" +
-		"Contact " + contactEmail + " for access."
+	body := "## Deploy failed\n\nThe job ran on runner-7. Contact " + contactEmail + " for access."
 	r, err := eng.ScanOutput(ctx, &scan.Input{Text: body, Profile: presets.InfraAgentOutput})
 	if err != nil {
 		t.Fatal(err)
@@ -130,19 +126,13 @@ func TestOutboundContentEndToEnd(t *testing.T) {
 	if strings.Contains(r.Redacted, scan.QuoteTag) {
 		t.Fatalf("trusted output was quoted: %q", r.Redacted)
 	}
-	for _, want := range []string{"[GITHUB_TOKEN_1]", "[AWS_ACCESS_KEY_1]", "postgres://deploy:[CONNECTION_STRING_1]@db.internal", "[EMAIL_1]", "## Deploy failed"} {
+	for _, want := range []string{"[EMAIL_1]", "## Deploy failed", "runner-7"} {
 		if !strings.Contains(r.Redacted, want) {
 			t.Errorf("Redacted lacks %q: %q", want, r.Redacted)
 		}
 	}
-	stored := storedJSON(ctx, t, s, r)
-	for _, raw := range raws {
-		if strings.Contains(r.Redacted, raw) {
-			t.Errorf("Redacted holds a raw value %q", raw)
-		}
-		if strings.Contains(stored, raw) {
-			t.Errorf("stored scan holds a raw value %q", raw)
-		}
+	if strings.Contains(r.Redacted, contactEmail) || strings.Contains(storedJSON(ctx, t, s, r), contactEmail) {
+		t.Errorf("the address survives: %q", r.Redacted)
 	}
 	if hasFinding(r, "values", "destructive-commands", "flag") {
 		t.Fatalf("values flagged a body with no command: %+v", r.Findings)
@@ -158,6 +148,46 @@ func TestOutboundContentEndToEnd(t *testing.T) {
 	}
 	if !hasFinding(r, "values", "destructive-commands", "flag") {
 		t.Fatalf("no values flag for rm -rf /: %+v", r.Findings)
+	}
+}
+
+// TestOutboundCredentialsBlock checks that a credential in outbound text
+// blocks it, alone or next to personal data, and that neither the result
+// nor the stored scan holds the value.
+func TestOutboundCredentialsBlock(t *testing.T) {
+	eng, s, ctx := seededEngine(t)
+	cases := []struct{ name, text, raw string }{
+		{"github token", "The job used token " + githubToken() + ".", githubToken()},
+		{"aws access key", "Deployed with key " + awsAccessKey() + ".", awsAccessKey()},
+		{"aws secret line", "[default]\naws_secret_access_key = " + awsSecretKey(), awsSecretKey()},
+		{"connection string", "It connected with postgres://deploy:" + dbPassword() + "@db.internal:5432/app.", dbPassword()},
+		{"with personal data", "Contact " + contactEmail + ", the key is " + awsAccessKey() + ".", awsAccessKey()},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			r, err := eng.ScanOutput(ctx, &scan.Input{Text: c.text, Profile: presets.InfraAgentOutput})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if r.Decision != scan.DecisionBlock || !r.Blocked || r.Redacted != "" {
+				t.Fatalf("decision %s, blocked %v, Redacted %q; findings %+v", r.Decision, r.Blocked, r.Redacted, r.Findings)
+			}
+			if !hasFinding(r, "awareness", "outbound-secrets", "block") {
+				t.Errorf("findings %+v", r.Findings)
+			}
+			if stored := storedJSON(ctx, t, s, r); strings.Contains(stored, c.raw) {
+				t.Errorf("stored scan holds the credential")
+			}
+		})
+	}
+
+	// The input and tool profiles keep redacting the same values.
+	in, err := eng.ScanInput(ctx, &scan.Input{Text: cases[0].text, Profile: presets.InfraAgentInput, Source: "log_line", Untrusted: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if in.Decision != scan.DecisionRedact || !hasFinding(in, "awareness", "secrets", "redact") {
+		t.Fatalf("input: decision %s, findings %+v", in.Decision, in.Findings)
 	}
 }
 
@@ -227,6 +257,9 @@ func TestToolCallEndToEnd(t *testing.T) {
 func TestRedTeamFixturesEndToEnd(t *testing.T) {
 	eng, _, ctx := seededEngine(t)
 	for _, f := range redteam.All() {
+		if f.Source == redteam.SourceAgentOutput {
+			continue
+		}
 		t.Run(f.ID, func(t *testing.T) {
 			r, err := eng.ScanInput(ctx, &scan.Input{Text: f.Text, Profile: presets.InfraAgentInput, Source: f.Source, Untrusted: true})
 			if err != nil {
@@ -258,10 +291,52 @@ func TestRedTeamFixturesEndToEnd(t *testing.T) {
 	}
 }
 
+// TestRedTeamOutputFixturesEndToEnd scans each outbound fixture as the
+// agent's output: a credential blocks, personal data is redacted under the
+// detector the fixture names, and benign text passes.
+func TestRedTeamOutputFixturesEndToEnd(t *testing.T) {
+	eng, s, ctx := seededEngine(t)
+	for _, f := range redteam.BySource(redteam.SourceAgentOutput) {
+		t.Run(f.ID, func(t *testing.T) {
+			r, err := eng.ScanOutput(ctx, &scan.Input{Text: f.Text, Profile: presets.InfraAgentOutput})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if f.Kind == redteam.KindBenign {
+				if r.Decision != scan.DecisionAllow || r.Redacted != "" {
+					t.Fatalf("benign text: decision %s, Redacted %q, findings %+v", r.Decision, r.Redacted, r.Findings)
+				}
+				return
+			}
+			if string(r.Decision) != f.Expect {
+				t.Fatalf("decision %s, want %s; findings %+v", r.Decision, f.Expect, r.Findings)
+			}
+			named := false
+			for _, fd := range r.Findings {
+				if fd.Layer == "awareness" && fd.Details["detector"] == f.Technique {
+					named = true
+				}
+			}
+			if !named {
+				t.Errorf("no awareness finding from %s: %+v", f.Technique, r.Findings)
+			}
+			if r.Blocked && r.Redacted != "" {
+				t.Fatalf("blocked result carries text")
+			}
+			if strings.Contains(r.Redacted, f.Marker) {
+				t.Fatalf("marker %q survives: %q", f.Marker, r.Redacted)
+			}
+			if strings.Contains(storedJSON(ctx, t, s, r), f.Marker) {
+				t.Fatalf("stored scan holds the marker")
+			}
+		})
+	}
+}
+
 func TestRedTeamFixturesInToolArguments(t *testing.T) {
 	eng, _, ctx := seededEngine(t)
 	for _, f := range redteam.All() {
-		if f.Kind != redteam.KindAttack {
+		if f.Kind != redteam.KindAttack || f.Source == redteam.SourceAgentOutput {
 			continue
 		}
 		t.Run(f.ID, func(t *testing.T) {

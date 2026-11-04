@@ -1,9 +1,11 @@
 package redteam_test
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/xraph/shield/awareness/perception"
 	"github.com/xraph/shield/instinct"
 	"github.com/xraph/shield/instinct/detection"
 	"github.com/xraph/shield/internal/scoring"
@@ -17,11 +19,23 @@ const (
 	benignCeiling   = 0.4
 )
 
+// sources are the untrusted sources, whose fixtures are injection attempts.
 var sources = []string{
 	redteam.SourceCommitMessage,
 	redteam.SourceLogLine,
 	redteam.SourceReadme,
 	redteam.SourceIssueBody,
+}
+
+// injection returns the fixtures of the untrusted sources.
+func injection() []redteam.Fixture {
+	var out []redteam.Fixture
+	for _, f := range redteam.All() {
+		if f.Source != redteam.SourceAgentOutput {
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 // scan runs every pattern category and the heuristics over text, the way the
@@ -65,7 +79,7 @@ func TestFixtureSetCoverage(t *testing.T) {
 			techniqueSources[f.Technique][f.Source] = true
 		}
 	}
-	for _, source := range sources {
+	for _, source := range append(slices.Clone(sources), redteam.SourceAgentOutput) {
 		attacks, benign := 0, 0
 		for _, f := range redteam.BySource(source) {
 			if f.Source != source {
@@ -112,8 +126,49 @@ func TestAllReturnsACopy(t *testing.T) {
 	}
 }
 
+// TestOutputFixtureCoverage checks that the outbound attacks name a built-in
+// detector of the right kind (a secret blocks, personal data is redacted)
+// and that every secret format and every redacted kind of personal data the
+// output profile runs has at least one.
+func TestOutputFixtureCoverage(t *testing.T) {
+	secrets, pii := perception.BuiltinSecrets(), perception.BuiltinPII()
+	used := map[string]bool{}
+	for _, f := range redteam.BySource(redteam.SourceAgentOutput) {
+		if f.Kind != redteam.KindAttack {
+			if f.Expect != "" {
+				t.Errorf("%s: benign fixture expects %q", f.ID, f.Expect)
+			}
+			continue
+		}
+		used[f.Technique] = true
+		switch {
+		case slices.Contains(secrets, f.Technique):
+			if f.Expect != redteam.ExpectBlock {
+				t.Errorf("%s: secret detector %s expects %q, want block", f.ID, f.Technique, f.Expect)
+			}
+		case slices.Contains(pii, f.Technique):
+			if f.Expect != redteam.ExpectRedact {
+				t.Errorf("%s: personal data detector %s expects %q, want redact", f.ID, f.Technique, f.Expect)
+			}
+		default:
+			t.Errorf("%s: technique %q is not a built-in detector", f.ID, f.Technique)
+		}
+	}
+	// gitlab_token, google_api_key, anthropic_key and openai_key share the
+	// path a known format takes; high_entropy is a guess, left to the
+	// perception tests. ip_address is not in the output profile.
+	for _, d := range []string{
+		"aws_access_key", "aws_secret_key", "github_token", "slack_token", "stripe_key", "private_key",
+		"jwt", "connection_string", "generic_assignment", "email", "phone", "ssn", "credit_card", "iban",
+	} {
+		if !used[d] {
+			t.Errorf("no outbound fixture for %s", d)
+		}
+	}
+}
+
 func TestAttackFixturesAreDetected(t *testing.T) {
-	for _, f := range redteam.All() {
+	for _, f := range injection() {
 		if f.Kind != "attack" {
 			continue
 		}
@@ -144,7 +199,7 @@ func TestAttackFixturesAreDetected(t *testing.T) {
 }
 
 func TestBenignFixturesStayBelowThreshold(t *testing.T) {
-	for _, f := range redteam.All() {
+	for _, f := range injection() {
 		if f.Kind != "benign" {
 			continue
 		}

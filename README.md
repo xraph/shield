@@ -199,7 +199,7 @@ r, err = eng.ScanToolCall(ctx, &scan.ToolCallInput{Tool: name, Arguments: args, 
 final := scan.Stricter(hostDecision, r.Decision)
 ```
 
-`ScanToolCall` only ever answers `allow`, `block` or `require_approval`, and `scan.Stricter` makes sure it can add a restriction to yours and never lift one. The `redteam` package ships the 332 injection fixtures Shield is tested against, so you can run them through your own agent. The [agent safety guide](https://www.xraph.com/docs/shield/guides/agent-safety) has the full wiring.
+`ScanToolCall` only ever answers `allow`, `block` or `require_approval`, and `scan.Stricter` makes sure it can add a restriction to yours and never lift one. The `redteam` package ships the 349 injection fixtures Shield is tested against, plus 24 outbound ones where a reply leaks a credential (which blocks) or personal data (which is redacted), so you can run them through your own agent. The [agent safety guide](https://www.xraph.com/docs/shield/guides/agent-safety) has the full wiring.
 
 If your agent talks to models through [nexus](https://github.com/xraph/nexus), the separate `github.com/xraph/shield/integrations/nexusguard` module puts Shield behind nexus guards, and can give Shield a model judge called through the gateway. It needs nexus v1.9.0 or later. See the [nexus guard guide](https://www.xraph.com/docs/shield/guides/nexus-guard).
 

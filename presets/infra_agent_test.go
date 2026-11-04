@@ -35,9 +35,9 @@ import (
 )
 
 // bundleRows is the number of rows the InfraAgent bundle seeds: 4 instincts,
-// 2 awareness, 1 boundary, 1 values, 1 judgment, 2 reflexes, 3 profiles and
+// 3 awareness, 1 boundary, 1 values, 1 judgment, 2 reflexes, 3 profiles and
 // 1 policy.
-const bundleRows = 15
+const bundleRows = 16
 
 func TestInfraAgentBundleIsComplete(t *testing.T) {
 	b := presets.InfraAgent()
@@ -116,9 +116,26 @@ func TestInfraAgentBundleIsComplete(t *testing.T) {
 			refers(p, "reflex", n)
 		}
 	}
-	for _, a := range b.Awareness {
-		if a.Focus == awareness.FocusSecrets && a.Action != "redact" {
-			t.Errorf("secrets awareness %s acts %q, want redact", a.Name, a.Action)
+	// Secrets are redacted on input and tool calls and block output.
+	for _, p := range b.Profiles {
+		want := "redact"
+		if p.Name == presets.InfraAgentOutput {
+			want = "block"
+		}
+		secrets := 0
+		for _, as := range p.Awareness {
+			for _, a := range b.Awareness {
+				if a.Name != as.AwarenessName || a.Focus != awareness.FocusSecrets {
+					continue
+				}
+				secrets++
+				if a.Action != want {
+					t.Errorf("profile %s: secrets awareness %s acts %q, want %s", p.Name, a.Name, a.Action, want)
+				}
+			}
+		}
+		if secrets != 1 {
+			t.Errorf("profile %s has %d secrets awareness rows, want 1", p.Name, secrets)
 		}
 	}
 

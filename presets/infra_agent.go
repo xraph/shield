@@ -44,6 +44,7 @@ const (
 	instructionExfiltration = "instruction-exfiltration"
 	approvalManipulation    = "approval-manipulation"
 	secretsAwareness        = "secrets"
+	outboundSecrets         = "outbound-secrets"
 	piiAwareness            = "pii"
 	agentActions            = "agent-actions"
 	destructiveCommands     = "destructive-commands"
@@ -58,10 +59,12 @@ const (
 // and notifications, and proposes tool calls. Every call builds fresh rows,
 // so changing one never changes another call's.
 //
-// Instruction-shaped text is removed line by line and secrets are always
-// redacted, on every profile; personal data is redacted on input and output.
-// Output also flags destructive commands, input flags a strong injection
-// signal, and tool calls follow the risk classes above.
+// Instruction-shaped text is removed line by line. Secrets are redacted on
+// input and tool calls, and block output: text already on its way out may
+// not be rewritable (a streamed reply, say), and a credential must not leave
+// either way. Personal data is redacted on input and output. Output also
+// flags destructive commands, input flags a strong injection signal, and
+// tool calls follow the risk classes above.
 func InfraAgent() Bundle {
 	instincts := []*instinct.Instinct{
 		{
@@ -95,6 +98,12 @@ func InfraAgent() Bundle {
 			// any added later.
 			Name: secretsAwareness, Description: "Redacts API keys, tokens, private keys and passwords.",
 			Focus: awareness.FocusSecrets, Action: string(awareness.PIIActionRedact), Enabled: true,
+		},
+		{
+			// The output profile's secrets: the same detectors, but the text
+			// is blocked rather than sent with the value redacted.
+			Name: outboundSecrets, Description: "Blocks outbound text that holds an API key, token, private key or password.",
+			Focus: awareness.FocusSecrets, Action: string(awareness.PIIActionBlock), Enabled: true,
 		},
 		{
 			Name: piiAwareness, Description: "Redacts email addresses, phone numbers, SSNs, card numbers and IBANs.",
@@ -165,7 +174,7 @@ func InfraAgent() Bundle {
 		},
 		{
 			Name: InfraAgentOutput, Description: "Text the agent sends out: issue bodies, notifications and replies.",
-			Awareness: []profile.AwarenessAssignment{{AwarenessName: secretsAwareness}, {AwarenessName: piiAwareness}},
+			Awareness: []profile.AwarenessAssignment{{AwarenessName: outboundSecrets}, {AwarenessName: piiAwareness}},
 			Values:    []string{destructiveCommands},
 			Enabled:   true,
 		},

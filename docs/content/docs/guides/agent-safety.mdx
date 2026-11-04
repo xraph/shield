@@ -26,7 +26,7 @@ The bundle holds three profiles, one per use:
 | Profile | Constant | Runs |
 |---|---|---|
 | `infra-agent-input` | `presets.InfraAgentInput` | Four instincts (injection, jailbreak, exfiltration, approval manipulation) that remove instruction-shaped lines; secret and PII redaction; a judgment that flags near-certain injections |
-| `infra-agent-output` | `presets.InfraAgentOutput` | Secret and PII redaction; a values rule that flags destructive infrastructure commands |
+| `infra-agent-output` | `presets.InfraAgentOutput` | Secret detection that blocks the text; PII redaction; a values rule that flags destructive infrastructure commands |
 | `infra-agent-tools` | `presets.InfraAgentTools` | The same four instincts and secret detection over the arguments; a boundary that blocks a call with no risk class; reflexes that ask a person to approve `destroy_production` and `secret_or_external` calls |
 
 It also seeds one org-level policy, `infra-agent-baseline`, that redacts any secret a scan finds, whatever the profile says.
@@ -84,7 +84,9 @@ case r.Decision == scan.DecisionRedact:
 // mentioned, which you may want to show the person who reviews it.
 ```
 
-A body that mentions a GitHub token and an email address goes out as `Rotated the token [GITHUB_TOKEN_1] for [EMAIL_1]`.
+A body with an email address goes out as `Ask [EMAIL_1] for access`. A body with a token, a key or a password doesn't go out at all. The output profile blocks it, because you can't always rewrite outbound text (a reply that's already streaming, say) and a credential mustn't leave either way. Personal data is still only redacted.
+
+A tenant seeded by an earlier release keeps its old output profile, which redacts secrets, since `Seed` never changes a row the tenant already has. Run `Seed` again to add the `outbound-secrets` awareness, then point the tenant's `infra-agent-output` profile at it in place of `secrets`.
 
 ## 3. Tool calls the agent proposes
 
@@ -129,12 +131,15 @@ The [evaluation page](/docs/concepts/evaluation#tool-calls) covers the rules in 
 
 ## Reuse the red-team fixtures
 
-The `redteam` package ships the prompt-injection samples Shield is tested against, 332 of them across four sources. Each one is an attack, with the marker text that must not survive a scan, or a benign text that looks close to one and must pass untouched.
+The `redteam` package ships the prompt-injection samples Shield is tested against, 349 of them across four sources. Each one is an attack, with the marker text that must not survive a scan, or a benign text that looks close to one and must pass untouched.
 
 ```go
 import "github.com/xraph/shield/redteam"
 
 for _, f := range redteam.All() { // or redteam.BySource(redteam.SourceLogLine)
+    if f.Source == redteam.SourceAgentOutput {
+        continue // outbound fixtures, below
+    }
     r, err := eng.ScanInput(ctx, &scan.Input{
         Text: f.Text, Profile: presets.InfraAgentInput, Source: f.Source, Untrusted: true,
     })
@@ -157,6 +162,8 @@ for _, f := range redteam.All() { // or redteam.BySource(redteam.SourceLogLine)
 The better test runs them through your own agent. Feed each attack into one of your untrusted sources (a fake commit, a log line, an issue) and assert that no tool call of class `change` or higher follows. That checks the whole chain, quoting, your system prompt and your risk table included, and not only Shield. Shield's own suite also puts every attack into a tool argument and expects `require_approval`.
 
 `Fixture.Technique` names the detection family an attack uses, so you can group failures. Hidden characters in the fixture files are written as `\u` escapes so you can read them.
+
+`redteam.SourceAgentOutput` holds 24 more for the other direction: replies that leak a credential or personal data, and near misses that must pass, such as a commit SHA, an image digest or a `${DB_PASSWORD}` placeholder in a connection string. Scan those with `ScanOutput` and `InfraAgentOutput`. On an outbound attack, `Fixture.Expect` is the decision the scan must give (`block` for a credential, `redact` for personal data) and `Technique` is the detector that has to find it. The credentials sit in the files as placeholders like `{{aws_access_key}}` and are filled in when the package loads, so the repository holds none for a secret scanner to trip on.
 
 ## What this doesn't cover
 
