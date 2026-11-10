@@ -5,7 +5,7 @@ go 1.26.0
 require (
 	github.com/xraph/grove v1.10.2
 	github.com/xraph/grove/drivers/sqlitedriver v1.10.2
-	github.com/xraph/nexus v1.9.0
+	github.com/xraph/nexus v1.9.2
 	github.com/xraph/shield v1.9.0
 )
 
