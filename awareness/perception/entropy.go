@@ -55,7 +55,7 @@ var sriPrefixes = []string{"sha1-", "sha256-", "sha384-", "sha512-"}
 // highEntropy records standalone tokens of 32 or more characters from
 // [A-Za-z0-9+/_\-=.] that mix at least three of lower case, upper case,
 // digits and symbols and carry at least 4.5 bits of entropy per character.
-// Hashes after a digest prefix, SRI hashes, pure hex, UUIDs, numbers, tokens
+// Hashes after a digest prefix, SRI hashes, pure hex, UUIDs, TypeIDs, numbers, tokens
 // made of words (identifiers, import paths), Kubernetes-style names and SSH
 // public keys are never flagged. A URL or path is checked one segment at a
 // time. A base64 token is judged by what it decodes to (see encodedSecret).
@@ -106,7 +106,7 @@ func entropyToken(c *collector, start, end int) {
 			return
 		}
 	}
-	if len(tok) < 32 || afterDigestPrefix(s, start) || afterSSHKeyType(s, start) || isHex(tok) || isNumber(tok) || isUUID(tok) {
+	if len(tok) < 32 || afterDigestPrefix(s, start) || afterSSHKeyType(s, start) || isHex(tok) || isNumber(tok) || isUUID(tok) || isTypeID(tok) {
 		return
 	}
 	if isPathLike(tok) {
@@ -298,6 +298,32 @@ func isUUID(v string) bool {
 				return false
 			}
 		} else if !isHex(v[i : i+1]) {
+			return false
+		}
+	}
+	return true
+}
+
+// isTypeID reports whether v is a TypeID such as user_01h455vb4pex5vsknk084sn02q:
+// a prefix of up to 63 lower-case letters and '_' that starts and ends with a
+// letter, '_', then a UUID in 26 characters of lower-case Crockford base32,
+// the first of them 0 to 7.
+func isTypeID(v string) bool {
+	k := strings.LastIndexByte(v, '_')
+	if k < 1 || k > 63 || len(v)-k-1 != 26 {
+		return false
+	}
+	prefix, suffix := v[:k], v[k+1:]
+	if suffix[0] > '7' || prefix[0] == '_' || prefix[k-1] == '_' {
+		return false
+	}
+	for i := range len(prefix) {
+		if b := prefix[i]; b != '_' && (b < 'a' || b > 'z') {
+			return false
+		}
+	}
+	for i := range len(suffix) {
+		if strings.IndexByte("0123456789abcdefghjkmnpqrstvwxyz", suffix[i]) < 0 {
 			return false
 		}
 	}

@@ -21,6 +21,7 @@ const (
 	digits      = "0123456789"
 	stdB64      = alnum + "+/"
 	urlB64      = alnum + "-_"
+	crockford   = "0123456789abcdefghjkmnpqrstvwxyz"
 )
 
 // fake returns n characters drawn from alphabet by a fixed generator, so the
@@ -342,6 +343,31 @@ func TestBenignInfraTokensAreNotSecrets(t *testing.T) {
 		}
 		if got := perception.PII(text, nil); len(got) != 0 {
 			t.Errorf("PII(%q) = %+v, want none", text, got)
+		}
+	}
+}
+
+func TestTypeIDsAreNotSecrets(t *testing.T) {
+	// A TypeID's suffix is a UUID in base32, but with a prefix of five or
+	// more letters the whole ID is long enough to be checked.
+	for _, text := range []string{
+		"task atask_01m71vem2ge808nc95ad4hj3bq finished",
+		"release atask_0" + fake(167, 25, crockford),
+		`{"id":"provider_key_3` + fake(53, 25, crockford) + `"}`,
+	} {
+		if got := perception.Secrets(text, nil); len(got) != 0 {
+			t.Errorf("Secrets(%q) = %+v, want none", text, got)
+		}
+	}
+	// Close to a TypeID but not one, so still checked.
+	for _, text := range []string{
+		"atask_8" + fake(88, 25, crockford),       // first suffix character past 7
+		"aTask_0" + fake(53, 25, crockford),       // upper case in the prefix
+		"atask_0" + fake(53, 24, crockford) + "u", // u is not in the alphabet
+		"_atask_0" + fake(167, 25, crockford),     // prefix starts with '_'
+	} {
+		if got := perception.Secrets(text, nil); len(got) != 1 {
+			t.Errorf("Secrets(%q) = %+v, want one match", text, got)
 		}
 	}
 }
