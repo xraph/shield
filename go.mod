@@ -3,8 +3,8 @@ module github.com/xraph/shield
 go 1.26.0
 
 require (
-	github.com/jackc/pgx/v5 v5.12.0
-	github.com/xraph/forge v1.13.6
+	github.com/jackc/pgx/v5 v5.13.0
+	github.com/xraph/forge v1.13.7
 	github.com/xraph/go-utils v1.5.0
 	github.com/xraph/grove v1.10.2
 	github.com/xraph/grove/drivers/mongodriver v1.10.2
@@ -16,7 +16,7 @@ require (
 	go.opentelemetry.io/otel v1.47.0
 	go.opentelemetry.io/otel/sdk v1.47.0
 	go.opentelemetry.io/otel/trace v1.47.0
-	golang.org/x/text v0.43.0
+	golang.org/x/text v0.44.0
 )
 
 require (
@@ -120,7 +120,7 @@ require (
 	golang.org/x/exp v0.0.0-20260727155853-b88d891fe743 // indirect
 	golang.org/x/net v0.62.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
-	golang.org/x/sync v0.24.0 // indirect
+	golang.org/x/sync v0.25.0 // indirect
 	golang.org/x/sys v0.49.0 // indirect
 	golang.org/x/term v0.47.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
