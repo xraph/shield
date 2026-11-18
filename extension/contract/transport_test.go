@@ -51,13 +51,15 @@ func TestAuthenticatedHTTPReadsCommandsAndReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	mgr := security.NewCSRFManager()
-	csrf := mgr.GenerateToken()
 	h := transport.NewHandlerWithCSRF(reg, wreg, disp, nil, mgr)
 	user := &auth.UserInfo{Subject: "u", Claims: map[string]any{"tenant_id": "a", "app_id": "a", "shield_read": true, "shield_manage": true}}
+	csrf := mgr.GenerateTokenFor(transport.CSRFIdentity(user))
 	send := func(intent string, kind dash.Kind, payload string, key, token string, u *auth.UserInfo) *httptest.ResponseRecorder {
 		t.Helper()
 		body, _ := json.Marshal(dash.Request{Envelope: "v1", Kind: kind, Contributor: "shield", Intent: intent, IntentVersion: 1, Payload: json.RawMessage(payload), IdempotencyKey: key, CSRF: token})
 		r := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/dashboard/v1", bytes.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+
 		if u != nil {
 			r = r.WithContext(auth.WithUser(r.Context(), u))
 		}
@@ -137,7 +139,7 @@ func TestAuthenticatedHTTPReadsCommandsAndReplay(t *testing.T) {
 	if !strings.Contains(w.Body.String(), "NOT_FOUND") {
 		t.Fatal("foreign ID readable", w.Body.String())
 	}
-	w = send("instincts.delete", dash.KindCommand, `{"id":"`+row.ID+`"}`, "foreign-delete", csrf, foreign)
+	w = send("instincts.delete", dash.KindCommand, `{"id":"`+row.ID+`"}`, "foreign-delete", mgr.GenerateTokenFor(transport.CSRFIdentity(foreign)), foreign)
 	if !strings.Contains(w.Body.String(), "NOT_FOUND") {
 		t.Fatal("foreign ID deleted", w.Body.String())
 	}
