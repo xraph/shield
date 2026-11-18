@@ -6,7 +6,7 @@ require (
 	github.com/xraph/grove v1.10.2
 	github.com/xraph/grove/drivers/sqlitedriver v1.10.2
 	github.com/xraph/nexus v1.9.2
-	github.com/xraph/shield v1.9.0
+	github.com/xraph/shield v1.10.2
 )
 
 require (
@@ -24,9 +24,10 @@ require (
 	github.com/xraph/go-utils v1.5.0 // indirect
 	go.jetify.com/typeid/v2 v2.0.0-alpha.3 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
-	go.opentelemetry.io/otel v1.45.0 // indirect
-	go.opentelemetry.io/otel/metric v1.45.0 // indirect
-	go.opentelemetry.io/otel/trace v1.45.0 // indirect
+	go.opentelemetry.io/otel v1.47.0 // indirect
+	go.opentelemetry.io/otel/log v1.47.0 // indirect
+	go.opentelemetry.io/otel/metric v1.47.0 // indirect
+	go.opentelemetry.io/otel/trace v1.47.0 // indirect
 	golang.org/x/exp v0.0.0-20260727155853-b88d891fe743 // indirect
 	golang.org/x/sys v0.49.0 // indirect
 	golang.org/x/term v0.47.0 // indirect
