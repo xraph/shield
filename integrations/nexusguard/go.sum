@@ -56,8 +56,8 @@ github.com/xraph/grove/drivers/pgdriver v1.10.2 h1:LMMqPMPtj1OgA1npfqOWsknMQZbJ7
 github.com/xraph/grove/drivers/pgdriver v1.10.2/go.mod h1:aV31nDRM4Igx4vqwjM9u8v0A1URL8YyDyXCuABLOuPA=
 github.com/xraph/grove/drivers/sqlitedriver v1.10.2 h1:YLB9bGSxJnIquPN31etQGtrCWQfuuqfbcjk4eCkPT9Y=
 github.com/xraph/grove/drivers/sqlitedriver v1.10.2/go.mod h1:UlTGQQRp7VD4Rjj8HN6XjW1TMZl0iSNI4LApoQnChYQ=
-github.com/xraph/nexus v1.9.4 h1:NDfa1+k/3rYnqgrrt/L01Sj6qivGicjDG53DSbwnL5U=
-github.com/xraph/nexus v1.9.4/go.mod h1:cIJMbqc0FDrXzGmwA93ayfti2e+juOpd5zlHMKJjmaQ=
+github.com/xraph/nexus v1.9.5 h1:M8KqzzI+OLG7mXLtvmLrSGBjjTEpVeKtthi7kbSEnFw=
+github.com/xraph/nexus v1.9.5/go.mod h1:OOcGGuQNGi6KAHxrZNEM26B2YPxfw+R91n6vpfNYIB8=
 github.com/xraph/shield v1.10.2 h1:LJlnTeXvDov+GBPhOGsnyoiH/1Zsx5gaOPfNfSAGoxU=
 github.com/xraph/shield v1.10.2/go.mod h1:xkWUxiFghxQV74UVNfDsSz/mCjQ18mpt4W4kxGiBqJU=
 github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78 h1:ilQV1hzziu+LLM3zUTJ0trRztfwgjqKnBWNtSRkbmwM=
