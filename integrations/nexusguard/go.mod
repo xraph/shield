@@ -5,7 +5,7 @@ go 1.26.0
 require (
 	github.com/xraph/grove v1.10.2
 	github.com/xraph/grove/drivers/sqlitedriver v1.10.2
-	github.com/xraph/nexus v1.9.2
+	github.com/xraph/nexus v1.9.4
 	github.com/xraph/shield v1.10.2
 )
 
@@ -21,7 +21,7 @@ require (
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/shopspring/decimal v1.4.0 // indirect
-	github.com/xraph/go-utils v1.5.0 // indirect
+	github.com/xraph/go-utils v1.5.1 // indirect
 	go.jetify.com/typeid/v2 v2.0.0-alpha.3 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/otel v1.47.0 // indirect
